@@ -46,6 +46,7 @@ setup(
     keywords=['espressif', 'embedded', 'spdx', 'sbom'],
     install_requires=[
         'PyYAML',
+        'schema',
     ],
     classifiers=[
         'Development Status :: 1 - Planning',
