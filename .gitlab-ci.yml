@@ -1,0 +1,40 @@
+stages:
+  - codecheck
+
+
+# WORKFLOW RULES
+# ------------------------------------------------------------------------------------------------------
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS && $CI_PIPELINE_SOURCE == "push"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+# ------------------------------------------------------------------------------------------------------
+
+
+# TEMPLATES
+# ------------------------------------------------------------------------------------------------------
+.base_template:
+  image: python:3.7-bullseye
+  tags:
+    - build
+    - internet
+# --------------------------------------------------------------------------------------------------
+
+
+# JOBS
+# ------------------------------------------------------------------------------------------------------
+
+# CODE CHECK BY PRE-COMMIT HOOKS
+pre-commit_hooks_MR:
+  stage: codecheck
+  extends: .base_template
+  before_script:
+    - apt-get update && apt-get install -y -q git
+    - python -m pip install pre-commit
+  script:
+    - git diff-tree --no-commit-id --name-only -r $CI_COMMIT_SHA | xargs pre-commit run --files
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+# ------------------------------------------------------------------------------------------------------
