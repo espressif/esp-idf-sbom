@@ -16,6 +16,7 @@ import uuid
 from argparse import Namespace
 from typing import Any, Dict, List, Optional
 
+import schema
 import yaml
 
 from esp_idf_sbom import __version__
@@ -181,6 +182,39 @@ class SPDXObject(object):
 
     def get_manifest(self, directory: str) -> Dict[str,str]:
         """Return manifest information found in given directory."""
+        def validate_sbom_manifest(manifest: Dict[str,str]) -> None:
+            def check_person_organization(s: str) -> bool:
+                if s.startswith('Person: ') or s.startswith('Organization: '):
+                    return True
+                raise schema.SchemaError((f'Value "{s}" must have "Person: " or "Organization: " prefix.'))
+
+            def check_url(url: str) -> bool:
+                if utils.is_remote_url(url):
+                    return True
+                raise schema.SchemaError((f'Value {url} must have "git", "http" or "https" scheme and domain.'))
+
+            def check_cpe(cpe: str):
+                # Note: WFN, well-formed CPE name, attributes rules are stricter
+                if re.match(r'^cpe:2\.3:[aho](?::\S+){10}', cpe):
+                    return True
+                raise schema.SchemaError((f'Value "{cpe}" does not seem to be well-formed CPE name (WFN)'))
+
+            try:
+                sbom_schema = schema.Schema(
+                    {
+                        schema.Optional('version'): str,
+                        schema.Optional('repository'): schema.And(str, check_url),
+                        schema.Optional('url'): schema.And(str, check_url),
+                        schema.Optional('cpe'): schema.And(str, check_cpe),
+                        schema.Optional('supplier'): schema.And(str, check_person_organization),
+                        schema.Optional('originator'): schema.And(str, check_person_organization),
+                        schema.Optional('description'): str,
+                    })
+
+                sbom_schema.validate(manifest)
+            except schema.SchemaError as e:
+                log.err.die(f'The sbom.yml manifest file in "{directory}" is not valid: {e}')
+
         def load(fn: str) -> Dict[str,str]:
             # Helper to load yml files.
             path = utils.pjoin(directory, fn)
@@ -212,6 +246,7 @@ class SPDXObject(object):
         }
 
         sbom_yml = load('sbom.yml')
+        validate_sbom_manifest(sbom_yml)
         update(manifest, sbom_yml)
         idf_component_yml = load('idf_component.yml')
         update(manifest, idf_component_yml)

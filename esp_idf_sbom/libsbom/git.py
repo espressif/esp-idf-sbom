@@ -120,8 +120,8 @@ def get_remote_url(path: str) -> str:
     remote = cfg.get(f'branch.{branch}.remote', 'origin')
     url = cfg.get(f'remote.{remote}.url', '')
 
-    if not url or url.startswith('/') or url.startswith('file:///'):
-        # ignore local repository url
+    if not utils.is_remote_url(url):
+        # ignore local repository url and URLs not using git, http or https scheme
         return ''
 
     return url

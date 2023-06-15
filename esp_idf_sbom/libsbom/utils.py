@@ -9,6 +9,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import AnyStr, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 
 def pjoin(*paths: str) -> str:
@@ -24,6 +25,13 @@ def prelpath(path: str, base: str) -> str:
 def psplit(path: str) -> Tuple[str,...]:
     """Split path into tuple of components."""
     return Path(path).parts
+
+
+def is_remote_url(url: str='') -> bool:
+    """Check if url has git, http or https scheme and domain.
+    This is just a very basic test."""
+    res = urlparse(url)
+    return bool(res.scheme in ['git', 'http', 'https'] and res.netloc)
 
 
 def run(cmd:    List[str],
