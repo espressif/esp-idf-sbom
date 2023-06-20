@@ -36,7 +36,7 @@ class SPDXObject(object):
     SPDXID_RE = re.compile(r'[^0-9a-zA-Z\.\-\+]')
     SPDX_TAGS = ['SPDXVersion', 'DataLicense', 'SPDXID', 'DocumentName', 'DocumentNamespace',
                  'Creator', 'Created', 'CreatorComment', 'Relationship', 'PackageName', 'PackageSummary',
-                 'PackageVersion', 'PackageSupplier', 'PackageDownloadLocation', 'FilesAnalyzed',
+                 'PackageVersion', 'PackageSupplier', 'PackageOriginator', 'PackageDownloadLocation', 'FilesAnalyzed',
                  'PackageVerificationCode', 'PackageLicenseInfoFromFiles', 'PackageLicenseConcluded',
                  'PackageLicenseDeclared', 'PackageCopyrightText', 'PackageComment', 'FileName',
                  'LicenseInfoInFile', 'FileCopyrightText', 'FileChecksum', 'ExternalRef', 'LicenseConcluded']
