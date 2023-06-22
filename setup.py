@@ -47,6 +47,7 @@ setup(
     install_requires=[
         'PyYAML',
         'schema',
+        'license-expression',
     ],
     classifiers=[
         'Development Status :: 1 - Planning',
