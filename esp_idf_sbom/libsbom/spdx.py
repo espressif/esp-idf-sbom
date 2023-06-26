@@ -301,11 +301,18 @@ class SPDXObject:
                     return True
                 raise schema.SchemaError((f'Value {url} must have "git", "http" or "https" scheme and domain.'))
 
-            def check_cpe(cpe: str):
+            def check_cpe(cpe: str) -> bool:
                 # Note: WFN, well-formed CPE name, attributes rules are stricter
                 if re.match(r'^cpe:2\.3:[aho](?::\S+){10}', cpe):
                     return True
                 raise schema.SchemaError((f'Value "{cpe}" does not seem to be well-formed CPE name (WFN)'))
+
+            def check_license(lic: str) -> bool:
+                try:
+                    self.tags.licensing.parse(lic, validate=True)
+                except ExpressionError as e:
+                    raise schema.SchemaError((f'License expression "{lic}" is not valid: {e}'))
+                return True
 
             try:
                 sbom_schema = schema.Schema(
@@ -317,6 +324,7 @@ class SPDXObject:
                         schema.Optional('supplier'): schema.And(str, check_person_organization),
                         schema.Optional('originator'): schema.And(str, check_person_organization),
                         schema.Optional('description'): str,
+                        schema.Optional('license'): schema.And(str, check_license),
                     })
 
                 sbom_schema.validate(manifest)
@@ -351,6 +359,7 @@ class SPDXObject:
             'supplier': '',
             'originator': '',
             'description': '',
+            'license': '',
         }
 
         sbom_yml = load('sbom.yml')
@@ -510,11 +519,11 @@ class SPDXProject(SPDXObject):
             self['PackageLicenseConcluded'] = [self.tags.get_license_concluded()]
         else:
             self['PackageLicenseConcluded'] = ['NOASSERTION']
+        self['PackageLicenseDeclared'] = [self.manifest['license'] or 'NOASSERTION']
         if self.tags.copyrights:
             self['PackageCopyrightText'] = ['<text>{}</text>'.format('\n'.join(self.tags.copyrights))]
         else:
             self['PackageCopyrightText'] = ['NOASSERTION']
-        self['PackageLicenseDeclared'] = ['NOASSERTION']
 
         self._add_relationships()
 
@@ -736,11 +745,11 @@ class SPDXToolchain(SPDXObject):
             self['PackageLicenseConcluded'] = [self.tags.get_license_concluded()]
         else:
             self['PackageLicenseConcluded'] = ['NOASSERTION']
+        self['PackageLicenseDeclared'] = ['NOASSERTION']
         if self.tags.copyrights:
             self['PackageCopyrightText'] = ['<text>{}</text>'.format('\n'.join(self.tags.copyrights))]
         else:
             self['PackageCopyrightText'] = ['NOASSERTION']
-        self['PackageLicenseDeclared'] = ['NOASSERTION']
 
     def _get_current_platform(self) -> str:
         # Get current platform directly from idf_tools.py.
@@ -858,11 +867,11 @@ class SPDXComponent(SPDXObject):
             self['PackageLicenseConcluded'] = [self.tags.get_license_concluded()]
         else:
             self['PackageLicenseConcluded'] = ['NOASSERTION']
+        self['PackageLicenseDeclared'] = [self.manifest['license'] or 'NOASSERTION']
         if self.tags.copyrights:
             self['PackageCopyrightText'] = ['<text>{}</text>'.format('\n'.join(self.tags.copyrights))]
         else:
             self['PackageCopyrightText'] = ['NOASSERTION']
-        self['PackageLicenseDeclared'] = ['NOASSERTION']
 
         self._add_relationships()
 
@@ -960,11 +969,11 @@ class SPDXSubmodule(SPDXObject):
             self['PackageLicenseConcluded'] = [self.tags.get_license_concluded()]
         else:
             self['PackageLicenseConcluded'] = ['NOASSERTION']
+        self['PackageLicenseDeclared'] = [self.manifest['license'] or 'NOASSERTION']
         if self.tags.copyrights:
             self['PackageCopyrightText'] = ['<text>{}</text>'.format('\n'.join(self.tags.copyrights))]
         else:
             self['PackageCopyrightText'] = ['NOASSERTION']
-        self['PackageLicenseDeclared'] = ['NOASSERTION']
 
         self._add_relationships()
 
@@ -990,6 +999,9 @@ class SPDXSubmodule(SPDXObject):
 
         if not manifest['description']:
             manifest['description'] = module_cfg.get('sbom-description', '')
+
+        if not manifest['license']:
+            manifest['license'] = module_cfg.get('sbom-license', '')
 
         if not manifest['repository']:
             if 'sbom-repository' in module_cfg:
