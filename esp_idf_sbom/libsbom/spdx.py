@@ -288,43 +288,43 @@ class SPDXObject:
         else:
             return ''
 
+    def check_person_organization(self, s: str) -> bool:
+        if s.startswith('Person: ') or s.startswith('Organization: '):
+            return True
+        raise schema.SchemaError((f'Value "{s}" must have "Person: " or "Organization: " prefix.'))
+
+    def check_url(self, url: str) -> bool:
+        if utils.is_remote_url(url):
+            return True
+        raise schema.SchemaError((f'Value {url} must have "git", "http" or "https" scheme and domain.'))
+
+    def check_cpe(self, cpe: str) -> bool:
+        # Note: WFN, well-formed CPE name, attributes rules are stricter
+        if re.match(r'^cpe:2\.3:[aho](?::\S+){10}', cpe):
+            return True
+        raise schema.SchemaError((f'Value "{cpe}" does not seem to be well-formed CPE name (WFN)'))
+
+    def check_license(self, lic: str) -> bool:
+        try:
+            self.tags.licensing.parse(lic, validate=True)
+        except ExpressionError as e:
+            raise schema.SchemaError((f'License expression "{lic}" is not valid: {e}'))
+        return True
+
     def get_manifest(self, directory: str) -> Dict[str,str]:
         """Return manifest information found in given directory."""
         def validate_sbom_manifest(manifest: Dict[str,str]) -> None:
-            def check_person_organization(s: str) -> bool:
-                if s.startswith('Person: ') or s.startswith('Organization: '):
-                    return True
-                raise schema.SchemaError((f'Value "{s}" must have "Person: " or "Organization: " prefix.'))
-
-            def check_url(url: str) -> bool:
-                if utils.is_remote_url(url):
-                    return True
-                raise schema.SchemaError((f'Value {url} must have "git", "http" or "https" scheme and domain.'))
-
-            def check_cpe(cpe: str) -> bool:
-                # Note: WFN, well-formed CPE name, attributes rules are stricter
-                if re.match(r'^cpe:2\.3:[aho](?::\S+){10}', cpe):
-                    return True
-                raise schema.SchemaError((f'Value "{cpe}" does not seem to be well-formed CPE name (WFN)'))
-
-            def check_license(lic: str) -> bool:
-                try:
-                    self.tags.licensing.parse(lic, validate=True)
-                except ExpressionError as e:
-                    raise schema.SchemaError((f'License expression "{lic}" is not valid: {e}'))
-                return True
-
             try:
                 sbom_schema = schema.Schema(
                     {
                         schema.Optional('version'): str,
-                        schema.Optional('repository'): schema.And(str, check_url),
-                        schema.Optional('url'): schema.And(str, check_url),
-                        schema.Optional('cpe'): schema.And(str, check_cpe),
-                        schema.Optional('supplier'): schema.And(str, check_person_organization),
-                        schema.Optional('originator'): schema.And(str, check_person_organization),
+                        schema.Optional('repository'): schema.And(str, self.check_url),
+                        schema.Optional('url'): schema.And(str, self.check_url),
+                        schema.Optional('cpe'): schema.And(str, self.check_cpe),
+                        schema.Optional('supplier'): schema.And(str, self.check_person_organization),
+                        schema.Optional('originator'): schema.And(str, self.check_person_organization),
                         schema.Optional('description'): str,
-                        schema.Optional('license'): schema.And(str, check_license),
+                        schema.Optional('license'): schema.And(str, self.check_license),
                     })
 
                 sbom_schema.validate(manifest)
@@ -980,8 +980,33 @@ class SPDXSubmodule(SPDXObject):
     def _get_manifest(self) -> Dict[str, str]:
         # Get manifest information and try to fill in missing pieces from .gitmodules
         # if available.
+        def get_submodule_config() -> Dict[str,str]:
+            # Return validated submodule git configuration.
+            def validate_submodule_config(config: Dict[str,str]) -> None:
+                try:
+                    submodule_schema = schema.Schema(
+                        {
+                            schema.Optional('sbom-version'): str,
+                            schema.Optional('sbom-repository'): schema.And(str, self.check_url),
+                            schema.Optional('sbom-url'): schema.And(str, self.check_url),
+                            schema.Optional('sbom-cpe'): schema.And(str, self.check_cpe),
+                            schema.Optional('sbom-supplier'): schema.And(str, self.check_person_organization),
+                            schema.Optional('sbom-originator'): schema.And(str, self.check_person_organization),
+                            schema.Optional('sbom-description'): str,
+                            schema.Optional('sbom-license'): schema.And(str, self.check_license),
+                        }, ignore_extra_keys=True)
+
+                    submodule_schema.validate(config)
+                except schema.SchemaError as e:
+                    fn = utils.pjoin(self.info['git_wdir'], '.gitmodules')
+                    log.err.die(f'The submodule "{self.info["sm_path"]}" sbom information in "{fn}" is not valid: {e}')
+
+            module_cfg = git.get_submodule_config(self.info['git_wdir'], self.info['name'])
+            validate_submodule_config(module_cfg)
+            return module_cfg
+
         manifest = self.get_manifest(self.dir)
-        module_cfg = git.get_submodule_config(self.info['git_wdir'], self.info['name'])
+        module_cfg = get_submodule_config()
         if not manifest['version']:
             if 'sbom-version' in module_cfg:
                 manifest['version'] = module_cfg['sbom-version']
