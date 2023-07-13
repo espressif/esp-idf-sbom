@@ -108,7 +108,7 @@ repository: https://github.com/espressif/esp-idf.git@dc016f59877d13e6e7d4fc193aa
 supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
 ```
 
-Information from the `sbom.yml` file are mapped to the following SPDX tags.
+Information from the `sbom.yml` manifest file are mapped to the following SPDX tags.
 
 | manifest     | SPDX                         |
 |--------------|------------------------------|
@@ -122,11 +122,22 @@ Information from the `sbom.yml` file are mapped to the following SPDX tags.
 | license      | PackageLicenseDeclared       |
 
 Even though the `sbom.yml` file is the primary source of information, the esp-idf-sbom tool
-is also looking at other places if it's not present. The version, description and url
-information from the `idf_component.yml` manifest file is used for components managed by
-the component manager. Component version may be guessed based on git-describe and Espressif
+is also looking at other places if it's not present. The version, description, maintainers and
+url information from the `idf_component.yml` manifest file is used for components managed by
+the component manager.
+
+Information from the `idf_component.yml` manifest file are mapped to the following SPDX tags.
+
+| manifest     | SPDX                         |
+|--------------|------------------------------|
+| version      | PackageVersion               |
+| description  | PackageSummary               |
+| maintainers  | PackageSupplier              |
+| url          | PackageDownloadLocation      |
+
+Component version may be guessed based on git-describe and Espressif
 as a default supplier may be guessed based on git repository or package URL. The guessing
-may be dissabled by using the '--no-guess' option. For submodules, the .gitmodules file is
+may be disabled by using the '--no-guess' option. For submodules, the .gitmodules file is
 also checked for additional submodule information.
 
 
