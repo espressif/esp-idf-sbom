@@ -159,6 +159,12 @@ def main():
                                action='store_true',
                                default=bool(os.environ.get('SBOM_CREATE_PRINT')),
                                help=('Print generated SBOM file to stdout even if "--output-file" is used.'))
+    create_parser.add_argument('--no-file-tags',
+                               dest='file_tags',
+                               action='store_false',
+                               default=not bool(os.environ.get('SBOM_CREATE_NO_FILE_TAGS')),
+                               help=('Do not scan files for SPDX file tags. This includes SPDX-License-Identifier, '
+                                     'SPDX-FileCopyrightText and SPDX-FileContributor'))
 
     check_parser = subparsers.add_parser('check',
                                          help=('Check components/submodules in the ESP-IDF SBOM file '
