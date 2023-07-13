@@ -10,6 +10,36 @@ It also allows to check generated SBOM files for know vulnerabilities against
 the [National Vulnerability Database][4] (NVD) based on the
 [Common Platform Enumeration][5] (CPE) provided in the SBOM.
 
+## Required ESP-IDF versions
+
+All release branches of currently supported ESP-IDF versions allow to
+generate the SBOM file.
+
+| ESP-IDF version | branch with SBOM support  | commits
+|-----------------|---------------------------|----------------------------------------------------------------------------------------------------------------------------------|
+| 4.3             | release/v4.3              | [befb32b45bc9314b48c29624f9a2c2ef30e34260](https://github.com/espressif/esp-idf/commit/befb32b45bc9314b48c29624f9a2c2ef30e34260) |
+|                 |                           | [f1eef50947ab5770ae4d904c07615e7acab06002](https://github.com/espressif/esp-idf/commit/f1eef50947ab5770ae4d904c07615e7acab06002) |
+| 4.4             | release/v4.4              | [ee505a996045c3657711c3d70c58af8dd48b1426](https://github.com/espressif/esp-idf/commit/ee505a996045c3657711c3d70c58af8dd48b1426) |
+|                 |                           | [53f271ce108d6fa99cf92d59fe9b9dcc4b8fb45b](https://github.com/espressif/esp-idf/commit/53f271ce108d6fa99cf92d59fe9b9dcc4b8fb45b) |
+| 5.0             | release/v5.0              | [30735b33efabd6cf038bcb258b674cf828ad5ecf](https://github.com/espressif/esp-idf/commit/30735b33efabd6cf038bcb258b674cf828ad5ecf) |
+|                 |                           | [9156bbb55c920d6704329975311c331b931ed6bc](https://github.com/espressif/esp-idf/commit/9156bbb55c920d6704329975311c331b931ed6bc) |
+| 5.1             | release/v5.1              | [0f781c718c8548cd2b0e41a30e1814f1c6ed93a2](https://github.com/espressif/esp-idf/commit/0f781c718c8548cd2b0e41a30e1814f1c6ed93a2) |
+|                 |                           | [03162bb276d4155760e8aa839020f0587f5ef599](https://github.com/espressif/esp-idf/commit/03162bb276d4155760e8aa839020f0587f5ef599) |
+| latest          | master                    |                                                                                                                                  |
+
+Older versions, e.g. `v5.0.2`, do not have the required code merged and the following error
+message will be printed.
+
+    E: Project description file "build/project_description.json" does not support SBOM generation. Please see the list of IDF versions required by esp-idf-sbom.
+
+If you see this error message and want to try `esp-idf-sbom`, you can
+
+1. switch to the release branch for version you are using. For example `release/v5.0` if you are using `v5.0.2`.
+2. use future ESP-IDF versions to experiment with esp-idf-sbom.
+3. use `git-cherry-pick` and apply commits for your release from the table above. For example for `v5.0.2` use
+
+    $ git cherry-pick 30735b33efabd6cf038bcb258b674cf828ad5ecf 9156bbb55c920d6704329975311c331b931ed6bc
+
 
 ## SPDX SBOM layout
 
