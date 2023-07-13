@@ -178,7 +178,7 @@ component is compiled, due to component dependecies, but it's actually not linke
 final binary, it will be by default presented in the SBOM file, but it will not be reachable
 from the root **project** package and hence it will not be checked for vulnerabilities.
 The reason for this is to avoid possible false possitives, because such packages
-have no direct impact on the resulting application. This can be changed with the `--all`
+have no direct impact on the resulting application. This can be changed with the `--check-all-packages`
 option. If used, all packages in the SBOM file will be checked for possible vulnerabilities
 regardless their relationships to the application binary.
 
