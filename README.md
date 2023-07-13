@@ -84,6 +84,9 @@ It's a simple yaml file, which may contain the following entries.
     component. For more detailed information please see the SPDX specification.
     As for supplier, *Person:* or *Organization:* prefix should be used for
     originator value.
+* **license**:
+    License expression explicitly declared by the author.
+
 
 Example of the `sbom.yml` manifest file for the ESP-IDF blink example.
 
@@ -116,6 +119,7 @@ Information from the `sbom.yml` file are mapped to the following SPDX tags.
 | cpe          | ExternalRef cpe23Type        |
 | supplier     | PackageSupplier              |
 | originator   | PackageOriginator            |
+| license      | PackageLicenseDeclared       |
 
 Even though the `sbom.yml` file is the primary source of information, the esp-idf-sbom tool
 is also looking at other places if it's not present. The version, description and url
@@ -173,6 +177,23 @@ with
     esp-idf-sbom check [SBOM file]
 
 If *SBOM file* is not provided, the stardard input stream is used.
+
+
+## Licenses and Copyrights
+
+All **component** and **submodule** files are scanned for the `SPDX-License-Identifier`,
+`SPDX-FileCopyrightText` and `SPDX-FileContributor` SPDX file tags. Information from
+these tags is used in the generated SBOM file to specify licenses and copyrights for
+SPDX packages which represent **project**, **component** or **submodule**. The project's
+final license expression is a logical AND of all licenses concluded from **components**
+and **submodules** used in the final project binary.
+
+The license can be also explicitly declared by the author in the `sbom.yml` file with the `license`
+variable. This information is used as a value for the `PackageLicenseDeclared` SPDX tag for
+given **project**, **component** or **submodule**.
+
+The `--no-file-tags` option disables scanning for SPDX file tags. When used the license and
+copyright information from files will not be presented in the generated SBOM file.
 
 
 ## Usage example
