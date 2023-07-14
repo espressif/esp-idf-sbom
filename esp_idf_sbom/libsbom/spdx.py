@@ -436,7 +436,7 @@ class SPDXDocument(SPDXObject):
 
         if 'version' not in proj_desc:
             log.err.die((f'Project description file "{proj_desc_path}" does not support SBOM generation. '
-                         f'Please see the list of IDF versions supported by esp-idf-sbom.'))
+                         f'Please see the list of IDF versions required by esp-idf-sbom.'))
 
         return proj_desc  # type: ignore
 
