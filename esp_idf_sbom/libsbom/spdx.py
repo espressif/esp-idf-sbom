@@ -196,8 +196,10 @@ class SPDXObject:
 
     def hash_file(self, fn: str, alg: str='sha1') -> str:
         """Hash file with requested algorithm"""
+        h = hashlib.new(alg)
         with open(fn, 'rb') as f:
-            return hashlib.file_digest(f, alg).hexdigest()  # type: ignore
+            h.update(f.read())
+            return h.hexdigest()
 
     def get_files(self, path: str, prefix: str, exclude_dirs: Optional[List[str]]=None) -> List['SPDXFile']:
         """Return list of SPDXFile objects for files found in path.
