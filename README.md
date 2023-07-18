@@ -10,6 +10,36 @@ It also allows to check generated SBOM files for know vulnerabilities against
 the [National Vulnerability Database][4] (NVD) based on the
 [Common Platform Enumeration][5] (CPE) provided in the SBOM.
 
+## Required ESP-IDF versions
+
+All release branches of currently supported ESP-IDF versions allow to
+generate the SBOM file.
+
+| ESP-IDF version | branch with SBOM support  | commits
+|-----------------|---------------------------|----------------------------------------------------------------------------------------------------------------------------------|
+| 4.3             | release/v4.3              | [befb32b45bc9314b48c29624f9a2c2ef30e34260](https://github.com/espressif/esp-idf/commit/befb32b45bc9314b48c29624f9a2c2ef30e34260) |
+|                 |                           | [f1eef50947ab5770ae4d904c07615e7acab06002](https://github.com/espressif/esp-idf/commit/f1eef50947ab5770ae4d904c07615e7acab06002) |
+| 4.4             | release/v4.4              | [ee505a996045c3657711c3d70c58af8dd48b1426](https://github.com/espressif/esp-idf/commit/ee505a996045c3657711c3d70c58af8dd48b1426) |
+|                 |                           | [53f271ce108d6fa99cf92d59fe9b9dcc4b8fb45b](https://github.com/espressif/esp-idf/commit/53f271ce108d6fa99cf92d59fe9b9dcc4b8fb45b) |
+| 5.0             | release/v5.0              | [30735b33efabd6cf038bcb258b674cf828ad5ecf](https://github.com/espressif/esp-idf/commit/30735b33efabd6cf038bcb258b674cf828ad5ecf) |
+|                 |                           | [9156bbb55c920d6704329975311c331b931ed6bc](https://github.com/espressif/esp-idf/commit/9156bbb55c920d6704329975311c331b931ed6bc) |
+| 5.1             | release/v5.1              | [0f781c718c8548cd2b0e41a30e1814f1c6ed93a2](https://github.com/espressif/esp-idf/commit/0f781c718c8548cd2b0e41a30e1814f1c6ed93a2) |
+|                 |                           | [03162bb276d4155760e8aa839020f0587f5ef599](https://github.com/espressif/esp-idf/commit/03162bb276d4155760e8aa839020f0587f5ef599) |
+| latest          | master                    |                                                                                                                                  |
+
+Older versions, e.g. `v5.0.2`, do not have the required code merged and the following error
+message will be printed.
+
+    E: Project description file "build/project_description.json" does not support SBOM generation. Please see the list of IDF versions required by esp-idf-sbom.
+
+If you see this error message and want to try `esp-idf-sbom`, you can
+
+1. switch to the release branch for version you are using. For example `release/v5.0` if you are using `v5.0.2`.
+2. use future ESP-IDF versions to experiment with esp-idf-sbom.
+3. use `git-cherry-pick` and apply commits for your release from the table above. For example for `v5.0.2` use
+
+    $ git cherry-pick 30735b33efabd6cf038bcb258b674cf828ad5ecf 9156bbb55c920d6704329975311c331b931ed6bc
+
 
 ## SPDX SBOM layout
 
@@ -54,6 +84,9 @@ It's a simple yaml file, which may contain the following entries.
     component. For more detailed information please see the SPDX specification.
     As for supplier, *Person:* or *Organization:* prefix should be used for
     originator value.
+* **license**:
+    License expression explicitly declared by the author.
+
 
 Example of the `sbom.yml` manifest file for the ESP-IDF blink example.
 
@@ -75,7 +108,7 @@ repository: https://github.com/espressif/esp-idf.git@dc016f59877d13e6e7d4fc193aa
 supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
 ```
 
-Information from the `sbom.yml` file are mapped to the following SPDX tags.
+Information from the `sbom.yml` manifest file are mapped to the following SPDX tags.
 
 | manifest     | SPDX                         |
 |--------------|------------------------------|
@@ -86,13 +119,25 @@ Information from the `sbom.yml` file are mapped to the following SPDX tags.
 | cpe          | ExternalRef cpe23Type        |
 | supplier     | PackageSupplier              |
 | originator   | PackageOriginator            |
+| license      | PackageLicenseDeclared       |
 
 Even though the `sbom.yml` file is the primary source of information, the esp-idf-sbom tool
-is also looking at other places if it's not present. The version, description and url
-information from the `idf_component.yml` manifest file is used for components managed by
-the component manager. Component version may be guessed based on git-describe and Espressif
+is also looking at other places if it's not present. The version, description, maintainers and
+url information from the `idf_component.yml` manifest file is used for components managed by
+the component manager.
+
+Information from the `idf_component.yml` manifest file are mapped to the following SPDX tags.
+
+| manifest     | SPDX                         |
+|--------------|------------------------------|
+| version      | PackageVersion               |
+| description  | PackageSummary               |
+| maintainers  | PackageSupplier              |
+| url          | PackageDownloadLocation      |
+
+Component version may be guessed based on git-describe and Espressif
 as a default supplier may be guessed based on git repository or package URL. The guessing
-may be dissabled by using the '--no-guess' option. For submodules, the .gitmodules file is
+may be disabled by using the '--no-guess' option. For submodules, the .gitmodules file is
 also checked for additional submodule information.
 
 
@@ -133,7 +178,7 @@ component is compiled, due to component dependecies, but it's actually not linke
 final binary, it will be by default presented in the SBOM file, but it will not be reachable
 from the root **project** package and hence it will not be checked for vulnerabilities.
 The reason for this is to avoid possible false possitives, because such packages
-have no direct impact on the resulting application. This can be changed with the `--all`
+have no direct impact on the resulting application. This can be changed with the `--check-all-packages`
 option. If used, all packages in the SBOM file will be checked for possible vulnerabilities
 regardless their relationships to the application binary.
 
@@ -143,6 +188,23 @@ with
     esp-idf-sbom check [SBOM file]
 
 If *SBOM file* is not provided, the stardard input stream is used.
+
+
+## Licenses and Copyrights
+
+All **component** and **submodule** files are scanned for the `SPDX-License-Identifier`,
+`SPDX-FileCopyrightText` and `SPDX-FileContributor` SPDX file tags. Information from
+these tags is used in the generated SBOM file to specify licenses and copyrights for
+SPDX packages which represent **project**, **component** or **submodule**. The project's
+final license expression is a logical AND of all licenses concluded from **components**
+and **submodules** used in the final project binary.
+
+The license can be also explicitly declared by the author in the `sbom.yml` file with the `license`
+variable. This information is used as a value for the `PackageLicenseDeclared` SPDX tag for
+given **project**, **component** or **submodule**.
+
+The `--no-file-tags` option disables scanning for SPDX file tags. When used the license and
+copyright information from files will not be presented in the generated SBOM file.
 
 
 ## Usage example
