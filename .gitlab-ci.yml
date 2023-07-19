@@ -1,5 +1,6 @@
 stages:
   - codecheck
+  - test
 
 
 # WORKFLOW RULES
@@ -20,6 +21,14 @@ workflow:
   tags:
     - build
     - internet
+
+.idf_template:
+  image: "espressif/idf:latest"
+  tags:
+    - build
+    - internet
+  before_script:
+    - pip install -e .[dev]
 # --------------------------------------------------------------------------------------------------
 
 
@@ -37,4 +46,13 @@ pre-commit_hooks_MR:
     - git diff-tree --no-commit-id --name-only -r $CI_COMMIT_SHA | xargs pre-commit run --files
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+# ------------------------------------------------------------------------------------------------------
+
+# TESTS
+# ------------------------------------------------------------------------------------------------------
+test-sbom:
+  stage: test
+  extends: .idf_template
+  script:
+    - pytest test
 # ------------------------------------------------------------------------------------------------------
