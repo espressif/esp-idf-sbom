@@ -49,6 +49,12 @@ setup(
         'schema',
         'license-expression',
     ],
+    extras_require={
+        'dev': [
+            'pytest',
+            'spdx-tools>=v0.8.0rc1',
+        ],
+    },
     classifiers=[
         'Development Status :: 1 - Planning',
         'Intended Audience :: Developers',

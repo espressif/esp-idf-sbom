@@ -88,7 +88,7 @@ def get_submodule_config(git_wdir: str, name: str) -> Dict[str,str]:
     for var, val in cfg.items():
         if not var.startswith(prefix):
             continue
-        var = var.removeprefix(prefix)
+        var = var[len(prefix):]
         sub_cfg[var] = val
 
     return sub_cfg
