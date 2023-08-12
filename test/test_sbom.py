@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+import shutil
 import sys
 from distutils.dir_util import copy_tree
 from pathlib import Path
@@ -61,6 +62,36 @@ def test_sbom_project_manifest(hello_world_build: Path) -> None:
     assert 'PackageSupplier: Person: John Doe' in p.stdout
 
     manifest.unlink()
+
+
+def test_sbom_subpackages(hello_world_build: Path) -> None:
+    """ Create two subpackages in main component and add sbom.yml
+    into them. Check that the subpackages are presented in the
+    generated sbom.
+    main
+    └── subpackage
+        ├── sbom.yml
+        └── subsubpackage
+            └── sbom.yml
+    """
+    subpackage_path = hello_world_build / 'main' / 'subpackage'
+    subpackage_path.mkdir(parents=True)
+    (subpackage_path / 'sbom.yml').write_text('description: TEST_SUBPACKAGE')
+
+    subsubpackage_path = subpackage_path / 'subsubpackage'
+    subsubpackage_path.mkdir(parents=True)
+    (subsubpackage_path / 'sbom.yml').write_text('description: TEST_SUBSUBPACKAGE')
+
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files', 'rem',
+             '--no-file-tags', proj_desc_path], check=True, capture_output=True,
+            text=True)
+
+    assert 'TEST_SUBPACKAGE' in p.stdout
+    assert 'TEST_SUBSUBPACKAGE' in p.stdout
+
+    shutil.rmtree(subpackage_path)
 
 
 def test_validate_sbom(hello_world_build: Path) -> None:

@@ -46,9 +46,12 @@ If you see this error message and want to try `esp-idf-sbom`, you can
 The SBOM file is created based on application sources, build artefacts, information
 provided by the ESP-IDF build system and SBOM manifest files. The resulting SBOM
 file contains SPDX packages for the final **project** application, used **toolchain**,
-**components** used during build and git **submodules**. Packages are linked
-together with SPDX *DEPENDS_ON* relationships with the **project** package as the root
-package. By default packages for configuration only components and components not
+**components** used during build, git **submodules** and **subpackages**. The **subpackages**
+are created based on `sbom.yml` manifest files found in **submodules** and **subpackages**
+sub-directories. Please see [Manifest file](#manifest-file).
+
+Packages are linked together with SPDX *DEPENDS_ON* relationships with the **project** package
+as the root package. By default packages for configuration only components and components not
 linked into the application are present in SBOM, but are not linked through SPDX
 relationships. In other worlds dependencies on such packages are removed. This behaviour
 can be altered with `--add-config-deps` and `--add-unused-deps` command line options.
@@ -57,11 +60,32 @@ can be altered with `--add-config-deps` and `--add-unused-deps` command line opt
 ## Manifest file
 
 During SBOM generation the esp-idf-sbom tool is looking for `sbom.yml` manifest files.
-The manifest file may be present at root of **project**, **component** or **submodule**.
-It is used as a source of information for the corresponding SPDX package in the SBOM file
+They are used as a source of information for the corresponding SPDX package in the SBOM file
 as described above.
 
-It's a simple yaml file, which may contain the following entries.
+The manifest file may be present at root of **project**, **component**, **submodule** or
+in any of their sub-directories. If `sbom.yml` is found in a sub-directory a new **subpackage**
+SPDX package is created and linked with the parent SPDX package. This can be used in cases
+where e.g. one **component** contains multiple libraries and they should be represented
+by separate SPDX packages.
+
+Example of multiple `sbom.yml` files usage for the `console` component.
+
+    console
+    ├── argtable3
+    │   └── sbom.yml
+    ├── linenoise
+    │   └── sbom.yml
+    └── sbom.yml
+
+The `esp-idf-sbom` tool will create main console **component** package, which will
+contain two **subpackages** for `argtable3` and `linenoise` libraries. Please note that
+the manifest file in the `console` component root directory is not necessary to create
+SPDX package, because `esp-idf-sbom` automatically creates SPDX package for each
+**component**. The `sbom.yml` files may be placed at any sub-directory depth and
+`esp-idf-sbom` will create proper SPDX package hierarchy for them.
+
+The `sbom.yml` is a simple yaml file, which may contain the following entries.
 
 * **version**:
     Package version.

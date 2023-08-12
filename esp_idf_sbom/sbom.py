@@ -139,6 +139,12 @@ def main():
                                help=('Remove submodules info and include submodules files directly '
                                      'in components. By default submodules are reported as separated '
                                      'packages.'))
+    create_parser.add_argument('--rem-subpackages',
+                               action='store_true',
+                               default=bool(os.environ.get('SBOM_CREATE_REM_SUBPACKAGES')),
+                               help=('Remove subpackages info and include subpackages files directly '
+                                     'in components. By default subpackages are reported as separated '
+                                     'packages.'))
     create_parser.add_argument('--files',
                                choices=['auto', 'add', 'rem'],
                                default=os.environ.get('SBOM_CREATE_FILES', 'auto'),
