@@ -8,7 +8,7 @@ Miscellaneous helpers
 import os
 import subprocess
 from pathlib import Path
-from typing import AnyStr, Dict, List, Optional, Tuple
+from typing import AnyStr, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import urlparse
 
 
@@ -22,9 +22,37 @@ def prelpath(path: str, base: str) -> str:
     return Path(path).relative_to(base).as_posix()
 
 
+def psubdir(path: str, base: str) -> bool:
+    """Return True if path is subdir of base."""
+    return Path(base).resolve() in Path(path).resolve().parents
+
+
+def ppaths(paths: List[str]) -> List[str]:
+    """Return paths with forward slashes."""
+    return [str(Path(p).as_posix()) for p in paths]
+
+
+def ppath(path: str) -> str:
+    """Return path forward slashes."""
+    return ppaths([path])[0]
+
+
 def psplit(path: str) -> Tuple[str,...]:
     """Split path into tuple of components."""
     return Path(path).parts
+
+
+def pwalk(path: str, exclude_dirs: List[str]=[]) -> Iterator[Tuple[str, List[str], List[str]]]:
+    """Perform os.walk() and skip directories in exclude_dirs. Compare and
+    return paths in posix format."""
+    path = ppath(path)
+    exclude_dirs = ppaths(exclude_dirs)
+
+    for root, dirs, files in os.walk(path):
+        root = ppath(root)
+        if exclude_dirs and root in exclude_dirs:
+            continue
+        yield (root, dirs, files)
 
 
 def is_remote_url(url: str='') -> bool:
