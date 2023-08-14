@@ -1021,40 +1021,63 @@ def parse_packages(buf: str) -> Dict[str, Dict[str, List[str]]]:
     """Very dummy SPDX file parser. Returns dictionary, where key is
     package SPDXID and value is dictionary with SPDX tag/values."""
     in_package = False
-    idx = 0
+    in_text = False
+    idx = -1
     packages: Dict[int, Dict[str, List[str]]] = {}
-    lines = buf.splitlines()
+    tag = ''
+    val = ''
+
+    def add_tag_value(tag: str, val: str):
+        if not in_package:
+            return
+
+        if tag not in packages[idx]:
+            packages[idx][tag] = []
+
+        packages[idx][tag].append(val)
+
+    lines = buf.splitlines(keepends=True)
     for line in lines:
-        line = line.strip()
+        if in_text:
+            val += line
+            if '</text>' not in line:
+                # still in text value
+                continue
+            val = val.rstrip()
+            in_text = False
+            add_tag_value(tag, val)
 
-        if not line or line[0] == '#':
+        if not line.strip() or line[0] == '#':
+            # skip empty lines or comments
             continue
 
-        try:
-            tag, val = line.split(':', maxsplit=1)
-        except ValueError:
-            # can be multiline text inside <text>...</text>
+        if ':' not in line:
+            # line not in tag:value format
             continue
+
+        tag, val = line.split(':', maxsplit=1)
 
         tag = tag.strip()
-        val = val.strip()
+        if tag == 'FileName':
+            # files are listed after package, so this is
+            # end of current package if any
+            in_package = False
+            continue
+
+        val = val.lstrip()
+        if val.startswith('<text>') and '</text>' not in val:
+            # text value may have multiple lines
+            in_text = True
+            continue
+
+        val = val.rstrip()
 
         if tag == 'PackageName':
             in_package = True
             idx += 1
             packages[idx] = {}
 
-        if not in_package:
-            continue
-
-        if tag == 'FileName':
-            in_package = False
-            continue
-
-        if tag not in packages[idx]:
-            packages[idx][tag] = []
-
-        packages[idx][tag].append(val)
+        add_tag_value(tag, val)
 
     spdx_packages = {pkg['SPDXID'][0]: pkg for pkg in packages.values()}
     log.err.debug('parsed spdx packages:')
