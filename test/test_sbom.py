@@ -96,6 +96,26 @@ def test_sbom_subpackages(hello_world_build: Path) -> None:
     shutil.rmtree(subpackage_path)
 
 
+def test_sbom_manifest_from_idf_component(hello_world_build: Path) -> None:
+    """Test that sbom section/dict present in idf_component.yml is used if presented"""
+
+    manifest = hello_world_build / 'main' / 'idf_component.yml'
+    desc = 'FROM IDF_COMPONENT_YML SBOM NAMESPACE'
+    content = f'''
+              sbom:
+                description: {desc}
+              '''
+    manifest.write_text(dedent(content))
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files', 'rem',
+             '--no-file-tags', proj_desc_path], check=True, capture_output=True,
+            text=True)
+
+    assert f'PackageSummary: <text>{desc}</text>' in p.stdout
+
+    manifest.unlink()
+
+
 def test_validate_sbom(hello_world_build: Path) -> None:
     tmpdir = TemporaryDirectory()
     output_fn = Path(tmpdir.name) / 'sbom.spdx'

@@ -289,7 +289,7 @@ class SPDXObject:
             raise schema.SchemaError((f'License expression "{lic}" is not valid: {e}'))
         return True
 
-    def get_manifest(self, directory: str) -> Dict[str,str]:
+    def get_manifest(self, directory: str) -> Dict[str,Any]:
         """Return manifest information found in given directory."""
         def validate_sbom_manifest(manifest: Dict[str,str]) -> None:
             try:
@@ -310,7 +310,7 @@ class SPDXObject:
             except schema.SchemaError as e:
                 log.err.die(f'The sbom.yml manifest file in "{directory}" is not valid: {e}')
 
-        def load(fn: str) -> Dict[str,str]:
+        def load(fn: str) -> Dict[str,Any]:
             # Helper to load yml files.
             path = utils.pjoin(directory, fn)
             if not os.path.isfile(path):
@@ -319,7 +319,7 @@ class SPDXObject:
             with open(path, 'r') as f:
                 return yaml.safe_load(f.read()) or {}
 
-        def update(dst: Dict[str,str], src: Dict[str,str]) -> None:
+        def update(dst: Dict[str,Any], src: Dict[str,Any]) -> None:
             # Update manifest dict with new values from src.
             for key, val in src.items():
                 if key not in dst:
@@ -336,6 +336,11 @@ class SPDXObject:
         validate_sbom_manifest(sbom_yml)
         update(manifest, sbom_yml)
         idf_component_yml = load('idf_component.yml')
+        # idf_component_yml may contains special sbom section
+        idf_component_sbom = idf_component_yml.get('sbom', dict())
+        validate_sbom_manifest(idf_component_sbom)
+        update(manifest, idf_component_sbom)
+        # try to fill missing info dirrectly from idf_component_yml
         update(manifest, idf_component_yml)
 
         if not manifest['supplier']:

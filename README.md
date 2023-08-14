@@ -116,23 +116,19 @@ The `sbom.yml` is a simple yaml file, which may contain the following entries.
 
 Example of the `sbom.yml` manifest file for the ESP-IDF blink example.
 
-```
-version: 0.1.0
-description: Blink application example
-url: https://blink.org/blink-0.1.0.tar.gz # non-existing package download URL example
-cpe: cpe:2.3:a:hrbata:blink:{}:*:*:*:*:*:*:* # non-existing CPE example
-supplier: 'Person: Frantisek Hrbata (frantisek.hrbata@espressif.com)'
-originator: 'Organization: Espressif Systems (Shanghai) CO LTD'
-```
+    version: 0.1.0
+    description: Blink application example
+    url: https://blink.org/blink-0.1.0.tar.gz # non-existing package download URL example
+    cpe: cpe:2.3:a:hrbata:blink:{}:*:*:*:*:*:*:* # non-existing CPE example
+    supplier: 'Person: Frantisek Hrbata (frantisek.hrbata@espressif.com)'
+    originator: 'Organization: Espressif Systems (Shanghai) CO LTD'
 
 Example of the `sbom.yml` manifest file for the blink's main component.
 
-```
-version: 0.1.0
-description: Main component for blink application
-repository: https://github.com/espressif/esp-idf.git@dc016f59877d13e6e7d4fc193aa5aa764547f16d#examples/get-started/blink
-supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
-```
+    version: 0.1.0
+    description: Main component for blink application
+    repository: https://github.com/espressif/esp-idf.git@dc016f59877d13e6e7d4fc193aa5aa764547f16d#examples/get-started/blink
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
 
 Information from the `sbom.yml` manifest file are mapped to the following SPDX tags.
 
@@ -149,9 +145,27 @@ Information from the `sbom.yml` manifest file are mapped to the following SPDX t
 | license      | PackageLicenseDeclared       |
 
 Even though the `sbom.yml` file is the primary source of information, the esp-idf-sbom tool
-is also looking at other places if it's not present. The name, version, description, maintainers and
-url information from the `idf_component.yml` manifest file is used for components managed by
-the component manager.
+is also looking at other places if it's not present. The `idf_component.yml` manifest file,
+used for components managed by the component manager, may have `sbom` dictionary/namespace,
+which will be used by esp-idf-sbom if presented. This dictionary may contain the same information
+as `sbom.yml`.
+
+Example of the `idf_component.yml` manifest file for the blink's main component.
+
+    dependencies:
+      idf:
+        version: '>=5.0'
+    description: Driver for Addressable LED Strip (WS2812, etc)
+    url: https://github.com/espressif/idf-extra-components/tree/master/led_strip
+    version: 2.4.1
+    sbom:
+      version: 0.1.0
+      description: Main component for blink application
+      repository: https://github.com/espressif/esp-idf.git@dc016f59877d13e6e7d4fc193aa5aa764547f16d#examples/get-started/blink
+      supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+
+If the `sbom` dictionary is not presented in `idf_component.yml` or it's missing some information,
+the version, description, maintainers and url information from `idf_component.yml` manifest is used.
 
 Information from the `idf_component.yml` manifest file are mapped to the following SPDX tags.
 
@@ -241,16 +255,12 @@ This is an example of basic usage for the blink project, which is part of the ES
 two `sbom.yml` files for project and main component showed above were added. It's expected
 that ESP-IDF is installed and set.
 
-```
-$ cd examples/get-started/blink/ # In esp-idf directory go to the blink example
-$ idf.py build                   # Project has to be built first
-$ esp-idf-sbom create -o blink.spdx build/project_description.json
-$ esp-idf-sbom check blink.spdx
-```
+    $ cd examples/get-started/blink/ # In esp-idf directory go to the blink example
+    $ idf.py build                   # Project has to be built first
+    $ esp-idf-sbom create -o blink.spdx build/project_description.json
+    $ esp-idf-sbom check blink.spdx
 
-```
-$ esp-idf-sbom create build/project_description.json | esp-idf-sbom check
-```
+    $ esp-idf-sbom create build/project_description.json | esp-idf-sbom check
 
 The resulting `blink.spdx` sbom file can be found in the `examples` directory.
 
