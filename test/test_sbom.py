@@ -44,6 +44,7 @@ def test_check_sbom(hello_world_build: Path) -> None:
 def test_sbom_project_manifest(hello_world_build: Path) -> None:
     manifest = hello_world_build / 'sbom.yml'
     content = '''
+              name: MY-PROJECT-NAME
               version: 999.999.999
               description: testing hello_world application
               url: https://test.hello.world.org/hello_world-0.1.0.tar.gz
@@ -60,6 +61,7 @@ def test_sbom_project_manifest(hello_world_build: Path) -> None:
     assert 'PackageDownloadLocation: https://test.hello.world.org/hello_world-0.1.0.tar.gz' in p.stdout
     assert 'ExternalRef: SECURITY cpe23Type cpe:2.3:a:hello_world:hello_world:999.999.999:*:*:*:*:*:*:*' in p.stdout
     assert 'PackageSupplier: Person: John Doe' in p.stdout
+    assert 'PackageName: MY-PROJECT-NAME' in p.stdout
 
     manifest.unlink()
 

@@ -87,6 +87,8 @@ SPDX package, because `esp-idf-sbom` automatically creates SPDX package for each
 
 The `sbom.yml` is a simple yaml file, which may contain the following entries.
 
+* **name**:
+    Package name that will be used in the SPDX package.
 * **version**:
     Package version.
 * **description**:
@@ -136,6 +138,7 @@ Information from the `sbom.yml` manifest file are mapped to the following SPDX t
 
 | manifest     | SPDX                         |
 |--------------|------------------------------|
+| name         | PackageName                  |
 | version      | PackageVersion               |
 | description  | PackageSummary               |
 | repository   | ExternalRef OTHER repository |
@@ -146,7 +149,7 @@ Information from the `sbom.yml` manifest file are mapped to the following SPDX t
 | license      | PackageLicenseDeclared       |
 
 Even though the `sbom.yml` file is the primary source of information, the esp-idf-sbom tool
-is also looking at other places if it's not present. The version, description, maintainers and
+is also looking at other places if it's not present. The name, version, description, maintainers and
 url information from the `idf_component.yml` manifest file is used for components managed by
 the component manager.
 
@@ -154,6 +157,7 @@ Information from the `idf_component.yml` manifest file are mapped to the followi
 
 | manifest     | SPDX                         |
 |--------------|------------------------------|
+| name         | PackageName                  |
 | version      | PackageVersion               |
 | description  | PackageSummary               |
 | maintainers  | PackageSupplier              |

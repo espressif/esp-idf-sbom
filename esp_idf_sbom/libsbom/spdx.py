@@ -151,6 +151,7 @@ class SPDXObject:
     # Supplier tag value for Espressif.
     ESPRESSIF_SUPPLIER = 'Organization: Espressif Systems (Shanghai) CO LTD'
     EMPTY_MANIFEST = {
+        'name': '',
         'version': '',
         'repository': '',
         'url': '',
@@ -294,6 +295,7 @@ class SPDXObject:
             try:
                 sbom_schema = schema.Schema(
                     {
+                        schema.Optional('name'): str,
                         schema.Optional('version'): schema.Or(str,int),
                         schema.Optional('repository'): schema.And(str, self.check_url),
                         schema.Optional('url'): schema.And(str, self.check_url),
@@ -496,7 +498,7 @@ class SPDXPackage(SPDXObject):
         if args.file_tags:
             self.tags = self.get_tags(exclude_dirs)
 
-        self['PackageName'] = [f'{self.mark}-{self.name}']
+        self['PackageName'] = [self.manifest['name'] or f'{self.mark}-{self.name}']
         if self.manifest['description']:
             self['PackageSummary'] = [f'<text>{self.manifest["description"]}</text>']
         self['SPDXID'] = ['SPDXRef-{}-{}'.format(self.mark.upper(), self.sanitize_spdxid(self.name))]
@@ -908,6 +910,7 @@ class SPDXSubmodule(SPDXPackage):
                 try:
                     submodule_schema = schema.Schema(
                         {
+                            schema.Optional('sbom-name'): str,
                             schema.Optional('sbom-version'): schema.Or(str,int),
                             schema.Optional('sbom-repository'): schema.And(str, self.check_url),
                             schema.Optional('sbom-url'): schema.And(str, self.check_url),
@@ -929,6 +932,10 @@ class SPDXSubmodule(SPDXPackage):
 
         manifest = super().get_manifest(directory)
         module_cfg = get_submodule_config()
+
+        if not manifest['name']:
+            manifest['name'] = module_cfg.get('name', '')
+
         if not manifest['version']:
             if 'sbom-version' in module_cfg:
                 manifest['version'] = module_cfg['sbom-version']
