@@ -12,6 +12,7 @@ from textwrap import dedent
 
 import pytest
 
+IDF_PY_PATH = Path(os.environ['IDF_PATH']) / 'tools' / 'idf.py'
 
 @pytest.fixture
 def hello_world_build(ctx: dict={'tmpdir': None}) -> Path:
@@ -22,8 +23,8 @@ def hello_world_build(ctx: dict={'tmpdir': None}) -> Path:
     tmpdir = TemporaryDirectory()
     hello_world_path = Path(os.environ['IDF_PATH']) / 'examples' / 'get-started' / 'hello_world'
     copy_tree(str(hello_world_path), tmpdir.name, verbose=0)
-    run(['idf.py', 'fullclean'], cwd=tmpdir.name, check=True)
-    run(['idf.py', 'build'], cwd=tmpdir.name, check=True)
+    run([sys.executable, IDF_PY_PATH, 'fullclean'], cwd=tmpdir.name, check=True)
+    run([sys.executable, IDF_PY_PATH, 'build'], cwd=tmpdir.name, check=True)
     ctx['tmpdir'] = tmpdir
     return Path(tmpdir.name)
 
