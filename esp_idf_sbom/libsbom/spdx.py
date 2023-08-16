@@ -118,7 +118,7 @@ class SPDXFileObjsTags(SPDXTags):
 
 class SPDXDirTags(SPDXTags):
     """Unified SPDX file tags found in the whole directory, except file in exclude_dirs."""
-    def __init__(self, path: str, exclude_dirs: List[str]=[]) -> None:
+    def __init__(self, path: str, exclude_dirs: Optional[List[str]]=None) -> None:
         super().__init__()
         self.path = path
 
@@ -211,7 +211,7 @@ class SPDXObject:
             h.update(f.read())
             return h.hexdigest()
 
-    def get_files(self, path: str, prefix: str, exclude_dirs: List[str]=[]) -> List['SPDXFile']:
+    def get_files(self, path: str, prefix: str, exclude_dirs: Optional[List[str]]=None) -> List['SPDXFile']:
         """Return list of SPDXFile objects for files found in path.
 
         :param path: path to recursively traverse
@@ -594,7 +594,7 @@ class SPDXPackage(SPDXObject):
 
         return subpackages
 
-    def get_files(self, path: str, prefix: str, exclude_dirs: List[str]=[]) -> List['SPDXFile']:
+    def get_files(self, path: str, prefix: str, exclude_dirs: Optional[List[str]]=None) -> List['SPDXFile']:
         files: List['SPDXFile'] = []
         if self.include_files(repo=self.manifest['repository'],
                               url=self.manifest['url'],
@@ -602,7 +602,7 @@ class SPDXPackage(SPDXObject):
             files = super().get_files(path, f'{prefix}-{self.name}', exclude_dirs)
         return files
 
-    def get_tags(self, exclude_dirs: List[str]) -> SPDXTags:
+    def get_tags(self, exclude_dirs: Optional[List[str]]=None) -> SPDXTags:
         tags: SPDXTags = SPDXTags()
         if self.files:
             tags = SPDXFileObjsTags(self.files)
@@ -750,7 +750,7 @@ class SPDXProject(SPDXPackage):
 
         return components
 
-    def get_files(self, path: str, prefix: str, exclude_dirs: List[str]=[]) -> List['SPDXFile']:
+    def get_files(self, path: str, prefix: str, exclude_dirs: Optional[List[str]]=None) -> List['SPDXFile']:
         # project has just the final binary file
         if not self.include_files():
             return []
@@ -770,7 +770,7 @@ class SPDXProject(SPDXPackage):
 
         return manifest
 
-    def get_tags(self, exclude_dirs: List[str]) -> SPDXTags:
+    def get_tags(self, exclude_dirs: Optional[List[str]]=None) -> SPDXTags:
         # Collect tags from components and subpackages which have
         # relationship with Project package.
         tags: SPDXTags = SPDXTags()

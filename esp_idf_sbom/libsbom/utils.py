@@ -42,10 +42,12 @@ def psplit(path: str) -> Tuple[str,...]:
     return Path(path).parts
 
 
-def pwalk(path: str, exclude_dirs: List[str]=[]) -> Iterator[Tuple[str, List[str], List[str]]]:
+def pwalk(path: str, exclude_dirs: Optional[List[str]]=None) -> Iterator[Tuple[str, List[str], List[str]]]:
     """Perform os.walk() and skip directories in exclude_dirs. Compare and
     return paths in posix format."""
     path = ppath(path)
+    if exclude_dirs is None:
+        exclude_dirs = []
     exclude_dirs = ppaths(exclude_dirs)
 
     for root, dirs, files in os.walk(path):
