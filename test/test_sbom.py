@@ -116,6 +116,46 @@ def test_sbom_manifest_from_idf_component(hello_world_build: Path) -> None:
     manifest.unlink()
 
 
+def test_cve_exclude_list(hello_world_build: Path) -> None:
+    """Test that CVE-2020-27209 is reported for the main component, then add
+    it to cve-exclude-list and test it's not reported."""
+    manifest = hello_world_build / 'main' / 'sbom.yml'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.spdx'
+
+    content = f'''
+              cpe: cpe:2.3:a:micro-ecc_project:micro-ecc:1.0:*:*:*:*:*:*:*
+              '''
+
+    manifest.write_text(dedent(content))
+    run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files', 'rem',
+         '--no-file-tags', '-o', output_fn, proj_desc_path],
+        check=True)
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', output_fn],
+            check=True, capture_output=True, text=True)
+
+    assert 'CVEID:   CVE-2020-27209' in p.stdout
+
+    content = f'''
+              cpe: cpe:2.3:a:micro-ecc_project:micro-ecc:1.0:*:*:*:*:*:*:*
+              cve-exclude-list:
+                - cve: CVE-2020-27209
+                  reason: This is not vulnerable
+              '''
+
+    manifest.write_text(dedent(content))
+    run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files', 'rem',
+         '--no-file-tags', '-o', output_fn, proj_desc_path],
+        check=True)
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', output_fn],
+            check=True, capture_output=True, text=True)
+
+    assert 'CVEID:   CVE-2020-27209' not in p.stdout
+
+    manifest.unlink()
+
+
 def test_validate_sbom(hello_world_build: Path) -> None:
     tmpdir = TemporaryDirectory()
     output_fn = Path(tmpdir.name) / 'sbom.spdx'

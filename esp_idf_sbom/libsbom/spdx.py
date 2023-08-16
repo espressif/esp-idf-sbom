@@ -160,6 +160,7 @@ class SPDXObject:
         'originator': '',
         'description': '',
         'license': '',
+        'cve-exclude-list': [],
     }
 
     def __init__(self, args: Namespace, proj_desc: Dict[str, Any]) -> None:
@@ -289,68 +290,77 @@ class SPDXObject:
             raise schema.SchemaError((f'License expression "{lic}" is not valid: {e}'))
         return True
 
+    def validate_manifest(self, manifest: Dict[str,str], source:str) -> None:
+        """Validate manifest dictionary"""
+        cve_exclude_list_schema = schema.Schema(
+            [{
+                'cve': str,
+                'reason': str,
+            }], ignore_extra_keys=True)
+
+        sbom_schema = schema.Schema(
+            {
+                schema.Optional('name'): str,
+                schema.Optional('version'): schema.Or(str,float,int),
+                schema.Optional('repository'): schema.And(str, self.check_url),
+                schema.Optional('url'): schema.And(str, self.check_url),
+                schema.Optional('cpe'): schema.And(str, self.check_cpe),
+                schema.Optional('supplier'): schema.And(str, self.check_person_organization),
+                schema.Optional('originator'): schema.And(str, self.check_person_organization),
+                schema.Optional('description'): str,
+                schema.Optional('license'): schema.And(str, self.check_license),
+                schema.Optional('cve-exclude-list'): cve_exclude_list_schema,
+            }, ignore_extra_keys=True)
+
+        try:
+            sbom_schema.validate(manifest)
+        except schema.SchemaError as e:
+            log.err.die(f'Manifest in {source} is not valid: {e}')
+
+    def update_manifest(self, dst: Dict[str,Any], src: Dict[str,Any]) -> None:
+        """Update manifest dict with new values from src."""
+        for key, val in src.items():
+            if key not in dst:
+                continue
+            if not dst[key]:
+                dst[key] = val
+
     def get_manifest(self, directory: str) -> Dict[str,Any]:
         """Return manifest information found in given directory."""
-        def validate_sbom_manifest(manifest: Dict[str,str]) -> None:
-            try:
-                sbom_schema = schema.Schema(
-                    {
-                        schema.Optional('name'): str,
-                        schema.Optional('version'): schema.Or(str,int),
-                        schema.Optional('repository'): schema.And(str, self.check_url),
-                        schema.Optional('url'): schema.And(str, self.check_url),
-                        schema.Optional('cpe'): schema.And(str, self.check_cpe),
-                        schema.Optional('supplier'): schema.And(str, self.check_person_organization),
-                        schema.Optional('originator'): schema.And(str, self.check_person_organization),
-                        schema.Optional('description'): str,
-                        schema.Optional('license'): schema.And(str, self.check_license),
-                    }, ignore_extra_keys=True)
 
-                sbom_schema.validate(manifest)
-            except schema.SchemaError as e:
-                log.err.die(f'The sbom.yml manifest file in "{directory}" is not valid: {e}')
-
-        def load(fn: str) -> Dict[str,Any]:
+        def load(path: str) -> Dict[str,Any]:
             # Helper to load yml files.
-            path = utils.pjoin(directory, fn)
             if not os.path.isfile(path):
                 return {}
 
             with open(path, 'r') as f:
                 return yaml.safe_load(f.read()) or {}
 
-        def update(dst: Dict[str,Any], src: Dict[str,Any]) -> None:
-            # Update manifest dict with new values from src.
-            for key, val in src.items():
-                if key not in dst:
-                    continue
-                if not dst[key]:
-                    dst[key] = val
-
-        # Set default manifest values, which are updated with
-        # manifest file information if presented in component/submodule
-        # directory.
+        # Set default/empty manifest values
         manifest = self.EMPTY_MANIFEST.copy()
 
-        sbom_yml = load('sbom.yml')
-        validate_sbom_manifest(sbom_yml)
-        update(manifest, sbom_yml)
-        idf_component_yml = load('idf_component.yml')
-        # idf_component_yml may contains special sbom section
+        # Process sbom.yml manifest
+        sbom_path = utils.pjoin(directory, 'sbom.yml')
+        sbom_yml = load(sbom_path)
+        self.validate_manifest(sbom_yml, sbom_path)
+        self.update_manifest(manifest, sbom_yml)
+
+        # Process idf_component.yml manifest
+        sbom_path = utils.pjoin(directory, 'idf_component.yml')
+        idf_component_yml = load(sbom_path)
+
+        # idf_component.yml may contains special sbom section
         idf_component_sbom = idf_component_yml.get('sbom', dict())
-        validate_sbom_manifest(idf_component_sbom)
-        update(manifest, idf_component_sbom)
-        # try to fill missing info dirrectly from idf_component_yml
-        update(manifest, idf_component_yml)
+        self.validate_manifest(idf_component_sbom, sbom_path)
+        self.update_manifest(manifest, idf_component_sbom)
+
+        # try to fill missing info dirrectly from idf_component.yml
+        self.update_manifest(manifest, idf_component_yml)
 
         if not manifest['supplier']:
             # Supplier not explicitly provided, use maintainers if present.
             if 'maintainers' in idf_component_yml and idf_component_yml['maintainers']:
                 manifest['supplier'] = 'Person: ' + ', '.join(idf_component_yml['maintainers'])
-
-        if manifest['cpe']:
-            # CPE may contain version placeholder.
-            manifest['cpe'] = manifest['cpe'].format(manifest['version'])
 
         return manifest
 
@@ -484,6 +494,10 @@ class SPDXPackage(SPDXObject):
         self.tags: SPDXTags = SPDXTags()
 
         self.manifest = self.get_manifest(self.dir)
+        if self.manifest['cpe']:
+            # CPE may contain version placeholder.
+            self.manifest['cpe'] = self.manifest['cpe'].format(self.manifest['version'])
+
         if not self.manifest['version']:
             self.manifest['version'] = self.guess_version(self.dir, self.name)
 
@@ -538,6 +552,13 @@ class SPDXPackage(SPDXObject):
         if self.manifest['cpe']:
             self['ExternalRef'] += [f'SECURITY cpe23Type {self.manifest["cpe"]}']
 
+        if self.manifest['cve-exclude-list']:
+            cve_info = {'cve-exclude-list': self.manifest['cve-exclude-list']}
+            cve_info_yaml = yaml.dump(cve_info, indent=4)
+            cve_info_desc = ('# The cve-exclude-list list contains CVEs, which were '
+                             'already evaluated and the package is not vulnerable.')
+            self['PackageComment'] = [f'<text>\n{cve_info_desc}\n{cve_info_yaml}</text>']
+
         self.add_relationships()
 
     def add_relationships(self):
@@ -561,14 +582,14 @@ class SPDXPackage(SPDXObject):
         submodules_info_dict = {i['path']:i for i in submodules_info}
 
         for root, dirs, files in utils.pwalk(self.dir, [self.dir]):
-            if not self.args.rem_subpackages and 'sbom.yml' in files:
-                name = '{}-{}'.format(self.name, utils.prelpath(root, self.dir))
-                subpackages.append(SPDXSubpackage(self.args, self.proj_desc, root, name))
-                dirs.clear()
-            elif not self.args.rem_subpackages and root in submodules_info_dict:
+            if not self.args.rem_subpackages and root in submodules_info_dict:
                 submodule_info = submodules_info_dict[root]
                 name = '{}-{}'.format(self.name, utils.prelpath(submodule_info['path'], self.dir))
                 subpackages.append(SPDXSubmodule(self.args, self.proj_desc, name, submodule_info))
+                dirs.clear()
+            elif not self.args.rem_subpackages and 'sbom.yml' in files:
+                name = '{}-{}'.format(self.name, utils.prelpath(root, self.dir))
+                subpackages.append(SPDXSubpackage(self.args, self.proj_desc, root, name))
                 dirs.clear()
 
         return subpackages
@@ -818,7 +839,7 @@ class SPDXToolchain(SPDXPackage):
         name = self.info['name']
         super().__init__(args, proj_desc, self.info['path'], name, 'toolchain')
 
-    def get_manifest(self, path: str) -> Dict[str, str]:
+    def get_manifest(self, path: str) -> Dict[str, Any]:
         # create manifest based on info from toolchain
         manifest = self.EMPTY_MANIFEST.copy()
         manifest['description'] = self.info['description']
@@ -907,73 +928,37 @@ class SPDXSubmodule(SPDXPackage):
         super().__init__(args, proj_desc, info['path'], name, 'submodule')
 
     def get_manifest(self, directory: str) -> Dict[str,str]:
-        # Get manifest information and try to fill in missing pieces from .gitmodules
-        # if available.
-        def get_submodule_config() -> Dict[str,str]:
-            # Return validated submodule git configuration.
-            def validate_submodule_config(config: Dict[str,str]) -> None:
-                try:
-                    submodule_schema = schema.Schema(
-                        {
-                            schema.Optional('sbom-name'): str,
-                            schema.Optional('sbom-version'): schema.Or(str,int),
-                            schema.Optional('sbom-repository'): schema.And(str, self.check_url),
-                            schema.Optional('sbom-url'): schema.And(str, self.check_url),
-                            schema.Optional('sbom-cpe'): schema.And(str, self.check_cpe),
-                            schema.Optional('sbom-supplier'): schema.And(str, self.check_person_organization),
-                            schema.Optional('sbom-originator'): schema.And(str, self.check_person_organization),
-                            schema.Optional('sbom-description'): str,
-                            schema.Optional('sbom-license'): schema.And(str, self.check_license),
-                        }, ignore_extra_keys=True)
-
-                    submodule_schema.validate(config)
-                except schema.SchemaError as e:
-                    fn = utils.pjoin(self.info['git_wdir'], '.gitmodules')
-                    log.err.die(f'The submodule "{self.info["sm_path"]}" sbom information in "{fn}" is not valid: {e}')
-
-            module_cfg = git.get_submodule_config(self.info['git_wdir'], self.info['name'])
-            validate_submodule_config(module_cfg)
-            return module_cfg
-
+        # Convert sbom information from .gitmodule config into expected manifest dictionary
+        # and extend already created manifest if it's missing some information.
         manifest = super().get_manifest(directory)
-        module_cfg = get_submodule_config()
 
-        if not manifest['name']:
-            manifest['name'] = module_cfg.get('name', '')
+        # Get submodule information form .gitmodules
+        module_cfg = git.get_submodule_config(self.info['git_wdir'], self.info['name'])
 
-        if not manifest['version']:
-            if 'sbom-version' in module_cfg:
-                manifest['version'] = module_cfg['sbom-version']
-            else:
-                manifest['version'] = self.guess_version(self.dir)
+        # Get all sbom keys and strip "sbom-" prefix
+        module_sbom = {k[len('sbom-'):]:v for k,v in module_cfg.items() if k.startswith('sbom-')}
 
-        if not manifest['cpe']:
-            manifest['cpe'] = module_cfg.get('sbom-cpe', '').format(manifest['version'])
+        if 'cve-exclude-list' in module_sbom:
+            # Convert cve-exclude-list values from .gitconfig into list of dicts
+            # as expected by validate_manifest
+            cve_exclude_list = []
+            if not isinstance(module_sbom['cve-exclude-list'], list):
+                module_sbom['cve-exclude-list'] = [module_sbom['cve-exclude-list']]
+            for cve_str in module_sbom['cve-exclude-list']:
+                splitted = cve_str.split(maxsplit=1)
+                cve_id = ''
+                reason = ''
+                if len(splitted) == 2:
+                    cve_id = splitted[0]
+                    reason = splitted[1]
+                elif len(splitted) == 1:
+                    cve_id = splitted[0]
+                cve_exclude_list.append({'cve': cve_id, 'reason': reason})
+            module_sbom['cve-exclude-list'] = cve_exclude_list
 
-        if not manifest['originator']:
-            manifest['originator'] = module_cfg.get('sbom-originator', '')
-
-        if not manifest['url']:
-            manifest['url'] = module_cfg.get('sbom-url', '')
-
-        if not manifest['description']:
-            manifest['description'] = module_cfg.get('sbom-description', '')
-
-        if not manifest['license']:
-            manifest['license'] = module_cfg.get('sbom-license', '')
-
-        if not manifest['repository']:
-            if 'sbom-repository' in module_cfg:
-                manifest['repository'] = module_cfg['sbom-repository']
-            else:
-                manifest['repository'] = git.get_remote_location(self.dir)
-
-        if not manifest['supplier']:
-            if 'sbom-supplier' in module_cfg:
-                manifest['supplier'] = module_cfg['sbom-supplier']
-            else:
-                manifest['supplier'] = self.guess_supplier(self.dir, manifest['url'],
-                                                           manifest['repository'])
+        sbom_path = utils.pjoin(self.info['git_wdir'], '.gitmodules')
+        self.validate_manifest(module_sbom, f'{sbom_path} submodule {self.info["name"]}')
+        self.update_manifest(manifest, module_sbom)
 
         return manifest
 

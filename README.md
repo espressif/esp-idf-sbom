@@ -112,6 +112,13 @@ The `sbom.yml` is a simple yaml file, which may contain the following entries.
     originator value.
 * **license**:
     License expression explicitly declared by the author.
+* **cve-exclude-list**:
+    List of already evaluated CVEs, which do not apply to this package. This can be used
+    to exclude CVEs from the `esp-idf-sbom` checker report in case the package is not
+    vulnerable to specific CVEs. Each CVE in the exclude list is represented as dictionary with
+    the `cve` and `reason` keys. Information about excluded CVEs is added to the generated
+    SBOM file into `PackageComment` SPDX tag and later used by the checker.
+    For usage, please see example below.
 
 
 Example of the `sbom.yml` manifest file for the ESP-IDF blink example.
@@ -122,6 +129,12 @@ Example of the `sbom.yml` manifest file for the ESP-IDF blink example.
     cpe: cpe:2.3:a:hrbata:blink:{}:*:*:*:*:*:*:* # non-existing CPE example
     supplier: 'Person: Frantisek Hrbata (frantisek.hrbata@espressif.com)'
     originator: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    cve-exclude-list:
+       - cve: CVE-2023-1234
+         reason: Description why this package is not vulnerable
+       - cve: CVE-2023-1235
+         reason: Description why this package is not vulnerable
+
 
 Example of the `sbom.yml` manifest file for the blink's main component.
 
@@ -132,25 +145,26 @@ Example of the `sbom.yml` manifest file for the blink's main component.
 
 Information from the `sbom.yml` manifest file are mapped to the following SPDX tags.
 
-| manifest     | SPDX                         |
-|--------------|------------------------------|
-| name         | PackageName                  |
-| version      | PackageVersion               |
-| description  | PackageSummary               |
-| repository   | ExternalRef OTHER repository |
-| url          | PackageDownloadLocation      |
-| cpe          | ExternalRef cpe23Type        |
-| supplier     | PackageSupplier              |
-| originator   | PackageOriginator            |
-| license      | PackageLicenseDeclared       |
+| manifest        | SPDX                         |
+|-----------------|------------------------------|
+| name            | PackageName                  |
+| version         | PackageVersion               |
+| description     | PackageSummary               |
+| repository      | ExternalRef OTHER repository |
+| url             | PackageDownloadLocation      |
+| cpe             | ExternalRef cpe23Type        |
+| supplier        | PackageSupplier              |
+| originator      | PackageOriginator            |
+| license         | PackageLicenseDeclared       |
+| cve-exclude-list| PackageComment               |
 
 Even though the `sbom.yml` file is the primary source of information, the esp-idf-sbom tool
 is also looking at other places if it's not present. The `idf_component.yml` manifest file,
-used for components managed by the component manager, may have `sbom` dictionary/namespace,
+used for components managed by the component manager, may contain `sbom` dictionary/namespace,
 which will be used by esp-idf-sbom if presented. This dictionary may contain the same information
 as `sbom.yml`.
 
-Example of the `idf_component.yml` manifest file for the blink's main component.
+Example of the `idf_component.yml` manifest file for led_strip managed component.
 
     dependencies:
       idf:
@@ -159,10 +173,13 @@ Example of the `idf_component.yml` manifest file for the blink's main component.
     url: https://github.com/espressif/idf-extra-components/tree/master/led_strip
     version: 2.4.1
     sbom:
-      version: 0.1.0
-      description: Main component for blink application
-      repository: https://github.com/espressif/esp-idf.git@dc016f59877d13e6e7d4fc193aa5aa764547f16d#examples/get-started/blink
+      cpe: cpe:2.3:a:hrbata:led_strip:{}:*:*:*:*:*:*:* # non-existing CPE example
       supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+      cve-exclude-list:
+         - cve: CVE-2023-1234
+           reason: Description why this package is not vulnerable
+         - cve: CVE-2023-1235
+           reason: Description why this package is not vulnerable
 
 If the `sbom` dictionary is not presented in `idf_component.yml` or it's missing some information,
 the version, description, maintainers and url information from `idf_component.yml` manifest is used.
@@ -179,8 +196,34 @@ Information from the `idf_component.yml` manifest file are mapped to the followi
 
 Component version may be guessed based on git-describe and Espressif
 as a default supplier may be guessed based on git repository or package URL. The guessing
-may be disabled by using the '--no-guess' option. For submodules, the .gitmodules file is
-also checked for additional submodule information.
+may be disabled by using the '--no-guess' option.
+
+For git submodules, the `.gitmodules` configuration file is also checked for additional submodule
+information. Submodule configuration may contain keys with the `sbom-` prefix, which are considered as
+SBOM manifest information. All keys used in the `sbom.yml` manifest file can also be specified in
+`.gitmodules` with the `git-config` format instead of yaml.
+
+Example of manifest information added for the `micro-ecc` submodule in `.gitmodules`.
+
+    [submodule "components/bootloader/subproject/components/micro-ecc/micro-ecc"]
+            path = components/bootloader/subproject/components/micro-ecc/micro-ecc
+            url = ../../kmackay/micro-ecc.git
+            sbom-version = 1.0
+            sbom-cpe = cpe:2.3:a:micro-ecc_project:micro-ecc:{}:*:*:*:*:*:*:*
+            sbom-supplier = Person: Ken MacKay
+            sbom-url = https://github.com/kmackay/micro-ecc
+            sbom-description = A small and fast ECDH and ECDSA implementation for 8-bit, 32-bit, and 64-bit processors
+            sbom-hash = d037ec89546fad14b5c4d5456c2e23a71e554966
+            sbom-cve-exclude-list = CVE-2023-1234 Description why this package is not vulnerable
+            sbom-cve-exclude-list = CVE-2023-1235 Description why this package is not vulnerable
+
+
+Manifest information are gathered in the following order.
+
+1. `sbom.yml`
+2. `sbom` dictionary/namespace in `idf_component.yml`
+3. sbom information contained in submodule configuration in `.gitmodules`
+4. `idf_component.yml` information provided for component manager
 
 
 ## Installation
@@ -219,7 +262,7 @@ with direct or indirect relationship to the **project** package are examined. Fo
 component is compiled, due to component dependecies, but it's actually not linked into the
 final binary, it will be by default presented in the SBOM file, but it will not be reachable
 from the root **project** package and hence it will not be checked for vulnerabilities.
-The reason for this is to avoid possible false possitives, because such packages
+The reason for this is to avoid possible false positives, because such packages
 have no direct impact on the resulting application. This can be changed with the `--check-all-packages`
 option. If used, all packages in the SBOM file will be checked for possible vulnerabilities
 regardless their relationships to the application binary.
@@ -229,7 +272,10 @@ with
 
     esp-idf-sbom check [SBOM file]
 
-If *SBOM file* is not provided, the stardard input stream is used.
+If *SBOM file* is not provided, the standard input stream is used.
+
+If package is not vulnerable to a specific CVE, it can be added to the manifest **cve-exclude-list**
+list and checker will not report it.
 
 
 ## Licenses and Copyrights
