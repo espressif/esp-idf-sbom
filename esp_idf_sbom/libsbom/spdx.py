@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import sys
 import uuid
 from argparse import Namespace
@@ -161,7 +162,14 @@ class SPDXObject:
         'description': '',
         'license': '',
         'cve-exclude-list': [],
+        'manifests': [],
     }
+
+    # Global dictionary with manifest files referenced in sbom.yml or idf_component.yml
+    # manifest files by the "manifests" key. Key is fullpath of destination directory,
+    # where the manifest file would be stored, but for some reason it's not possible.
+    # Value is full path to the referenced manifest file.
+    REFERENCED_MANIFESTS: Dict[str, str] = {}
 
     def __init__(self, args: Namespace, proj_desc: Dict[str, Any]) -> None:
         self.args = args
@@ -290,12 +298,37 @@ class SPDXObject:
             raise schema.SchemaError((f'License expression "{lic}" is not valid: {e}'))
         return True
 
-    def validate_manifest(self, manifest: Dict[str,str], source:str) -> None:
-        """Validate manifest dictionary"""
+    def check_manifest_path(self, path:str, directory:str) -> bool:
+        fullpath = utils.pjoin(directory, path)
+        if os.path.isfile(fullpath):
+            return True
+        raise schema.SchemaError((f'Referenced manifest file "{fullpath}" does not exist or is not a file'))
+
+    def check_manifest_destination(self, dest:str, directory:str) -> bool:
+        fullpath = utils.pjoin(directory, dest)
+        if os.path.isdir(fullpath):
+            return True
+        raise schema.SchemaError((f'Destination manifest directory "{fullpath}" does not exist or is not a directory'))
+
+    def validate_manifest(self, manifest: Dict[str,str], source:str, directory:str) -> None:
+        """Validate manifest dictionary
+
+        :param manifest:  Loaded manifest file.
+        :param source:    Where the manifest comes from. It may be file or
+                          .gitmodules with the submodule name appended.
+        :param directory: Component/package directory. For submodule this is path where the
+                          submodule is actually placed in git work tree.
+        """
         cve_exclude_list_schema = schema.Schema(
             [{
                 'cve': str,
                 'reason': str,
+            }], ignore_extra_keys=True)
+
+        manifests_schema = schema.Schema(
+            [{
+                'path': schema.And(str, lambda path: self.check_manifest_path(path, directory)),
+                'dest': schema.And(str, lambda dest: self.check_manifest_destination(dest, directory)),
             }], ignore_extra_keys=True)
 
         sbom_schema = schema.Schema(
@@ -310,6 +343,7 @@ class SPDXObject:
                 schema.Optional('description'): str,
                 schema.Optional('license'): schema.And(str, self.check_license),
                 schema.Optional('cve-exclude-list'): cve_exclude_list_schema,
+                schema.Optional('manifests'): manifests_schema,
             }, ignore_extra_keys=True)
 
         try:
@@ -330,19 +364,31 @@ class SPDXObject:
 
         def load(path: str) -> Dict[str,Any]:
             # Helper to load yml files.
+            manifest: Dict[str,Any] = {}
             if not os.path.isfile(path):
-                return {}
+                return manifest
 
-            with open(path, 'r') as f:
-                return yaml.safe_load(f.read()) or {}
+            try:
+                with open(path, 'r') as f:
+                    return yaml.safe_load(f.read()) or {}
+            except (OSError, yaml.parser.ParserError) as e:
+                log.err.die(f'Cannot parse manifest file "{path}": {e}')
+
+            return manifest
 
         # Set default/empty manifest values
         manifest = self.EMPTY_MANIFEST.copy()
 
+        if directory in self.REFERENCED_MANIFESTS:
+            sbom_path = self.REFERENCED_MANIFESTS[directory]
+            sbom_yml = load(sbom_path)
+            self.validate_manifest(sbom_yml, sbom_path, directory)
+            self.update_manifest(manifest, sbom_yml)
+
         # Process sbom.yml manifest
         sbom_path = utils.pjoin(directory, 'sbom.yml')
         sbom_yml = load(sbom_path)
-        self.validate_manifest(sbom_yml, sbom_path)
+        self.validate_manifest(sbom_yml, sbom_path, directory)
         self.update_manifest(manifest, sbom_yml)
 
         # Process idf_component.yml manifest
@@ -351,7 +397,7 @@ class SPDXObject:
 
         # idf_component.yml may contains special sbom section
         idf_component_sbom = idf_component_yml.get('sbom', dict())
-        self.validate_manifest(idf_component_sbom, sbom_path)
+        self.validate_manifest(idf_component_sbom, sbom_path, directory)
         self.update_manifest(manifest, idf_component_sbom)
 
         # try to fill missing info dirrectly from idf_component.yml
@@ -482,6 +528,7 @@ class SPDXPackage(SPDXObject):
                        components and thier subpackages/submodules.
     dump:              Print package SPDX representation.
     """
+
     def __init__(self, args: Namespace, proj_desc: Dict[str, Any],
                  path: str, name: str, mark: str):
         super().__init__(args, proj_desc)
@@ -506,6 +553,18 @@ class SPDXPackage(SPDXObject):
 
         if not self.manifest['supplier']:
             self.manifest['supplier'] = self.guess_supplier(self.dir, self.manifest['url'], self.manifest['repository'])
+
+        # Add referenced manifests into the global list
+        for referenced_manifest in self.manifest['manifests']:
+            # get full paths to the referenced manifest file and its destination directory
+            path = utils.pjoin(self.dir, referenced_manifest['path'])
+            dest = utils.pjoin(self.dir, referenced_manifest['dest'])
+            if dest in self.REFERENCED_MANIFESTS:
+                existing_path = self.REFERENCED_MANIFESTS[dest]
+                log.err.die((f'Destination "{dest}" for referenced manifest "{path}" already has manifest '
+                             f'file "{existing_path}". Two manifest files are referencing same destination.'))
+
+            self.REFERENCED_MANIFESTS[dest] = path
 
         self.subpackages = self.get_subpackages()
 
@@ -587,7 +646,7 @@ class SPDXPackage(SPDXObject):
                 name = '{}-{}'.format(self.name, utils.prelpath(submodule_info['path'], self.dir))
                 subpackages.append(SPDXSubmodule(self.args, self.proj_desc, name, submodule_info))
                 dirs.clear()
-            elif not self.args.rem_subpackages and 'sbom.yml' in files:
+            elif not self.args.rem_subpackages and ('sbom.yml' in files or root in self.REFERENCED_MANIFESTS):
                 name = '{}-{}'.format(self.name, utils.prelpath(root, self.dir))
                 subpackages.append(SPDXSubpackage(self.args, self.proj_desc, root, name))
                 dirs.clear()
@@ -956,8 +1015,31 @@ class SPDXSubmodule(SPDXPackage):
                 cve_exclude_list.append({'cve': cve_id, 'reason': reason})
             module_sbom['cve-exclude-list'] = cve_exclude_list
 
+        if 'manifests' in module_sbom:
+            # Convert manifests paths from .gitconfig into list of dicts
+            # as expected by validate_manifest
+            manifests_paths_list = []
+            manifests_paths_str_list = []
+            if not isinstance(module_sbom['manifests'], list):
+                manifests_paths_str_list = [module_sbom['manifests']]
+            else:
+                manifests_paths_str_list = module_sbom['manifests']
+
+            for manifest_paths_str in manifests_paths_str_list:
+                paths = shlex.split(manifest_paths_str)
+                path = ''
+                directory = ''
+                if len(paths) > 1:
+                    path = paths[0]
+                    directory = paths[1]
+                elif len(paths) == 1:
+                    path = paths[0]
+                # validate_manifest will report errors if path or directory doesn't exist
+                manifests_paths_list.append({'path': path, 'dest': directory})
+            module_sbom['manifests'] = manifests_paths_list
+
         sbom_path = utils.pjoin(self.info['git_wdir'], '.gitmodules')
-        self.validate_manifest(module_sbom, f'{sbom_path} submodule {self.info["name"]}')
+        self.validate_manifest(module_sbom, f'{sbom_path} submodule {self.info["name"]}', self.info['path'])
         self.update_manifest(manifest, module_sbom)
 
         return manifest

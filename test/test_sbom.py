@@ -14,6 +14,7 @@ import pytest
 
 IDF_PY_PATH = Path(os.environ['IDF_PATH']) / 'tools' / 'idf.py'
 
+
 @pytest.fixture
 def hello_world_build(ctx: dict={'tmpdir': None}) -> Path:
     # build hello_world app in temporary directory and return its path
@@ -95,6 +96,51 @@ def test_sbom_subpackages(hello_world_build: Path) -> None:
     assert 'TEST_SUBSUBPACKAGE' in p.stdout
 
     shutil.rmtree(subpackage_path)
+
+
+def test_referenced_manifests(hello_world_build: Path) -> None:
+    """ This is similar test as test_sbom_subpackages, but this time
+    referenced manifests are used to create subpackages. Meaning the
+    sbom.yml manifests are created directly in main component directory
+    and referenced from main sbom.yml.
+    main
+    ├── sbom.yml
+    ├── subpackage.yml
+    ├── subsubpackage.yml
+    └── subpackage           # manifest subpackage.yml defined in main directory
+        └── subsubpackage    # manifest subsubpackage.yml defined in main directory
+    """
+
+    manifest = hello_world_build / 'main' / 'sbom.yml'
+    subpackage_manifest = hello_world_build / 'main' / 'subpackage.yml'
+    subsubpackage_manifest = hello_world_build / 'main' / 'subsubpackage.yml'
+
+    content = f'''
+              manifests:
+                - path: subpackage.yml
+                  dest: subpackage
+                - path: subsubpackage.yml
+                  dest: subpackage/subsubpackage
+              '''
+    manifest.write_text(dedent(content))
+    subpackage_manifest.write_text('description: TEST_SUBPACKAGE')
+    subsubpackage_manifest.write_text('description: TEST_SUBSUBPACKAGE')
+
+    subpackage_path = hello_world_build / 'main' / 'subpackage'
+    (subpackage_path / 'subsubpackage').mkdir(parents=True)
+
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files', 'rem',
+             '--no-file-tags', proj_desc_path], check=True, capture_output=True,
+            text=True)
+
+    assert 'TEST_SUBPACKAGE' in p.stdout
+    assert 'TEST_SUBSUBPACKAGE' in p.stdout
+
+    shutil.rmtree(subpackage_path)
+    manifest.unlink()
+    subpackage_manifest.unlink()
+    subsubpackage_manifest.unlink()
 
 
 def test_sbom_manifest_from_idf_component(hello_world_build: Path) -> None:

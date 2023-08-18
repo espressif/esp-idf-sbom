@@ -115,7 +115,7 @@ provided by the ESP-IDF build system and SBOM manifest files. The resulting SBOM
 file contains SPDX packages for the final **project** application, used **toolchain**,
 **components** used during build, git **submodules** and **subpackages**. The **subpackages**
 are created based on `sbom.yml` manifest files found in **submodules** and **subpackages**
-sub-directories. Please see [Manifest file](#manifest-file).
+sub-directories or referenced manifest files. Please see [Manifest file](#manifest-file).
 
 Packages are linked together with SPDX *DEPENDS_ON* relationships with the **project** package
 as the root package. By default packages for configuration only components and components not
@@ -185,10 +185,35 @@ The `sbom.yml` is a simple yaml file, which may contain the following entries.
     vulnerable to specific CVEs. Each CVE in the exclude list is represented as dictionary with
     the `cve` and `reason` keys. Information about excluded CVEs is added to the generated
     SBOM file into `PackageComment` SPDX tag and later used by the checker.
-    For usage, please see example below.
+
+    * cve: CVE-ID
+    * reason : description why this package is not vulnerable to this CVE
+```
+      version: 0.1.0
+      description: Blink application example
+      cve-exclude-list:
+        - cve: CVE-2023-1234
+          reason: Description why this package is not vulnerable
+```
+
+* **manifests**:
+    List of manifest files which cannot be added directly into the **component** or **submodule**
+    sub-directories to create **subpackage**. For example the following will create a new
+    SPDX package for the `subpackage` directory with information from the `subpackage.yml` manifest file.
+    This manifest file is treated as it would be actually stored in the `subpackage` directoery.
+
+    * path: path of manifest file relatitve to the sbom.yml
+    * dest: destination directory for path, again relative to sbom.yml
+```
+      version: 0.1.0
+      description: Blink application example
+      manifests:
+        - path: subpackage.yml
+          dest: subpackage
+```
 
 
-Example of the `sbom.yml` manifest file for the ESP-IDF blink example.
+Example of the `sbom.yml` manifest file for the ESP-IDF blink project.
 
     version: 0.1.0
     description: Blink application example
@@ -202,13 +227,6 @@ Example of the `sbom.yml` manifest file for the ESP-IDF blink example.
        - cve: CVE-2023-1235
          reason: Description why this package is not vulnerable
 
-
-Example of the `sbom.yml` manifest file for the blink's main component.
-
-    version: 0.1.0
-    description: Main component for blink application
-    repository: https://github.com/espressif/esp-idf.git@dc016f59877d13e6e7d4fc193aa5aa764547f16d#examples/get-started/blink
-    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
 
 Information from the `sbom.yml` manifest file are mapped to the following SPDX tags.
 
@@ -285,12 +303,15 @@ Example of manifest information added for the `micro-ecc` submodule in `.gitmodu
             sbom-cve-exclude-list = CVE-2023-1235 Description why this package is not vulnerable
 
 
-Manifest information are gathered in the following order.
+Manifest information is gathered in the following order and only missing
+values are added. If e.g. `version` is found in `sbom.yml` any other
+`version` value found e.g. in `.gitmodules` is ignored.
 
-1. `sbom.yml`
-2. `sbom` dictionary/namespace in `idf_component.yml`
-3. sbom information contained in submodule configuration in `.gitmodules`
-4. `idf_component.yml` information provided for component manager
+1. referenced manifest from parent package
+2. `sbom.yml`
+3. `sbom` dictionary/namespace in `idf_component.yml`
+4. sbom information contained in submodule configuration in `.gitmodules`
+5. `idf_component.yml` information provided for component manager
 
 
 ## Licenses and Copyrights
