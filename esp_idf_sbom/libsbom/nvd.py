@@ -24,7 +24,7 @@ WARNED = False
 
 
 # https://nvd.nist.gov/developers/vulnerabilities
-def check(cpe: str) -> List[Dict[str, Any]]:
+def check(cpe: str, progress: bool=False) -> List[Dict[str, Any]]:
     """Checks given CPE against NVD and returns its reponse.
     When NVD API key is not provided, sleeps for 30 seconds to
     meet NVD's 5 requests per rolling 30 seconds windows limit.
@@ -50,13 +50,18 @@ def check(cpe: str) -> List[Dict[str, Any]]:
         except urllib.error.HTTPError as e:
             if e.code == 403:
                 # https://nvd.nist.gov/developers/start-here Rate Limits
+                if progress:
+                    # if progress takes place echo new line, so the warning
+                    # is on new line
+                    log.err.warn('')
                 if not WARNED:
                     log.err.warn(HINT)
                     WARNED = True
                 log.err.warn(f'Sleeping for 30 seconds...')
                 time.sleep(30)
                 continue
-            log.err.die(f'HTTP GET for "{url}" returned error: "{e}"')
+
+            raise RuntimeError(f'HTTP GET for "{url}" returned error: "{e}"')
 
         data = json.loads(res.read().decode())
 

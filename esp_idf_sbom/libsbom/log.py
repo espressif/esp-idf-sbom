@@ -8,20 +8,20 @@ from typing import TextIO
 Simple logger with colors support.
 """
 
-NEVER  = 0
+ALWAYS = 0
 DEBUG  = 1
 INFO   = 2
 WARN   = 3
 ERROR  = 4
-ALWAYS = 5
+NEVER  = 5
 
 
 class Log:
     """Abstract base class for loggers."""
-    def __init__(self, colors: bool=True, level: int=WARN) -> None:
+    def __init__(self, colors: bool=True, level: int=ALWAYS) -> None:
         self.config(colors, level)
 
-    def config(self, colors: bool=True, level: int=WARN) -> None:
+    def config(self, colors: bool=True, level: int=ALWAYS) -> None:
         self.colors = colors
         self.level = level
 
@@ -66,9 +66,6 @@ class Log:
         :param prefix: prefix, which will be added before every line in message
         :param end: string added to the end of message
         """
-        if not msg:
-            return
-
         if level < self.level:
             return
 
@@ -115,7 +112,7 @@ class Log:
 
 
 class LogFile(Log):
-    def __init__(self, fd: TextIO, colors: bool=True, level: int=WARN, force_colors: bool=False) -> None:
+    def __init__(self, fd: TextIO, colors: bool=True, level: int=ALWAYS, force_colors: bool=False) -> None:
         self.fd = fd
         self.config(colors, level, force_colors)
 
@@ -129,7 +126,7 @@ class LogFile(Log):
 
 
 class LogString(Log):
-    def __init__(self, colors: bool=True, level: int=WARN) -> None:
+    def __init__(self, colors: bool=True, level: int=ALWAYS) -> None:
         self.str = ''
         super().__init__(colors, level)
 
