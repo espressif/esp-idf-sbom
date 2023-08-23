@@ -41,106 +41,6 @@ If you see this error message and want to try `esp-idf-sbom`, you can
     $ git cherry-pick 30735b33efabd6cf038bcb258b674cf828ad5ecf 9156bbb55c920d6704329975311c331b931ed6bc
 
 
-## SPDX SBOM layout
-
-The SBOM file is created based on application sources, build artefacts, information
-provided by the ESP-IDF build system and SBOM manifest files. The resulting SBOM
-file contains SPDX packages for the final **project** application, used **toolchain**,
-**components** used during build and git **submodules**. Packages are linked
-together with SPDX *DEPENDS_ON* relationships with the **project** package as the root
-package. By default packages for configuration only components and components not
-linked into the application are present in SBOM, but are not linked through SPDX
-relationships. In other worlds dependencies on such packages are removed. This behaviour
-can be altered with `--add-config-deps` and `--add-unused-deps` command line options.
-
-
-## Manifest file
-
-During SBOM generation the esp-idf-sbom tool is looking for `sbom.yml` manifest files.
-The manifest file may be present at root of **project**, **component** or **submodule**.
-It is used as a source of information for the corresponding SPDX package in the SBOM file
-as described above.
-
-It's a simple yaml file, which may contain the following entries.
-
-* **version**:
-    Package version.
-* **description**:
-    Short package description.
-* **repository**:
-    Link to git repository.
-* **url**:
-    Link to package download location.
-* **cpe**:
-    CPE used for vulnerabilities check against NVD.
-* **supplier**:
-    Package supplier. Person or organization distributing the package. Should be prefixed
-    with *Person:* or *Organization:* as described in SPDX specification.
-* **originator**:
-    Package originator. If the package comes from another person or organization
-    that has been identified as a supplier. For example if a component is based
-    on 3rd party code with some modifications, the originator is the 3rd party code
-    author, but the supplier is the person or organization distributing the final
-    component. For more detailed information please see the SPDX specification.
-    As for supplier, *Person:* or *Organization:* prefix should be used for
-    originator value.
-* **license**:
-    License expression explicitly declared by the author.
-
-
-Example of the `sbom.yml` manifest file for the ESP-IDF blink example.
-
-```
-version: 0.1.0
-description: Blink application example
-url: https://blink.org/blink-0.1.0.tar.gz # non-existing package download URL example
-cpe: cpe:2.3:a:hrbata:blink:{}:*:*:*:*:*:*:* # non-existing CPE example
-supplier: 'Person: Frantisek Hrbata (frantisek.hrbata@espressif.com)'
-originator: 'Organization: Espressif Systems (Shanghai) CO LTD'
-```
-
-Example of the `sbom.yml` manifest file for the blink's main component.
-
-```
-version: 0.1.0
-description: Main component for blink application
-repository: https://github.com/espressif/esp-idf.git@dc016f59877d13e6e7d4fc193aa5aa764547f16d#examples/get-started/blink
-supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
-```
-
-Information from the `sbom.yml` manifest file are mapped to the following SPDX tags.
-
-| manifest     | SPDX                         |
-|--------------|------------------------------|
-| version      | PackageVersion               |
-| description  | PackageSummary               |
-| repository   | ExternalRef OTHER repository |
-| url          | PackageDownloadLocation      |
-| cpe          | ExternalRef cpe23Type        |
-| supplier     | PackageSupplier              |
-| originator   | PackageOriginator            |
-| license      | PackageLicenseDeclared       |
-
-Even though the `sbom.yml` file is the primary source of information, the esp-idf-sbom tool
-is also looking at other places if it's not present. The version, description, maintainers and
-url information from the `idf_component.yml` manifest file is used for components managed by
-the component manager.
-
-Information from the `idf_component.yml` manifest file are mapped to the following SPDX tags.
-
-| manifest     | SPDX                         |
-|--------------|------------------------------|
-| version      | PackageVersion               |
-| description  | PackageSummary               |
-| maintainers  | PackageSupplier              |
-| url          | PackageDownloadLocation      |
-
-Component version may be guessed based on git-describe and Espressif
-as a default supplier may be guessed based on git repository or package URL. The guessing
-may be disabled by using the '--no-guess' option. For submodules, the .gitmodules file is
-also checked for additional submodule information.
-
-
 ## Installation
 
 Currently esp-idf-sbom is not integrated into ESP-IDF and needs to by installed
@@ -177,7 +77,7 @@ with direct or indirect relationship to the **project** package are examined. Fo
 component is compiled, due to component dependecies, but it's actually not linked into the
 final binary, it will be by default presented in the SBOM file, but it will not be reachable
 from the root **project** package and hence it will not be checked for vulnerabilities.
-The reason for this is to avoid possible false possitives, because such packages
+The reason for this is to avoid possible false positives, because such packages
 have no direct impact on the resulting application. This can be changed with the `--check-all-packages`
 option. If used, all packages in the SBOM file will be checked for possible vulnerabilities
 regardless their relationships to the application binary.
@@ -187,7 +87,210 @@ with
 
     esp-idf-sbom check [SBOM file]
 
-If *SBOM file* is not provided, the stardard input stream is used.
+If *SBOM file* is not provided, the standard input stream is used.
+
+If package is not vulnerable to a specific CVE, it can be added to the manifest **cve-exclude-list**
+list and checker will not report it.
+
+
+## Usage example
+
+This is an example of basic usage for the blink project, which is part of the ESP-IDF.
+It's expected that ESP-IDF is installed and set.
+
+    $ cd examples/get-started/blink/ # In esp-idf directory go to the blink example
+    $ idf.py build                   # Project has to be built first
+    $ esp-idf-sbom create -o blink.spdx build/project_description.json
+    $ esp-idf-sbom check blink.spdx
+
+    $ esp-idf-sbom create build/project_description.json | esp-idf-sbom check
+
+The resulting `blink.spdx` sbom file can be found in the `blink` project directory.
+
+
+## SPDX SBOM layout
+
+The SBOM file is created based on application sources, build artefacts, information
+provided by the ESP-IDF build system and SBOM manifest files. The resulting SBOM
+file contains SPDX packages for the final **project** application, used **toolchain**,
+**components** used during build, git **submodules** and **subpackages**. The **subpackages**
+are created based on `sbom.yml` manifest files found in **submodules** and **subpackages**
+sub-directories. Please see [Manifest file](#manifest-file).
+
+Packages are linked together with SPDX *DEPENDS_ON* relationships with the **project** package
+as the root package. By default packages for configuration only components and components not
+linked into the application are present in SBOM, but are not linked through SPDX
+relationships. In other worlds dependencies on such packages are removed. This behaviour
+can be altered with `--add-config-deps` and `--add-unused-deps` command line options.
+
+
+## Manifest file
+
+During SBOM generation the esp-idf-sbom tool is looking for `sbom.yml` manifest files.
+They are used as a source of information for the corresponding SPDX package in the SBOM file
+as described above.
+
+The manifest file may be present at root of **project**, **component**, **submodule** or
+in any of their sub-directories. If `sbom.yml` is found in a sub-directory a new **subpackage**
+SPDX package is created and linked with the parent SPDX package. This can be used in cases
+where e.g. one **component** contains multiple libraries and they should be represented
+by separate SPDX packages.
+
+Example of multiple `sbom.yml` files usage for the `console` component.
+
+    console
+    ├── argtable3
+    │   └── sbom.yml
+    ├── linenoise
+    │   └── sbom.yml
+    └── sbom.yml
+
+The `esp-idf-sbom` tool will create main console **component** package, which will
+contain two **subpackages** for `argtable3` and `linenoise` libraries. Please note that
+the manifest file in the `console` component root directory is not necessary to create
+SPDX package, because `esp-idf-sbom` automatically creates SPDX package for each
+**component**. The `sbom.yml` files may be placed at any sub-directory depth and
+`esp-idf-sbom` will create proper SPDX package hierarchy for them.
+
+The `sbom.yml` is a simple yaml file, which may contain the following entries.
+
+* **name**:
+    Package name that will be used in the SPDX package.
+* **version**:
+    Package version.
+* **description**:
+    Short package description.
+* **repository**:
+    Link to git repository.
+* **url**:
+    Link to package download location.
+* **cpe**:
+    CPE used for vulnerabilities check against NVD.
+* **supplier**:
+    Package supplier. Person or organization distributing the package. Should be prefixed
+    with *Person:* or *Organization:* as described in SPDX specification.
+* **originator**:
+    Package originator. If the package comes from another person or organization
+    that has been identified as a supplier. For example if a component is based
+    on 3rd party code with some modifications, the originator is the 3rd party code
+    author, but the supplier is the person or organization distributing the final
+    component. For more detailed information please see the SPDX specification.
+    As for supplier, *Person:* or *Organization:* prefix should be used for
+    originator value.
+* **license**:
+    License expression explicitly declared by the author.
+* **cve-exclude-list**:
+    List of already evaluated CVEs, which do not apply to this package. This can be used
+    to exclude CVEs from the `esp-idf-sbom` checker report in case the package is not
+    vulnerable to specific CVEs. Each CVE in the exclude list is represented as dictionary with
+    the `cve` and `reason` keys. Information about excluded CVEs is added to the generated
+    SBOM file into `PackageComment` SPDX tag and later used by the checker.
+    For usage, please see example below.
+
+
+Example of the `sbom.yml` manifest file for the ESP-IDF blink example.
+
+    version: 0.1.0
+    description: Blink application example
+    url: https://blink.org/blink-0.1.0.tar.gz # non-existing package download URL example
+    cpe: cpe:2.3:a:hrbata:blink:{}:*:*:*:*:*:*:* # non-existing CPE example
+    supplier: 'Person: Frantisek Hrbata (frantisek.hrbata@espressif.com)'
+    originator: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    cve-exclude-list:
+       - cve: CVE-2023-1234
+         reason: Description why this package is not vulnerable
+       - cve: CVE-2023-1235
+         reason: Description why this package is not vulnerable
+
+
+Example of the `sbom.yml` manifest file for the blink's main component.
+
+    version: 0.1.0
+    description: Main component for blink application
+    repository: https://github.com/espressif/esp-idf.git@dc016f59877d13e6e7d4fc193aa5aa764547f16d#examples/get-started/blink
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+
+Information from the `sbom.yml` manifest file are mapped to the following SPDX tags.
+
+| manifest        | SPDX                         |
+|-----------------|------------------------------|
+| name            | PackageName                  |
+| version         | PackageVersion               |
+| description     | PackageSummary               |
+| repository      | ExternalRef OTHER repository |
+| url             | PackageDownloadLocation      |
+| cpe             | ExternalRef cpe23Type        |
+| supplier        | PackageSupplier              |
+| originator      | PackageOriginator            |
+| license         | PackageLicenseDeclared       |
+| cve-exclude-list| PackageComment               |
+
+Even though the `sbom.yml` file is the primary source of information, the esp-idf-sbom tool
+is also looking at other places if it's not present. The `idf_component.yml` manifest file,
+used for components managed by the component manager, may contain `sbom` dictionary/namespace,
+which will be used by esp-idf-sbom if presented. This dictionary may contain the same information
+as `sbom.yml`.
+
+Example of the `idf_component.yml` manifest file for led_strip managed component.
+
+    dependencies:
+      idf:
+        version: '>=5.0'
+    description: Driver for Addressable LED Strip (WS2812, etc)
+    url: https://github.com/espressif/idf-extra-components/tree/master/led_strip
+    version: 2.4.1
+    sbom:
+      cpe: cpe:2.3:a:hrbata:led_strip:{}:*:*:*:*:*:*:* # non-existing CPE example
+      supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+      cve-exclude-list:
+         - cve: CVE-2023-1234
+           reason: Description why this package is not vulnerable
+         - cve: CVE-2023-1235
+           reason: Description why this package is not vulnerable
+
+If the `sbom` dictionary is not presented in `idf_component.yml` or it's missing some information,
+the version, description, maintainers and url information from `idf_component.yml` manifest is used.
+
+Information from the `idf_component.yml` manifest file are mapped to the following SPDX tags.
+
+| manifest     | SPDX                         |
+|--------------|------------------------------|
+| name         | PackageName                  |
+| version      | PackageVersion               |
+| description  | PackageSummary               |
+| maintainers  | PackageSupplier              |
+| url          | PackageDownloadLocation      |
+
+Component version may be guessed based on git-describe and Espressif
+as a default supplier may be guessed based on git repository or package URL. The guessing
+may be disabled by using the '--no-guess' option.
+
+For git submodules, the `.gitmodules` configuration file is also checked for additional submodule
+information. Submodule configuration may contain keys with the `sbom-` prefix, which are considered as
+SBOM manifest information. All keys used in the `sbom.yml` manifest file can also be specified in
+`.gitmodules` with the `git-config` format instead of yaml.
+
+Example of manifest information added for the `micro-ecc` submodule in `.gitmodules`.
+
+    [submodule "components/bootloader/subproject/components/micro-ecc/micro-ecc"]
+            path = components/bootloader/subproject/components/micro-ecc/micro-ecc
+            url = ../../kmackay/micro-ecc.git
+            sbom-version = 1.0
+            sbom-cpe = cpe:2.3:a:micro-ecc_project:micro-ecc:{}:*:*:*:*:*:*:*
+            sbom-supplier = Person: Ken MacKay
+            sbom-url = https://github.com/kmackay/micro-ecc
+            sbom-description = A small and fast ECDH and ECDSA implementation for 8-bit, 32-bit, and 64-bit processors
+            sbom-hash = d037ec89546fad14b5c4d5456c2e23a71e554966
+            sbom-cve-exclude-list = CVE-2023-1234 Description why this package is not vulnerable
+            sbom-cve-exclude-list = CVE-2023-1235 Description why this package is not vulnerable
+
+
+Manifest information are gathered in the following order.
+
+1. `sbom.yml`
+2. `sbom` dictionary/namespace in `idf_component.yml`
+3. sbom information contained in submodule configuration in `.gitmodules`
+4. `idf_component.yml` information provided for component manager
 
 
 ## Licenses and Copyrights
@@ -205,26 +308,6 @@ given **project**, **component** or **submodule**.
 
 The `--no-file-tags` option disables scanning for SPDX file tags. When used the license and
 copyright information from files will not be presented in the generated SBOM file.
-
-
-## Usage example
-
-This is an example of basic usage for the blink project, which is part of the ESP-IDF. The
-two `sbom.yml` files for project and main component showed above were added. It's expected
-that ESP-IDF is installed and set.
-
-```
-$ cd examples/get-started/blink/ # In esp-idf directory go to the blink example
-$ idf.py build                   # Project has to be built first
-$ esp-idf-sbom create -o blink.spdx build/project_description.json
-$ esp-idf-sbom check blink.spdx
-```
-
-```
-$ esp-idf-sbom create build/project_description.json | esp-idf-sbom check
-```
-
-The resulting `blink.spdx` sbom file can be found in the `examples` directory.
 
 
 [1]: https://en.wikipedia.org/wiki/Software_supply_chain

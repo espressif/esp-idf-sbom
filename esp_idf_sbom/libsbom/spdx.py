@@ -122,9 +122,7 @@ class SPDXDirTags(SPDXTags):
         super().__init__()
         self.path = path
 
-        for root, dirs, files in os.walk(path):
-            if exclude_dirs and root in exclude_dirs:
-                continue
+        for root, dirs, files in utils.pwalk(path, exclude_dirs):
             for fn in files:
                 self |= SPDXFileTags(utils.pjoin(root, fn))
 
@@ -152,6 +150,18 @@ class SPDXObject:
     ESPRESSIF_RE = re.compile(r'^(\w+://)?(\w+@)?(gitlab\.espressif\.|github.com[:/]espressif/).*')
     # Supplier tag value for Espressif.
     ESPRESSIF_SUPPLIER = 'Organization: Espressif Systems (Shanghai) CO LTD'
+    EMPTY_MANIFEST = {
+        'name': '',
+        'version': '',
+        'repository': '',
+        'url': '',
+        'cpe': '',
+        'supplier': '',
+        'originator': '',
+        'description': '',
+        'license': '',
+        'cve-exclude-list': [],
+    }
 
     def __init__(self, args: Namespace, proj_desc: Dict[str, Any]) -> None:
         self.args = args
@@ -210,45 +220,12 @@ class SPDXObject:
         :returns: list of SPDXFile objects for given path
         """
         spdx_files: List[SPDXFile] = []
-        for root, dirs, files in os.walk(path):
-            if exclude_dirs and root in exclude_dirs:
-                continue
+        for root, dirs, files in utils.pwalk(path, exclude_dirs):
             for fn in files:
                 spdx_files.append(SPDXFile(self.args, self.proj_desc,
                                            utils.pjoin(root, fn), path, prefix))
 
         return spdx_files
-
-    def get_submodules(self, path: str, prefix: str) -> List['SPDXSubmodule']:
-        """Return list of SPDXSubmodule objects found in path.
-
-        :param path: path to look for submodules
-        :param prefix: prefix to use in SPDXID for submodules to avoid possible SPDXID collisions
-        :returns: list of SPDXSubmodule objects for given path
-        """
-        submodules: List[SPDXSubmodule] = []
-
-        if self.args.rem_submodules:
-            return submodules
-
-        git_wdir = git.get_gitwdir(path)
-        if not git_wdir:
-            return submodules
-
-        submodules_info = git.submodule_foreach_enum(git_wdir)
-        if not submodules_info:
-            return submodules
-
-        for submodule_info in submodules_info:
-            if not submodule_info['path'].startswith(path):
-                continue
-            # Submodule relative path to component/submodule directory
-            submodule_info['rel_path'] = utils.prelpath(submodule_info['path'], path)
-
-            submodules.append(SPDXSubmodule(self.args, self.proj_desc,
-                                            prefix, submodule_info))
-
-        return submodules
 
     def is_espressif_path(self, path: str) -> bool:
         """Check if given path is within idf_path as defined in project_description.json."""
@@ -313,71 +290,77 @@ class SPDXObject:
             raise schema.SchemaError((f'License expression "{lic}" is not valid: {e}'))
         return True
 
-    def get_manifest(self, directory: str) -> Dict[str,str]:
+    def validate_manifest(self, manifest: Dict[str,str], source:str) -> None:
+        """Validate manifest dictionary"""
+        cve_exclude_list_schema = schema.Schema(
+            [{
+                'cve': str,
+                'reason': str,
+            }], ignore_extra_keys=True)
+
+        sbom_schema = schema.Schema(
+            {
+                schema.Optional('name'): str,
+                schema.Optional('version'): schema.Or(str,float,int),
+                schema.Optional('repository'): schema.And(str, self.check_url),
+                schema.Optional('url'): schema.And(str, self.check_url),
+                schema.Optional('cpe'): schema.And(str, self.check_cpe),
+                schema.Optional('supplier'): schema.And(str, self.check_person_organization),
+                schema.Optional('originator'): schema.And(str, self.check_person_organization),
+                schema.Optional('description'): str,
+                schema.Optional('license'): schema.And(str, self.check_license),
+                schema.Optional('cve-exclude-list'): cve_exclude_list_schema,
+            }, ignore_extra_keys=True)
+
+        try:
+            sbom_schema.validate(manifest)
+        except schema.SchemaError as e:
+            log.err.die(f'Manifest in {source} is not valid: {e}')
+
+    def update_manifest(self, dst: Dict[str,Any], src: Dict[str,Any]) -> None:
+        """Update manifest dict with new values from src."""
+        for key, val in src.items():
+            if key not in dst:
+                continue
+            if not dst[key]:
+                dst[key] = val
+
+    def get_manifest(self, directory: str) -> Dict[str,Any]:
         """Return manifest information found in given directory."""
-        def validate_sbom_manifest(manifest: Dict[str,str]) -> None:
-            try:
-                sbom_schema = schema.Schema(
-                    {
-                        schema.Optional('version'): str,
-                        schema.Optional('repository'): schema.And(str, self.check_url),
-                        schema.Optional('url'): schema.And(str, self.check_url),
-                        schema.Optional('cpe'): schema.And(str, self.check_cpe),
-                        schema.Optional('supplier'): schema.And(str, self.check_person_organization),
-                        schema.Optional('originator'): schema.And(str, self.check_person_organization),
-                        schema.Optional('description'): str,
-                        schema.Optional('license'): schema.And(str, self.check_license),
-                    })
 
-                sbom_schema.validate(manifest)
-            except schema.SchemaError as e:
-                log.err.die(f'The sbom.yml manifest file in "{directory}" is not valid: {e}')
-
-        def load(fn: str) -> Dict[str,str]:
+        def load(path: str) -> Dict[str,Any]:
             # Helper to load yml files.
-            path = utils.pjoin(directory, fn)
             if not os.path.isfile(path):
                 return {}
 
             with open(path, 'r') as f:
                 return yaml.safe_load(f.read()) or {}
 
-        def update(dst: Dict[str,str], src: Dict[str,str]) -> None:
-            # Update manifest dict with new values from src.
-            for key, val in src.items():
-                if key not in dst:
-                    continue
-                if not dst[key]:
-                    dst[key] = val
+        # Set default/empty manifest values
+        manifest = self.EMPTY_MANIFEST.copy()
 
-        # Set default manifest values, which are updated with
-        # manifest file information if presented in component/submodule
-        # directory.
-        manifest = {
-            'version': '',
-            'repository': '',
-            'url': '',
-            'cpe': '',
-            'supplier': '',
-            'originator': '',
-            'description': '',
-            'license': '',
-        }
+        # Process sbom.yml manifest
+        sbom_path = utils.pjoin(directory, 'sbom.yml')
+        sbom_yml = load(sbom_path)
+        self.validate_manifest(sbom_yml, sbom_path)
+        self.update_manifest(manifest, sbom_yml)
 
-        sbom_yml = load('sbom.yml')
-        validate_sbom_manifest(sbom_yml)
-        update(manifest, sbom_yml)
-        idf_component_yml = load('idf_component.yml')
-        update(manifest, idf_component_yml)
+        # Process idf_component.yml manifest
+        sbom_path = utils.pjoin(directory, 'idf_component.yml')
+        idf_component_yml = load(sbom_path)
+
+        # idf_component.yml may contains special sbom section
+        idf_component_sbom = idf_component_yml.get('sbom', dict())
+        self.validate_manifest(idf_component_sbom, sbom_path)
+        self.update_manifest(manifest, idf_component_sbom)
+
+        # try to fill missing info dirrectly from idf_component.yml
+        self.update_manifest(manifest, idf_component_yml)
 
         if not manifest['supplier']:
             # Supplier not explicitly provided, use maintainers if present.
             if 'maintainers' in idf_component_yml and idf_component_yml['maintainers']:
                 manifest['supplier'] = 'Person: ' + ', '.join(idf_component_yml['maintainers'])
-
-        if manifest['cpe']:
-            # CPE may contain version placeholder.
-            manifest['cpe'] = manifest['cpe'].format(manifest['version'])
 
         return manifest
 
@@ -485,36 +468,72 @@ class SPDXDocument(SPDXObject):
                 fd.close()
 
 
-class SPDXProject(SPDXObject):
-    """SPDX Package Information for the project binary."""
-    def __init__(self, args: Namespace, proj_desc: Dict[str, Any]):
+class SPDXPackage(SPDXObject):
+    """Base class for all SPDX packages: project, toolchain, component, subpackage, submodule.
+    It implements basic functionality, which may be customized by overriding selected methods.
+    get_subpackages:   Create packages for subpackages and submodules. If package doesn't have
+                       any subpackages, e.g. toolchain o project, it may return empty list, so
+                       the base class doesn't attempt to find subpackages.
+    add_relationships: Add package SPDX relationships. For example project adds its own relationships
+                       based on the component list.
+    get_files:         Create SPDXFile objects for files included in the package. For example
+                       project contains only the final bin file.
+    get_tags:          Create SPDXTags object for package. For example project gathers tags from
+                       components and thier subpackages/submodules.
+    dump:              Print package SPDX representation.
+    """
+    def __init__(self, args: Namespace, proj_desc: Dict[str, Any],
+                 path: str, name: str, mark: str):
         super().__init__(args, proj_desc)
+        self.name = name
+        self.mark = mark
+        self.dir = path
 
-        self.name = self.proj_desc['project_name']
-        self.manifest = self._get_manifest()
-        self.version = self.manifest['version']
-        self.linked_libs = self._get_linked_libs()
-        self.components = self._get_components()
-        self.toolchain = SPDXToolchain(self.args, self.proj_desc)
-        self.file = None
+        self.subpackages: List['SPDXPackage'] = []
+        self.files: List['SPDXFile'] = []
+        self.tags: SPDXTags = SPDXTags()
 
-        if self.include_files():
-            fn = utils.pjoin(self.proj_desc['build_dir'], self.proj_desc['app_bin'])
-            self.file = SPDXFile(self.args, self.proj_desc, fn, self.proj_desc['build_dir'], self.name)
+        self.manifest = self.get_manifest(self.dir)
+        if self.manifest['cpe']:
+            # CPE may contain version placeholder.
+            self.manifest['cpe'] = self.manifest['cpe'].format(self.manifest['version'])
 
-        self._add_spdx_file_tags()
+        if not self.manifest['version']:
+            self.manifest['version'] = self.guess_version(self.dir, self.name)
 
-        self['PackageName'] = [self.name]
+        if not self.manifest['repository']:
+            self.manifest['repository'] = git.get_remote_location(self.dir)
+
+        if not self.manifest['supplier']:
+            self.manifest['supplier'] = self.guess_supplier(self.dir, self.manifest['url'], self.manifest['repository'])
+
+        self.subpackages = self.get_subpackages()
+
+        # exclude subpackage paths if any
+        exclude_dirs = [subpkg.dir for subpkg in self.subpackages]
+
+        self.files = self.get_files(self.dir, self.name, exclude_dirs)
+
+        if args.file_tags:
+            self.tags = self.get_tags(exclude_dirs)
+
+        self['PackageName'] = [self.manifest['name'] or f'{self.mark}-{self.name}']
         if self.manifest['description']:
             self['PackageSummary'] = [f'<text>{self.manifest["description"]}</text>']
-        self['SPDXID'] = ['SPDXRef-PROJECT-' + self.sanitize_spdxid(self.name)]
-        self['PackageVersion'] = [self.version]
+        self['SPDXID'] = ['SPDXRef-{}-{}'.format(self.mark.upper(), self.sanitize_spdxid(self.name))]
+        if self.manifest['version']:
+            self['PackageVersion'] = [self.manifest['version']]
         self['PackageSupplier'] = [self.manifest['supplier'] or 'NOASSERTION']
+        if self.manifest['originator']:
+            self['PackageOriginator'] = [self.manifest['originator']]
         self['PackageDownloadLocation'] = [self.manifest['url'] or 'NOASSERTION']
-        if self.file:
+        if self.files:
             self['FilesAnalyzed'] = ['true']
-            self['PackageVerificationCode'] = [self.get_verification_code([self.file.sha1])]
-            self['PackageLicenseInfoFromFiles'] = list(self.tags.licenses)
+            self['PackageVerificationCode'] = [self.get_verification_code([f.sha1 for f in self.files])]
+            if self.tags.licenses:
+                self['PackageLicenseInfoFromFiles'] = list(self.tags.licenses)
+            else:
+                self['PackageLicenseInfoFromFiles'] = ['NOASSERTION']
         else:
             self['FilesAnalyzed'] = ['false']
         if self.tags.licenses_expressions:
@@ -527,15 +546,102 @@ class SPDXProject(SPDXObject):
         else:
             self['PackageCopyrightText'] = ['NOASSERTION']
 
-        self._add_relationships()
+        if self.manifest['repository']:
+            self['ExternalRef'] += [f'OTHER repository {self.manifest["repository"]}']
 
-    def _get_manifest(self) -> Dict[str, str]:
-        # Get manifest information and try to fill in missing pieces.
-        manifest = self.get_manifest(self.proj_desc['project_path'])
-        if not manifest['version']:
-            manifest['version'] = self.proj_desc['project_version']
+        if self.manifest['cpe']:
+            self['ExternalRef'] += [f'SECURITY cpe23Type {self.manifest["cpe"]}']
 
-        return manifest
+        if self.manifest['cve-exclude-list']:
+            cve_info = {'cve-exclude-list': self.manifest['cve-exclude-list']}
+            cve_info_yaml = yaml.dump(cve_info, indent=4)
+            cve_info_desc = ('# The cve-exclude-list list contains CVEs, which were '
+                             'already evaluated and the package is not vulnerable.')
+            self['PackageComment'] = [f'<text>\n{cve_info_desc}\n{cve_info_yaml}</text>']
+
+        self.add_relationships()
+
+    def add_relationships(self):
+        for subpkg in self.subpackages:
+            self['Relationship'] += [f'{self["SPDXID"][0]} DEPENDS_ON {subpkg["SPDXID"][0]}']
+
+    def get_subpackages(self) -> List['SPDXPackage']:
+        """Return list of SPDXPackage objects found in package's directory."""
+
+        subpackages: List['SPDXPackage'] = []
+
+        if self.args.rem_submodules and self.args.rem_subpackages:
+            return subpackages
+
+        submodules_info: List[Dict[str,str]] = []
+        if not self.args.rem_submodules:
+            git_wdir = git.get_gitwdir(self.dir)
+            if git_wdir:
+                submodules_info = git.submodule_foreach_enum(git_wdir)
+
+        submodules_info_dict = {i['path']:i for i in submodules_info}
+
+        for root, dirs, files in utils.pwalk(self.dir, [self.dir]):
+            if not self.args.rem_subpackages and root in submodules_info_dict:
+                submodule_info = submodules_info_dict[root]
+                name = '{}-{}'.format(self.name, utils.prelpath(submodule_info['path'], self.dir))
+                subpackages.append(SPDXSubmodule(self.args, self.proj_desc, name, submodule_info))
+                dirs.clear()
+            elif not self.args.rem_subpackages and 'sbom.yml' in files:
+                name = '{}-{}'.format(self.name, utils.prelpath(root, self.dir))
+                subpackages.append(SPDXSubpackage(self.args, self.proj_desc, root, name))
+                dirs.clear()
+
+        return subpackages
+
+    def get_files(self, path: str, prefix: str, exclude_dirs: Optional[List[str]]=None) -> List['SPDXFile']:
+        files: List['SPDXFile'] = []
+        if self.include_files(repo=self.manifest['repository'],
+                              url=self.manifest['url'],
+                              ver=self.manifest['version']):
+            files = super().get_files(path, f'{prefix}-{self.name}', exclude_dirs)
+        return files
+
+    def get_tags(self, exclude_dirs: Optional[List[str]]=None) -> SPDXTags:
+        tags: SPDXTags = SPDXTags()
+        if self.files:
+            tags = SPDXFileObjsTags(self.files)
+        else:
+            tags = SPDXDirTags(self.dir, exclude_dirs)
+        return tags
+
+    def dump(self, colors=False) -> str:
+        out = log.LogString(colors=colors)
+        out += super().dump(colors)
+
+        if self.files:
+            out += '\n'
+            out += f'{out.BLUE}# {self.name} {self.mark} files{out.RESET}'
+            for f in self.files:
+                out += '\n'
+                out += f.dump(colors)
+
+        for subpkg in self.subpackages:
+            out += '\n'
+            out += f'{out.BLUE}# {subpkg.name} {subpkg.mark}{out.RESET}\n'
+            out += subpkg.dump(colors)
+
+        return str(out)
+
+
+class SPDXProject(SPDXPackage):
+    """SPDX Package Information for the project binary."""
+    def __init__(self, args: Namespace, proj_desc: Dict[str, Any]):
+        self.args = args
+        self.proj_desc = proj_desc
+
+        self.linked_libs = self._get_linked_libs()
+        self.components = self._get_components()
+        self.toolchain = SPDXToolchain(args, proj_desc)
+
+        name = proj_desc['project_name']
+        path = proj_desc['project_path']
+        super().__init__(args, proj_desc, path, name, 'project')
 
     def _remove_components(self, remove: List[str],
                            components: Dict[str, Dict]) -> Dict[str, Dict]:
@@ -644,28 +750,46 @@ class SPDXProject(SPDXObject):
 
         return components
 
-    def _add_spdx_file_tags(self) -> None:
-        # Collect tags from components and submodules which have
+    def get_files(self, path: str, prefix: str, exclude_dirs: Optional[List[str]]=None) -> List['SPDXFile']:
+        # project has just the final binary file
+        if not self.include_files():
+            return []
+        fn = utils.pjoin(self.proj_desc['build_dir'], self.proj_desc['app_bin'])
+        file = SPDXFile(self.args, self.proj_desc, fn, self.proj_desc['build_dir'], self.name)
+        return [file]
+
+    def get_subpackages(self):
+        # There are not subpackages for project
+        return []
+
+    def get_manifest(self, path: str) -> Dict[str, str]:
+        # Get manifest information and try to fill in missing pieces.
+        manifest = super().get_manifest(path)
+        if not manifest['version']:
+            manifest['version'] = self.proj_desc['project_version']
+
+        return manifest
+
+    def get_tags(self, exclude_dirs: Optional[List[str]]=None) -> SPDXTags:
+        # Collect tags from components and subpackages which have
         # relationship with Project package.
-        def walk_submodules(submodules):
-            for submodule in submodules:
-                yield submodule
-                yield from walk_submodules(submodule.submodules)
+        tags: SPDXTags = SPDXTags()
+
+        def walk_subpackages(subpackages):
+            for subpackage in subpackages:
+                yield subpackage
+                yield from walk_subpackages(subpackage.subpackages)
 
         for component in self.components.values():
             if not self._component_used(component.info):
                 continue
-            self.tags |= component.tags
-            for submodule in walk_submodules(component.submodules):
-                self.tags |= submodule.tags
+            tags |= component.tags
+            for subpackage in walk_subpackages(component.subpackages):
+                tags |= subpackage.tags
+        return tags
 
-    def _add_relationships(self) -> None:
-        if self.manifest['repository']:
-            self['ExternalRef'] += [f'OTHER repository {self.manifest["repository"]}']
-
-        if self.manifest['cpe']:
-            self['ExternalRef'] += [f'SECURITY cpe23Type {self.manifest["cpe"]}']
-        else:
+    def add_relationships(self) -> None:
+        if not self.manifest['cpe']:
             # CPE for whole espressif:esp-idf.
             ver = self.proj_desc['git_revision']
             if ver[0] == 'v':
@@ -695,11 +819,6 @@ class SPDXProject(SPDXObject):
         out = log.LogString(colors=colors)
         out += super().dump(colors)
 
-        if self.file:
-            out += '\n'
-            out += f'{out.BLUE}# {self.name} binary{out.RESET}\n'
-            out += self.file.dump(colors)
-
         out += '\n'
         out += f'{out.BLUE}# {self.toolchain.name} toolchain{out.RESET}\n'
         out += self.toolchain.dump(colors)
@@ -712,46 +831,26 @@ class SPDXProject(SPDXObject):
         return str(out)
 
 
-class SPDXToolchain(SPDXObject):
+class SPDXToolchain(SPDXPackage):
     """SPDX Package Information for toolchain."""
     def __init__(self, args: Namespace, proj_desc: Dict[str, Any]):
-        super().__init__(args, proj_desc)
-
+        self.proj_desc = proj_desc
         self.info = self._get_toolchain_info()
-        self.name = self.info['name']
-        self.version = self.info['version']
-        self.files = None
+        name = self.info['name']
+        super().__init__(args, proj_desc, self.info['path'], name, 'toolchain')
 
-        path = utils.pjoin(self.info['path'], self.info['version'])
-        if self.include_files(url=self.info['url'], ver=self.info['version']):
-            self.files = self.get_files(path, self.name)
-        if args.file_tags:
-            self.tags = SPDXDirTags(path)
+    def get_manifest(self, path: str) -> Dict[str, Any]:
+        # create manifest based on info from toolchain
+        manifest = self.EMPTY_MANIFEST.copy()
+        manifest['description'] = self.info['description']
+        manifest['url'] = self.info['url']
+        manifest['version'] = self.info['version']
+        manifest['supplier'] = self.ESPRESSIF_SUPPLIER
+        return manifest
 
-        self['PackageName'] = [self.name]
-        self['PackageSummary'] = [f'<text>{self.info["description"]}</text>']
-        self['SPDXID'] = ['SPDXRef-TOOLCHAIN-' + self.sanitize_spdxid(self.name)]
-        self['PackageVersion'] = [self.version]
-        self['PackageSupplier'] = [self.ESPRESSIF_SUPPLIER]
-        self['PackageDownloadLocation'] = [self.info['url']]
-        if self.files:
-            self['FilesAnalyzed'] = ['true']
-            self['PackageVerificationCode'] = [self.get_verification_code([f.sha1 for f in self.files])]
-            if self.tags.licenses:
-                self['PackageLicenseInfoFromFiles'] = list(self.tags.licenses)
-            else:
-                self['PackageLicenseInfoFromFiles'] = ['NOASSERTION']
-        else:
-            self['FilesAnalyzed'] = ['false']
-        if self.tags.licenses_expressions:
-            self['PackageLicenseConcluded'] = [self.tags.get_license_concluded()]
-        else:
-            self['PackageLicenseConcluded'] = ['NOASSERTION']
-        self['PackageLicenseDeclared'] = ['NOASSERTION']
-        if self.tags.copyrights:
-            self['PackageCopyrightText'] = ['<text>{}</text>'.format('\n'.join(self.tags.copyrights))]
-        else:
-            self['PackageCopyrightText'] = ['NOASSERTION']
+    def get_subpackages(self):
+        # There are not subpackages for toolchain
+        return []
 
     def _get_current_platform(self) -> str:
         # Get current platform directly from idf_tools.py.
@@ -808,273 +907,60 @@ class SPDXToolchain(SPDXObject):
 
         return info
 
-    def dump(self, colors=False) -> str:
-        out = log.LogString(colors=colors)
-        out += super().dump(colors)
 
-        if self.files:
-            out += '\n'
-            out += f'{out.BLUE}# {self.name} toolchain files{out.RESET}'
-            for f in self.files:
-                out += '\n'
-                out += f.dump(colors)
-        return str(out)
-
-
-class SPDXComponent(SPDXObject):
+class SPDXComponent(SPDXPackage):
     """SPDX Package Information for component."""
     def __init__(self, args: Namespace, proj_desc: Dict[str, Any], name: str, info: dict):
-        super().__init__(args, proj_desc)
-        self.name = name
-        self.dir = info['dir']
         self.info = info
-        self.manifest = self._get_manifest()
-        self.submodules = self.get_submodules(self.dir, self.name)
-        self.files = []
-
-        # exclude submodule paths if any
-        exclude_dirs = [submod.dir for submod in self.submodules]
-
-        if self.include_files(repo=self.manifest['repository'],
-                              url=self.manifest['url'],
-                              ver=self.manifest['version']):
-            self.files = self.get_files(self.dir, self.name, exclude_dirs)
-
-        if args.file_tags:
-            if self.files:
-                self.tags = SPDXFileObjsTags(self.files)
-            else:
-                self.tags = SPDXDirTags(self.dir, exclude_dirs)
-
-        self['PackageName'] = [f'component-{self.name}']
-        if self.manifest['description']:
-            self['PackageSummary'] = [f'<text>{self.manifest["description"]}</text>']
-        self['SPDXID'] = ['SPDXRef-COMPONENT-' + self.sanitize_spdxid(self.name)]
-        if self.manifest['version']:
-            self['PackageVersion'] = [self.manifest['version']]
-        self['PackageSupplier'] = [self.manifest['supplier'] or 'NOASSERTION']
-        if self.manifest['originator']:
-            self['PackageOriginator'] = [self.manifest['originator']]
-        self['PackageDownloadLocation'] = [self.manifest['url'] or 'NOASSERTION']
-        if self.files:
-            self['FilesAnalyzed'] = ['true']
-            self['PackageVerificationCode'] = [self.get_verification_code([f.sha1 for f in self.files])]
-            if self.tags.licenses:
-                self['PackageLicenseInfoFromFiles'] = list(self.tags.licenses)
-            else:
-                self['PackageLicenseInfoFromFiles'] = ['NOASSERTION']
-        else:
-            self['FilesAnalyzed'] = ['false']
-        if self.tags.licenses_expressions:
-            self['PackageLicenseConcluded'] = [self.tags.get_license_concluded()]
-        else:
-            self['PackageLicenseConcluded'] = ['NOASSERTION']
-        self['PackageLicenseDeclared'] = [self.manifest['license'] or 'NOASSERTION']
-        if self.tags.copyrights:
-            self['PackageCopyrightText'] = ['<text>{}</text>'.format('\n'.join(self.tags.copyrights))]
-        else:
-            self['PackageCopyrightText'] = ['NOASSERTION']
-
-        self._add_relationships()
-
-    def _get_manifest(self) -> Dict[str, str]:
-        # Get manifest information and try to fill in missing pieces.
-        manifest = self.get_manifest(self.dir)
-        if not manifest['version']:
-            manifest['version'] = self.guess_version(self.dir, self.name)
-
-        if not manifest['repository']:
-            manifest['repository'] = git.get_remote_location(self.dir)
-
-        if not manifest['supplier']:
-            manifest['supplier'] = self.guess_supplier(self.dir, manifest['url'], manifest['repository'])
-
-        return manifest
-
-    def _add_relationships(self) -> None:
-        if self.manifest['repository']:
-            self['ExternalRef'] += [f'OTHER repository {self.manifest["repository"]}']
-
-        if self.manifest['cpe']:
-            self['ExternalRef'] += [f'SECURITY cpe23Type {self.manifest["cpe"]}']
-
-        for submod in self.submodules:
-            self['Relationship'] += [f'{self["SPDXID"][0]} DEPENDS_ON {submod["SPDXID"][0]}']
-
-    def dump(self, colors=False) -> str:
-        out = log.LogString(colors=colors)
-        out += super().dump(colors)
-
-        if self.files:
-            out += '\n'
-            out += f'{out.BLUE}# {self.name} component files{out.RESET}'
-            for f in self.files:
-                out += '\n'
-                out += f.dump(colors)
-
-        if not self.submodules:
-            return str(out)
-
-        for submod in self.submodules:
-            out += '\n'
-            out += f'{out.BLUE}# {submod.name} submodule{out.RESET}\n'
-            out += submod.dump(colors)
-
-        return str(out)
+        super().__init__(args, proj_desc, info['dir'], name, 'component')
 
 
-class SPDXSubmodule(SPDXObject):
+class SPDXSubpackage(SPDXPackage):
+    """SPDX Package Information for subpackage."""
+    def __init__(self, args: Namespace, proj_desc: Dict[str, Any], path: str, name: str):
+        super().__init__(args, proj_desc, path, name, 'subpackage')
+
+
+class SPDXSubmodule(SPDXPackage):
     """SPDX Package Information for submodule."""
-    def __init__(self, args: Namespace, proj_desc: Dict[str, Any], parent_name: str, info: dict):
-        super().__init__(args, proj_desc)
-        self.name = info['rel_path']
+    def __init__(self, args: Namespace, proj_desc: Dict[str, Any], name: str, info: dict):
         self.info = info
-        self.dir = info['path']
-        self.manifest = self._get_manifest()
-        self.submodules = self.get_submodules(self.dir, f'{parent_name}-{self.name}')
-        self.files = []
+        super().__init__(args, proj_desc, info['path'], name, 'submodule')
 
-        # exclude submodule paths if any
-        exclude_dirs = [submod.dir for submod in self.submodules]
+    def get_manifest(self, directory: str) -> Dict[str,str]:
+        # Convert sbom information from .gitmodule config into expected manifest dictionary
+        # and extend already created manifest if it's missing some information.
+        manifest = super().get_manifest(directory)
 
-        if self.include_files(repo=self.manifest['repository'],
-                              url=self.manifest['url'],
-                              ver=self.manifest['version']):
-            self.files = self.get_files(self.dir, f'{parent_name}-{self.name}', exclude_dirs)
+        # Get submodule information form .gitmodules
+        module_cfg = git.get_submodule_config(self.info['git_wdir'], self.info['name'])
 
-        if args.file_tags:
-            if self.files:
-                self.tags = SPDXFileObjsTags(self.files)
-            else:
-                self.tags = SPDXDirTags(self.dir, exclude_dirs)
+        # Get all sbom keys and strip "sbom-" prefix
+        module_sbom = {k[len('sbom-'):]:v for k,v in module_cfg.items() if k.startswith('sbom-')}
 
-        self['PackageName'] = [f'submodule-./{self.name}']
-        if self.manifest['description']:
-            self['PackageSummary'] = [f'<text>{self.manifest["description"]}</text>']
-        self['SPDXID'] = ['SPDXRef-SUBMODULE-' + self.sanitize_spdxid(f'{parent_name}-{self.name}')]
-        if self.manifest['version']:
-            self['PackageVersion'] = [self.manifest['version']]
-        self['PackageSupplier'] = [self.manifest['supplier'] or 'NOASSERTION']
-        if self.manifest['originator']:
-            self['PackageOriginator'] = [self.manifest['originator']]
-        self['PackageDownloadLocation'] = [self.manifest['url'] or 'NOASSERTION']
-        if self.files:
-            self['FilesAnalyzed'] = ['true']
-            self['PackageVerificationCode'] = [self.get_verification_code([f.sha1 for f in self.files])]
-            if self.tags.licenses:
-                self['PackageLicenseInfoFromFiles'] = list(self.tags.licenses)
-            else:
-                self['PackageLicenseInfoFromFiles'] = ['NOASSERTION']
-        else:
-            self['FilesAnalyzed'] = ['false']
-        if self.tags.licenses_expressions:
-            self['PackageLicenseConcluded'] = [self.tags.get_license_concluded()]
-        else:
-            self['PackageLicenseConcluded'] = ['NOASSERTION']
-        self['PackageLicenseDeclared'] = [self.manifest['license'] or 'NOASSERTION']
-        if self.tags.copyrights:
-            self['PackageCopyrightText'] = ['<text>{}</text>'.format('\n'.join(self.tags.copyrights))]
-        else:
-            self['PackageCopyrightText'] = ['NOASSERTION']
+        if 'cve-exclude-list' in module_sbom:
+            # Convert cve-exclude-list values from .gitconfig into list of dicts
+            # as expected by validate_manifest
+            cve_exclude_list = []
+            if not isinstance(module_sbom['cve-exclude-list'], list):
+                module_sbom['cve-exclude-list'] = [module_sbom['cve-exclude-list']]
+            for cve_str in module_sbom['cve-exclude-list']:
+                splitted = cve_str.split(maxsplit=1)
+                cve_id = ''
+                reason = ''
+                if len(splitted) == 2:
+                    cve_id = splitted[0]
+                    reason = splitted[1]
+                elif len(splitted) == 1:
+                    cve_id = splitted[0]
+                cve_exclude_list.append({'cve': cve_id, 'reason': reason})
+            module_sbom['cve-exclude-list'] = cve_exclude_list
 
-        self._add_relationships()
-
-    def _get_manifest(self) -> Dict[str, str]:
-        # Get manifest information and try to fill in missing pieces from .gitmodules
-        # if available.
-        def get_submodule_config() -> Dict[str,str]:
-            # Return validated submodule git configuration.
-            def validate_submodule_config(config: Dict[str,str]) -> None:
-                try:
-                    submodule_schema = schema.Schema(
-                        {
-                            schema.Optional('sbom-version'): str,
-                            schema.Optional('sbom-repository'): schema.And(str, self.check_url),
-                            schema.Optional('sbom-url'): schema.And(str, self.check_url),
-                            schema.Optional('sbom-cpe'): schema.And(str, self.check_cpe),
-                            schema.Optional('sbom-supplier'): schema.And(str, self.check_person_organization),
-                            schema.Optional('sbom-originator'): schema.And(str, self.check_person_organization),
-                            schema.Optional('sbom-description'): str,
-                            schema.Optional('sbom-license'): schema.And(str, self.check_license),
-                        }, ignore_extra_keys=True)
-
-                    submodule_schema.validate(config)
-                except schema.SchemaError as e:
-                    fn = utils.pjoin(self.info['git_wdir'], '.gitmodules')
-                    log.err.die(f'The submodule "{self.info["sm_path"]}" sbom information in "{fn}" is not valid: {e}')
-
-            module_cfg = git.get_submodule_config(self.info['git_wdir'], self.info['name'])
-            validate_submodule_config(module_cfg)
-            return module_cfg
-
-        manifest = self.get_manifest(self.dir)
-        module_cfg = get_submodule_config()
-        if not manifest['version']:
-            if 'sbom-version' in module_cfg:
-                manifest['version'] = module_cfg['sbom-version']
-            else:
-                manifest['version'] = self.guess_version(self.dir)
-
-        if not manifest['cpe']:
-            manifest['cpe'] = module_cfg.get('sbom-cpe', '').format(manifest['version'])
-
-        if not manifest['originator']:
-            manifest['originator'] = module_cfg.get('sbom-originator', '')
-
-        if not manifest['url']:
-            manifest['url'] = module_cfg.get('sbom-url', '')
-
-        if not manifest['description']:
-            manifest['description'] = module_cfg.get('sbom-description', '')
-
-        if not manifest['license']:
-            manifest['license'] = module_cfg.get('sbom-license', '')
-
-        if not manifest['repository']:
-            if 'sbom-repository' in module_cfg:
-                manifest['repository'] = module_cfg['sbom-repository']
-            else:
-                manifest['repository'] = git.get_remote_location(self.dir)
-
-        if not manifest['supplier']:
-            if 'sbom-supplier' in module_cfg:
-                manifest['supplier'] = module_cfg['sbom-supplier']
-            else:
-                manifest['supplier'] = self.guess_supplier(self.dir, manifest['url'],
-                                                           manifest['repository'])
+        sbom_path = utils.pjoin(self.info['git_wdir'], '.gitmodules')
+        self.validate_manifest(module_sbom, f'{sbom_path} submodule {self.info["name"]}')
+        self.update_manifest(manifest, module_sbom)
 
         return manifest
-
-    def _add_relationships(self) -> None:
-        if self.manifest['repository']:
-            self['ExternalRef'] += [f'OTHER repository {self.manifest["repository"]}']
-
-        if self.manifest['cpe']:
-            self['ExternalRef'] += [f'SECURITY cpe23Type {self.manifest["cpe"]}']
-
-        for submod in self.submodules:
-            self['Relationship'] += [f'{self["SPDXID"][0]} DEPENDS_ON {submod["SPDXID"][0]}']
-
-    def dump(self, colors=False) -> str:
-        out = log.LogString(colors=colors)
-        out += super().dump(colors)
-
-        if self.files:
-            out += '\n'
-            out += f'{out.BLUE}# {self.name} submodule files{out.RESET}'
-            for f in self.files:
-                out += '\n'
-                out += f.dump(colors)
-
-        if not self.submodules:
-            return str(out)
-
-        for submod in self.submodules:
-            out += '\n'
-            out += f'{out.BLUE}# {submod.name} submodule{out.RESET}\n'
-            out += submod.dump(colors)
-
-        return str(out)
 
 
 class SPDXFile(SPDXObject):
@@ -1120,40 +1006,63 @@ def parse_packages(buf: str) -> Dict[str, Dict[str, List[str]]]:
     """Very dummy SPDX file parser. Returns dictionary, where key is
     package SPDXID and value is dictionary with SPDX tag/values."""
     in_package = False
-    idx = 0
+    in_text = False
+    idx = -1
     packages: Dict[int, Dict[str, List[str]]] = {}
-    lines = buf.splitlines()
+    tag = ''
+    val = ''
+
+    def add_tag_value(tag: str, val: str):
+        if not in_package:
+            return
+
+        if tag not in packages[idx]:
+            packages[idx][tag] = []
+
+        packages[idx][tag].append(val)
+
+    lines = buf.splitlines(keepends=True)
     for line in lines:
-        line = line.strip()
+        if in_text:
+            val += line
+            if '</text>' not in line:
+                # still in text value
+                continue
+            val = val.rstrip()
+            in_text = False
+            add_tag_value(tag, val)
 
-        if not line or line[0] == '#':
+        if not line.strip() or line[0] == '#':
+            # skip empty lines or comments
             continue
 
-        try:
-            tag, val = line.split(':', maxsplit=1)
-        except ValueError:
-            # can be multiline text inside <text>...</text>
+        if ':' not in line:
+            # line not in tag:value format
             continue
+
+        tag, val = line.split(':', maxsplit=1)
 
         tag = tag.strip()
-        val = val.strip()
+        if tag == 'FileName':
+            # files are listed after package, so this is
+            # end of current package if any
+            in_package = False
+            continue
+
+        val = val.lstrip()
+        if val.startswith('<text>') and '</text>' not in val:
+            # text value may have multiple lines
+            in_text = True
+            continue
+
+        val = val.rstrip()
 
         if tag == 'PackageName':
             in_package = True
             idx += 1
             packages[idx] = {}
 
-        if not in_package:
-            continue
-
-        if tag == 'FileName':
-            in_package = False
-            continue
-
-        if tag not in packages[idx]:
-            packages[idx][tag] = []
-
-        packages[idx][tag].append(val)
+        add_tag_value(tag, val)
 
     spdx_packages = {pkg['SPDXID'][0]: pkg for pkg in packages.values()}
     log.err.debug('parsed spdx packages:')

@@ -5,7 +5,7 @@
 Simple module for git interaction.
 """
 
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from esp_idf_sbom.libsbom import utils
 
@@ -65,26 +65,60 @@ def submodule_foreach_enum(git_wdir: str, cache: Dict[str,List[Dict[str,str]]]={
     return submodules
 
 
-def get_config(fn: str, cache: Dict[str, Dict[str,str]]={}) -> Dict[str,str]:
+class CFGDict(dict):
+    """Simple dict wrapper with two modification of the original class.
+    1. It never overwrites values, only adds them.
+       d = CFGDict()
+       d['a'] = 1 # d['a'] now contains value 1
+       d['a'] = 2 # d['a'] now contains list [1,2]
+    2. The get_value method is same as dict get, except if the key value is list,
+       it returns the last list entry. This mimics git-config --get
+       d.get_value('a') # returns 2
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def get_value(self, key: str, default: Optional[Any]=None) -> Any:
+        """As "git-config --get" return only the last value."""
+        val = self.get(key, default)
+        if isinstance(val, list):
+            return val[-1]
+        return val
+
+    def __setitem__(self, key: str, value: Optional[Any]) -> None:
+        # Set key to value, but if key already exists, create a list
+        # and add the old value and the new one into it. Meaning
+        # values are always added and never overwritten.
+        if key in self:
+            if isinstance(self[key], list):
+                self[key].append(value)
+            else:
+                super().__setitem__(key, [self[key], value])
+        else:
+            super().__setitem__(key, value)
+
+
+def get_config(fn: str, cache: Dict[str, CFGDict]={}) -> CFGDict:
     """Return git configuration for absolute config file path."""
     # Cache handled via default parameter value. See submodule_foreach_enum()
     if fn in cache:
         return cache[fn]
     out = _helper(['git', 'config', '--list', '--file', fn])
-    cfg = {}
+    cfg = CFGDict()
     for line in out.splitlines():
         var, val = line.split('=', maxsplit=1)
         cfg[var] = val
+
     cache[fn] = cfg
     return cfg
 
 
-def get_submodule_config(git_wdir: str, name: str) -> Dict[str,str]:
+def get_submodule_config(git_wdir: str, name: str) -> CFGDict:
     """Return configuration for submodule specified by name."""
     fn = utils.pjoin(git_wdir, '.gitmodules')
     cfg = get_config(fn)
     prefix = f'submodule.{name}.'
-    sub_cfg = {}
+    sub_cfg = CFGDict()
     for var, val in cfg.items():
         if not var.startswith(prefix):
             continue
@@ -112,13 +146,14 @@ def describe(path: str) -> str:
 def get_remote_url(path: str) -> str:
     """Return remote URL for specified path."""
     git_dir = get_gitdir(path)
+    url: str = ''
     if not git_dir:
         return ''
 
     cfg = get_config(utils.pjoin(git_dir, 'config'))
     branch = get_branch(git_dir)
-    remote = cfg.get(f'branch.{branch}.remote', 'origin')
-    url = cfg.get(f'remote.{remote}.url', '')
+    remote = cfg.get_value(f'branch.{branch}.remote', 'origin')
+    url = cfg.get_value(f'remote.{remote}.url', '')
 
     if not utils.is_remote_url(url):
         # ignore local repository url and URLs not using git, http or https scheme

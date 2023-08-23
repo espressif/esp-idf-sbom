@@ -9,6 +9,8 @@ import sys
 import textwrap
 from argparse import Namespace
 
+import yaml
+
 from esp_idf_sbom.libsbom import log, nvd, spdx
 
 
@@ -42,12 +44,25 @@ def cmd_check(args: Namespace) -> int:
         if not cpe_refs:
             continue
 
+        cve_exclude_list = {}
+        if 'PackageComment' in pkg:
+            # get information about excluded CVEs
+            comment = pkg['PackageComment'][0]
+            comment = comment[len('<text>'):-len('</text>')]
+            comment_yaml = yaml.safe_load(comment)
+            cve_exclude_list = {cve['cve']: cve['reason'] for cve in comment_yaml['cve-exclude-list']}
+
         for cpe_ref in cpe_refs:
             _, _, cpe = cpe_ref.split()
             log.err.info(f'checking {cpe} ... ')
             vulns = nvd.check(cpe)
             for vuln in vulns:
                 cve_id = vuln['cve']['id']
+                if cve_id in cve_exclude_list:
+                    reason = cve_exclude_list[cve_id]
+                    log.err.info((f'{cve_id} in package {pkg["PackageName"][0]}({pkg["SPDXID"][0]}) '
+                                  f'is excluded: {reason}'))
+                    continue
                 cve_link = f'https://nvd.nist.gov/vuln/detail/{cve_id}'
                 cve_desc = [desc['value'] for desc in vuln['cve']['descriptions'] if desc['lang'] == 'en'][0]
                 table.append((cpe, pkg['SPDXID'][0], pkg['PackageName'][0], cve_id, cve_link, cve_desc))
@@ -138,6 +153,12 @@ def main():
                                default=bool(os.environ.get('SBOM_CREATE_REM_SUBMODULES')),
                                help=('Remove submodules info and include submodules files directly '
                                      'in components. By default submodules are reported as separated '
+                                     'packages.'))
+    create_parser.add_argument('--rem-subpackages',
+                               action='store_true',
+                               default=bool(os.environ.get('SBOM_CREATE_REM_SUBPACKAGES')),
+                               help=('Remove subpackages info and include subpackages files directly '
+                                     'in components. By default subpackages are reported as separated '
                                      'packages.'))
     create_parser.add_argument('--files',
                                choices=['auto', 'add', 'rem'],
