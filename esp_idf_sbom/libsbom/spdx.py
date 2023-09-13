@@ -576,7 +576,10 @@ class SPDXPackage(SPDXObject):
         if args.file_tags:
             self.tags = self.get_tags(exclude_dirs)
 
-        self['PackageName'] = [self.manifest['name'] or f'{self.mark}-{self.name}']
+        cpe_name = None
+        if self.manifest['cpe']:
+            cpe_name = self.manifest['cpe'].split(':')[4]
+        self['PackageName'] = [self.manifest['name'] or cpe_name or f'{self.mark}-{self.name}']
         if self.manifest['description']:
             self['PackageSummary'] = [f'<text>{self.manifest["description"]}</text>']
         self['SPDXID'] = ['SPDXRef-{}-{}'.format(self.mark.upper(), self.sanitize_spdxid(self.name))]
