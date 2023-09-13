@@ -48,6 +48,7 @@ setup(
         'PyYAML',
         'schema',
         'license-expression',
+        'rich',
     ],
     extras_require={
         'dev': [

@@ -8,7 +8,7 @@ Miscellaneous helpers
 import os
 import subprocess
 from pathlib import Path
-from typing import AnyStr, Dict, Iterator, List, Optional, Tuple
+from typing import AnyStr, Dict, Iterable, Iterator, List, Optional, Tuple
 from urllib.parse import urlparse
 
 
@@ -62,6 +62,15 @@ def is_remote_url(url: str='') -> bool:
     This is just a very basic test."""
     res = urlparse(url)
     return bool(res.scheme in ['git', 'http', 'https'] and res.netloc)
+
+
+def csv_escape(entries: Iterable) -> List[str]:
+    """Return list of CSV escaped entries."""
+    out = []
+    for entry in entries:
+        entry = entry.replace('"', '""')
+        out.append(f'"{entry}"')
+    return out
 
 
 def run(cmd:    List[str],

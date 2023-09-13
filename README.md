@@ -89,8 +89,19 @@ with
 
 If *SBOM file* is not provided, the standard input stream is used.
 
+The default report format consists of multiple tables:
+
+1. Report summary
+2. Packages with identified vulnerabilities
+3. Packages with excluded vulnerabilities
+4. Packages with no identified vulnerabilities
+5. Packages without CPE information not applicable for vulnerability check
+
+The output format may be changed with the `--format` option, which supports exporting
+the report into **json** or **csv** format.
+
 If package is not vulnerable to a specific CVE, it can be added to the manifest **cve-exclude-list**
-list and checker will not report it.
+list and checker will not report it as identified vulnerability, but as excluded vulnerability.
 
 
 ## Usage example

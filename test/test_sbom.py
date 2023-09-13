@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+import re
 import shutil
 import sys
 from distutils.dir_util import copy_tree
@@ -179,10 +180,10 @@ def test_cve_exclude_list(hello_world_build: Path) -> None:
     run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files', 'rem',
          '--no-file-tags', '-o', output_fn, proj_desc_path],
         check=True)
-    p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', output_fn],
-            check=True, capture_output=True, text=True)
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', '--format', 'csv', output_fn],
+            capture_output=True, text=True)
 
-    assert 'CVEID:   CVE-2020-27209' in p.stdout
+    assert re.search(r'YES.+CVE-2020-27209', p.stdout) is not None
 
     content = f'''
               cpe: cpe:2.3:a:micro-ecc_project:micro-ecc:1.0:*:*:*:*:*:*:*
@@ -195,10 +196,10 @@ def test_cve_exclude_list(hello_world_build: Path) -> None:
     run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files', 'rem',
          '--no-file-tags', '-o', output_fn, proj_desc_path],
         check=True)
-    p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', output_fn],
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', '--format', 'csv', output_fn],
             check=True, capture_output=True, text=True)
 
-    assert 'CVEID:   CVE-2020-27209' not in p.stdout
+    assert re.search(r'EXCLUDED.+CVE-2020-27209', p.stdout) is not None
 
     manifest.unlink()
 
