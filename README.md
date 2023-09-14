@@ -327,6 +327,10 @@ values are added. If e.g. `version` is found in `sbom.yml` any other
 
 ## Licenses and Copyrights
 
+Adding licenses and copyrights information into the SBOM file has to be explicitly
+requested by using the `--file-tags` option. This requires to scan all files and
+may take some time. It also may result in a quite big SBOM file.
+
 All **component** and **submodule** files are scanned for the `SPDX-License-Identifier`,
 `SPDX-FileCopyrightText` and `SPDX-FileContributor` SPDX file tags. Information from
 these tags is used in the generated SBOM file to specify licenses and copyrights for
@@ -337,9 +341,6 @@ and **submodules** used in the final project binary.
 The license can be also explicitly declared by the author in the `sbom.yml` file with the `license`
 variable. This information is used as a value for the `PackageLicenseDeclared` SPDX tag for
 given **project**, **component** or **submodule**.
-
-The `--no-file-tags` option disables scanning for SPDX file tags. When used the license and
-copyright information from files will not be presented in the generated SBOM file.
 
 
 [1]: https://en.wikipedia.org/wiki/Software_supply_chain

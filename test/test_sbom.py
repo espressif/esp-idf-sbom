@@ -89,9 +89,8 @@ def test_sbom_subpackages(hello_world_build: Path) -> None:
 
     proj_desc_path = hello_world_build / 'build' / 'project_description.json'
 
-    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files', 'rem',
-             '--no-file-tags', proj_desc_path], check=True, capture_output=True,
-            text=True)
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', proj_desc_path],
+            check=True, capture_output=True, text=True)
 
     assert 'TEST_SUBPACKAGE' in p.stdout
     assert 'TEST_SUBSUBPACKAGE' in p.stdout
@@ -131,9 +130,8 @@ def test_referenced_manifests(hello_world_build: Path) -> None:
     (subpackage_path / 'subsubpackage').mkdir(parents=True)
 
     proj_desc_path = hello_world_build / 'build' / 'project_description.json'
-    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files', 'rem',
-             '--no-file-tags', proj_desc_path], check=True, capture_output=True,
-            text=True)
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create',  proj_desc_path],
+            check=True, capture_output=True, text=True)
 
     assert 'TEST_SUBPACKAGE' in p.stdout
     assert 'TEST_SUBSUBPACKAGE' in p.stdout
@@ -155,9 +153,8 @@ def test_sbom_manifest_from_idf_component(hello_world_build: Path) -> None:
               '''
     manifest.write_text(dedent(content))
     proj_desc_path = hello_world_build / 'build' / 'project_description.json'
-    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files', 'rem',
-             '--no-file-tags', proj_desc_path], check=True, capture_output=True,
-            text=True)
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', proj_desc_path],
+            check=True, capture_output=True, text=True)
 
     assert f'PackageSummary: <text>{desc}</text>' in p.stdout
 
@@ -177,8 +174,7 @@ def test_cve_exclude_list(hello_world_build: Path) -> None:
               '''
 
     manifest.write_text(dedent(content))
-    run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files', 'rem',
-         '--no-file-tags', '-o', output_fn, proj_desc_path],
+    run([sys.executable, '-m', 'esp_idf_sbom', 'create', '-o', output_fn, proj_desc_path],
         check=True)
     p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', '--format', 'csv', output_fn],
             capture_output=True, text=True)
@@ -193,8 +189,7 @@ def test_cve_exclude_list(hello_world_build: Path) -> None:
               '''
 
     manifest.write_text(dedent(content))
-    run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files', 'rem',
-         '--no-file-tags', '-o', output_fn, proj_desc_path],
+    run([sys.executable, '-m', 'esp_idf_sbom', 'create', '-o', output_fn, proj_desc_path],
         check=True)
     p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', '--format', 'csv', output_fn],
             check=True, capture_output=True, text=True)

@@ -496,11 +496,12 @@ def main():
                                      'packages.'))
     create_parser.add_argument('--files',
                                choices=['auto', 'add', 'rem'],
-                               default=os.environ.get('SBOM_CREATE_FILES', 'auto'),
-                               help=('rem - Exclude all files. This will generate much smaller SBOM file. '
+                               default=os.environ.get('SBOM_CREATE_FILES', 'rem'),
+                               help=('rem - Exclude all files. This will generate much smaller SBOM file '
+                                     'and it is the default value. '
                                      'add - Explicitly add all files for any package. '
-                                     'auto - This is default value and it adds files only if there is no '
-                                     'repository or URL and version information available for package.'))
+                                     'auto - Adds files only if there is no repository or URL and version '
+                                     'information available for package.'))
     create_parser.add_argument('--no-guess',
                                action='store_true',
                                default=bool(os.environ.get('SBOM_CREATE_NO_GUESS')),
@@ -514,11 +515,10 @@ def main():
                                action='store_true',
                                default=bool(os.environ.get('SBOM_CREATE_PRINT')),
                                help=('Print generated SBOM file to stdout even if "--output-file" is used.'))
-    create_parser.add_argument('--no-file-tags',
-                               dest='file_tags',
-                               action='store_false',
-                               default=not bool(os.environ.get('SBOM_CREATE_NO_FILE_TAGS')),
-                               help=('Do not scan files for SPDX file tags. This includes SPDX-License-Identifier, '
+    create_parser.add_argument('--file-tags',
+                               action='store_true',
+                               default=bool(os.environ.get('SBOM_CREATE_NO_FILE_TAGS')),
+                               help=('Scan files for SPDX file tags. This includes SPDX-License-Identifier, '
                                      'SPDX-FileCopyrightText and SPDX-FileContributor'))
 
     check_parser = subparsers.add_parser('check',
