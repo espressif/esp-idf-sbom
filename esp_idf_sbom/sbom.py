@@ -19,7 +19,7 @@ from rich.progress import (BarColumn, MofNCompleteColumn, Progress, TextColumn,
 from rich.table import Table
 
 from esp_idf_sbom import __version__
-from esp_idf_sbom.libsbom import git, log, nvd, spdx, utils
+from esp_idf_sbom.libsbom import log, mft, nvd, spdx, utils
 
 
 def cmd_create(args: Namespace) -> int:
@@ -165,7 +165,7 @@ def cmd_check(args: Namespace) -> int:
 
     except KeyboardInterrupt:
         progress.stop()
-        log.err.die('Process to terminated')
+        log.err.die('Process terminated')
 
     progress.update(progress_task,advance=0, refresh=True, description='')
     progress.stop()
@@ -423,39 +423,36 @@ def cmd_check(args: Namespace) -> int:
     return exit_code
 
 
-def cmd_test_sha(args: Namespace) -> int:
-    """ Check that submodule SHA in git-tree and .gitmodules match
-    if sbom-hash variable is available in the .gitmodules file.
-    """
-    git_wdir = git.get_gitwdir(args.path_to_check)
-    if not git_wdir:
-        sys.exit(f'Could\'t find the path: "{args.path_to_check}"')
+def cmd_manifest_validate(args: Namespace) -> int:
+    progress_disabled = args.quiet or args.no_progress
+    progress = Progress(
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        TextColumn('{task.description}'),
+        disable=progress_disabled,
+        console=Console(stderr=True, no_color=args.no_colors, emoji=False))
 
-    submodules = git.get_submodules_config(git_wdir)
+    progress.start()
+    try:
+        progress_task = progress.add_task('Validating manifests')
+        progress.update(progress_task, refresh=True, description='searching for manifest files')
 
-    for sub_name, variables in submodules.items():
-        sbom_hash = variables.get('sbom-hash')
-        if not sbom_hash:
-            continue
+        manifests = mft.get_manifests(args.validate_paths)
+        progress.update(progress_task, advance=0, refresh=True, total=len(manifests))
 
-        module_path = variables.get('path')
-        if not module_path:
-            continue
+        for manifest in manifests:
+            progress.update(progress_task, advance=1, refresh=True, description=manifest['_src'])
+            mft.validate(manifest, manifest['_src'], manifest['_dst'], die=False)
 
-        module_hash = git.get_module_sha(module_path)
-        if not module_hash:
-            continue
+    except RuntimeError as e:
+        progress.stop()
+        log.err.die(str(e))
+    except KeyboardInterrupt:
+        progress.stop()
+        log.err.die('Process terminated')
 
-        msg = (f'Submodule \"{sub_name}\" SHA \"{module_hash}\" in git '
-               f'tree does not match SHA \"{sbom_hash}\" recorded in .gitmodules. '
-               f'Please update \"sbom-hash\" in .gitmodules for \"{sub_name}\" '
-               f'and also please do not forget to update version and other submodule '
-               f'information if necessary. It is important to keep this information '
-               f'up-to-date for SBOM generation.')
-
-        assert module_hash == sbom_hash, msg
-
-    log.out.green('Every submodule SHA in git-tree and in .gitmodules match')
+    progress.stop()
 
     return 0
 
@@ -486,6 +483,11 @@ def main():
                         action='store_true',
                         default=bool(os.environ.get('SBOM_DEBUG')),
                         help=('Print debug information. Messages are printed to standard error output.'))
+
+    parser.add_argument('--no-progress',
+                        action='store_true',
+                        default=bool(os.environ.get('SBOM_CHECK_NO_PROGRESS')),
+                        help=('Disable progress bar.'))
 
     subparsers = parser.add_subparsers(help='sub-command help')
 
@@ -579,10 +581,6 @@ def main():
                                     'affect the resulting binary! For example components with libraries, '
                                     'which are not linked into the final binary will be checked too.'))
 
-    check_parser.add_argument('--no-progress',
-                              action='store_true',
-                              default=bool(os.environ.get('SBOM_CHECK_NO_PROGRESS')),
-                              help=('Disable progress bar.'))
     check_parser.add_argument('--format',
                               choices=['table', 'json', 'csv'],
                               default=os.environ.get('SBOM_CHECK_FORMAT', 'table'),
@@ -590,16 +588,19 @@ def main():
                                     'json - Print report in JSON format. '
                                     'csv - Print report in CSV format.'))
 
-    validate_submodule_hash_parser = subparsers.add_parser('validate-submodule-hash',
-                                                           help=('Check that submodule SHA in git-tree and .gitmodules match '
-                                                                 'if sbom-hash variable is available in the .gitmodules file.'))
-    validate_submodule_hash_parser.set_defaults(func=cmd_test_sha)
-    validate_submodule_hash_parser.add_argument('path_to_check',
-                                                metavar='PATH_TO_CHECK',
-                                                default=os.path.curdir,
-                                                nargs='?',
-                                                help=('Optional path to repository which should be checked. '
-                                                      'If not provided current working directory will be checked.'))
+    manifest_parser = subparsers.add_parser('manifest',
+                                            help=('Commands operating atop of manifest files.'))
+    manifest_subparsers = manifest_parser.add_subparsers(help='sub-command help')
+
+    manifest_validate_parser = manifest_subparsers.add_parser('validate',
+                                                              help=('Validate manifest files.'))
+    manifest_validate_parser.set_defaults(func=cmd_manifest_validate)
+    manifest_validate_parser.add_argument('validate_paths',
+                                          metavar='PATH_TO_VALIDATE',
+                                          default=[os.path.curdir],
+                                          nargs='*',
+                                          help=('Manifest file(sbom.yml, idf_manifest.yml or .gitmodules) or '
+                                                'directory, which will be searched for manifest files.'))
 
     args = parser.parse_args()
     if args.quiet:
