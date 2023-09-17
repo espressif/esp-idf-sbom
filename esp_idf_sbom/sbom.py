@@ -19,7 +19,7 @@ from rich.progress import (BarColumn, MofNCompleteColumn, Progress, TextColumn,
 from rich.table import Table
 
 from esp_idf_sbom import __version__
-from esp_idf_sbom.libsbom import log, nvd, spdx, utils
+from esp_idf_sbom.libsbom import git, log, nvd, spdx, utils
 
 
 def cmd_create(args: Namespace) -> int:
@@ -423,6 +423,43 @@ def cmd_check(args: Namespace) -> int:
     return exit_code
 
 
+def cmd_test_sha(args: Namespace) -> int:
+    """ Check that submodule SHA in git-tree and .gitmodules match
+    if sbom-hash variable is available in the .gitmodules file.
+    """
+    git_wdir = git.get_gitwdir(args.path_to_check)
+    if not git_wdir:
+        sys.exit(f'Could\'t find the path: "{args.path_to_check}"')
+
+    submodules = git.get_submodules_config(git_wdir)
+
+    for sub_name, variables in submodules.items():
+        sbom_hash = variables.get('sbom-hash')
+        if not sbom_hash:
+            continue
+
+        module_path = variables.get('path')
+        if not module_path:
+            continue
+
+        module_hash = git.get_module_sha(module_path)
+        if not module_hash:
+            continue
+
+        msg = (f'Submodule \"{sub_name}\" SHA \"{module_hash}\" in git '
+               f'tree does not match SHA \"{sbom_hash}\" recorded in .gitmodules. '
+               f'Please update \"sbom-hash\" in .gitmodules for \"{sub_name}\" '
+               f'and also please do not forget to update version and other submodule '
+               f'information if necessary. It is important to keep this information '
+               f'up-to-date for SBOM generation.')
+
+        assert module_hash == sbom_hash, msg
+
+    log.out.green('Every submodule SHA in git-tree and in .gitmodules match')
+
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(prog='esp-idf-sbom', description='ESP-IDF SBOM tool')
     parser.add_argument('-q', '--quiet',
@@ -552,6 +589,17 @@ def main():
                               help=('table - Print report table. This is default.'
                                     'json - Print report in JSON format. '
                                     'csv - Print report in CSV format.'))
+
+    validate_submodule_hash_parser = subparsers.add_parser('validate-submodule-hash',
+                                                           help=('Check that submodule SHA in git-tree and .gitmodules match '
+                                                                 'if sbom-hash variable is available in the .gitmodules file.'))
+    validate_submodule_hash_parser.set_defaults(func=cmd_test_sha)
+    validate_submodule_hash_parser.add_argument('path_to_check',
+                                                metavar='PATH_TO_CHECK',
+                                                default=os.path.curdir,
+                                                nargs='?',
+                                                help=('Optional path to repository which should be checked. '
+                                                      'If not provided current working directory will be checked.'))
 
     args = parser.parse_args()
     if args.quiet:

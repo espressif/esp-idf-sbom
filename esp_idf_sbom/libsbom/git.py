@@ -99,7 +99,24 @@ class CFGDict(dict):
 
 
 def get_config(fn: str, cache: Dict[str, CFGDict]={}) -> CFGDict:
-    """Return git configuration for absolute config file path."""
+    """Return git configuration for absolute config file path.
+
+    It uses git-config --list and parses its output into a CFGDict object.
+    Each git variable name is a fully qualified variable name and it's used
+    as a key in the CFGDict. Please see man 1 git-config for more info.
+
+    For example
+
+        submodule.components/protobuf-c/protobuf-c.path=components/protobuf-c/protobuf-c
+
+    is stored as
+
+        {\n
+        'submodule.components/protobuf-c/protobuf-c.path': 'components/protobuf-c/protobuf-c'\n
+        }
+
+    If variable has multiple values, they are stored in a list.
+    """
     # Cache handled via default parameter value. See submodule_foreach_enum()
     if fn in cache:
         return cache[fn]
@@ -126,6 +143,62 @@ def get_submodule_config(git_wdir: str, name: str) -> CFGDict:
         sub_cfg[var] = val
 
     return sub_cfg
+
+
+def get_submodules_config(git_wdir: str) -> CFGDict:
+    """Return configuration for submodules
+
+    The .gitmodules file is just another git config file. This function
+    transforms the generic git config file representation, as returned
+    by get_config(), into a format more suitable for work with submodules.
+    It skips sections not related to submodules and removes the 'submodule.'
+    section part from the fully qualified git config variable. All
+    submodule info is stored in the CFGDict instance, where key is submodule
+    name/path and value is dict with variable/value info.
+
+    For example\n
+        {\n
+        'submodule.components/bt/controller/lib_esp32.path': 'components/bt/controller/lib_esp32',\n
+        'submodule.components/bt/controller/lib_esp32.sbom-hash': 'd037ec89546fad14b5c4d5456c2e23a71e554966'\n
+        }
+
+    is transformed into
+
+        {\n
+        'components/bt/controller/lib_esp32': {\n
+            'path': 'components/bt/controller/lib_esp32',\n
+            'sbom-hash': 'd037ec89546fad14b5c4d5456c2e23a71e554966'\n
+            }\n
+        }
+    """
+    fn = utils.pjoin(git_wdir, '.gitmodules')
+    cfg = get_config(fn)
+    prefix = f'submodule.'
+    sub_cfg = CFGDict()
+    for var, val in cfg.items():
+        if not var.startswith(prefix):
+            continue
+        var = var[len(prefix):]
+        splitted = var.rsplit('.', maxsplit=1)
+        if len(splitted) != 2:
+            continue
+        module_name, var = splitted
+        if module_name not in sub_cfg:
+            sub_cfg[module_name] = {}
+        sub_cfg[module_name][var] = val
+
+    return sub_cfg
+
+
+def get_module_sha(module_path: str):
+    """Return module SHA for specified path to module"""
+    output = _helper(['git', 'ls-tree', 'HEAD', module_path])
+    if not output:
+        module_hash = None
+    else:
+        module_hash = output.split()[2]
+
+    return module_hash
 
 
 def get_branch(git_wdir: str) -> str:

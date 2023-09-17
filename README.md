@@ -104,6 +104,17 @@ If package is not vulnerable to a specific CVE, it can be added to the manifest 
 list and checker will not report it as identified vulnerability, but as excluded vulnerability.
 
 
+## Validating SHA match of submodules with .gitmodules
+
+Validation takes the output of git command `git config --list --file <git config file>` and parses it to get the sbom-hash values. These hash values have to be the same as submodule hash (does not depend on initialization).
+
+
+Validation of submodules hash with
+
+    esp-idf-sbom validate-submodule-hash [path to repository]
+
+The `path to repository` is an optional path to the repository to be checked, if not provided the current working directory is checked.
+
 ## Usage example
 
 This is an example of basic usage for the blink project, which is part of the ESP-IDF.
