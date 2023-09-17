@@ -377,6 +377,24 @@ Usage example:
     $ esp-idf-sbom manifest validate ~/work/esp-idf/.gitmodules ~/work/esp-idf/components/freertos/FreeRTOS-Kernel/sbom.yml
 
 
+### Checking manifest files for vulnerabilities
+
+The `esp-idf-sbom` tool uses the generated SBOM SPDX file to check for possible vulnerabilities.
+It also allows to scan for vulnerabilities based on the information presented in manifest
+files. This can be used e.g. to scan a whole repository without a need to generate the SBOM SPDX file.
+
+    esp-idf-sbom validate-submodule-hash [PATH_TO_CHECK...]
+
+`PATH_TO_CHECK` is an optional path to a manifest file(sbom.yml, idf_manifest.yml or .gitmodules) or
+directory, which will be searched for manifest files. If `PATH_TO_CHECK` is not provided, the current
+working directory is used.
+
+Usage example:
+
+    $ esp-idf-sbom manifest check ~/work/esp-idf ~/work/idf-extra-components/
+    $ esp-idf-sbom manifest check ~/work/esp-idf/.gitmodules ~/work/esp-idf/components/freertos/FreeRTOS-Kernel/sbom.yml
+
+
 ## Licenses and Copyrights
 
 Adding licenses and copyrights information into the SBOM file has to be explicitly
