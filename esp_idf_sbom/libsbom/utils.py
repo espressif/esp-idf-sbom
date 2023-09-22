@@ -33,13 +33,18 @@ def ppaths(paths: List[str]) -> List[str]:
 
 
 def ppath(path: str) -> str:
-    """Return path forward slashes."""
+    """Return path with forward slashes."""
     return ppaths([path])[0]
 
 
 def psplit(path: str) -> Tuple[str,...]:
     """Split path into tuple of components."""
     return Path(path).parts
+
+
+def presolve(path:str) -> str:
+    """Return resolved path with forward slashes."""
+    return Path(path).resolve().as_posix()
 
 
 def pwalk(path: str, exclude_dirs: Optional[List[str]]=None) -> Iterator[Tuple[str, List[str], List[str]]]:

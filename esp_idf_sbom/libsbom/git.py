@@ -111,8 +111,8 @@ def get_config(fn: str, cache: Dict[str, CFGDict]={}) -> CFGDict:
 
     is stored as
 
-        {\n
-        'submodule.components/protobuf-c/protobuf-c.path': 'components/protobuf-c/protobuf-c'\n
+        {
+           'submodule.components/protobuf-c/protobuf-c.path': 'components/protobuf-c/protobuf-c'
         }
 
     If variable has multiple values, they are stored in a list.
@@ -145,7 +145,7 @@ def get_submodule_config(git_wdir: str, name: str) -> CFGDict:
     return sub_cfg
 
 
-def get_submodules_config(git_wdir: str) -> CFGDict:
+def get_submodules_config(fn: str) -> CFGDict:
     """Return configuration for submodules
 
     The .gitmodules file is just another git config file. This function
@@ -156,22 +156,21 @@ def get_submodules_config(git_wdir: str) -> CFGDict:
     submodule info is stored in the CFGDict instance, where key is submodule
     name/path and value is dict with variable/value info.
 
-    For example\n
-        {\n
-        'submodule.components/bt/controller/lib_esp32.path': 'components/bt/controller/lib_esp32',\n
-        'submodule.components/bt/controller/lib_esp32.sbom-hash': 'd037ec89546fad14b5c4d5456c2e23a71e554966'\n
+    For example
+        {
+        'submodule.components/bt/controller/lib_esp32.path': 'components/bt/controller/lib_esp32',
+        'submodule.components/bt/controller/lib_esp32.sbom-hash': 'd037ec89546fad14b5c4d5456c2e23a71e554966'
         }
 
     is transformed into
 
-        {\n
-        'components/bt/controller/lib_esp32': {\n
-            'path': 'components/bt/controller/lib_esp32',\n
-            'sbom-hash': 'd037ec89546fad14b5c4d5456c2e23a71e554966'\n
-            }\n
+        {
+        'components/bt/controller/lib_esp32': {
+            'path': 'components/bt/controller/lib_esp32',
+            'sbom-hash': 'd037ec89546fad14b5c4d5456c2e23a71e554966'
+            }
         }
     """
-    fn = utils.pjoin(git_wdir, '.gitmodules')
     cfg = get_config(fn)
     prefix = f'submodule.'
     sub_cfg = CFGDict()
@@ -190,15 +189,23 @@ def get_submodules_config(git_wdir: str) -> CFGDict:
     return sub_cfg
 
 
-def get_module_sha(module_path: str):
-    """Return module SHA for specified path to module"""
-    output = _helper(['git', 'ls-tree', 'HEAD', module_path])
-    if not output:
-        module_hash = None
+def get_tree_sha(fullpath: str):
+    """Return object's SHA from git-tree at fullpath"""
+    gitwdir = get_gitwdir(fullpath)
+    relpath = utils.prelpath(fullpath, gitwdir)
+    if relpath == '.':
+        # The fullpath is a git root, probably submodule, so get the HEAD SHA
+        output = _helper(['git', '-C', gitwdir, 'rev-parse', 'HEAD'])
     else:
-        module_hash = output.split()[2]
+        output = _helper(['git', '-C', gitwdir, 'ls-tree', 'HEAD', relpath])
 
-    return module_hash
+    if not output:
+        return None
+    splitted = output.split()
+    if len(splitted) > 1:
+        return splitted[2]
+
+    return splitted[0]
 
 
 def get_branch(git_wdir: str) -> str:

@@ -104,17 +104,6 @@ If package is not vulnerable to a specific CVE, it can be added to the manifest 
 list and checker will not report it as identified vulnerability, but as excluded vulnerability.
 
 
-## Validating SHA match of submodules with .gitmodules
-
-Validation takes the output of git command `git config --list --file <git config file>` and parses it to get the sbom-hash values. These hash values have to be the same as submodule hash (does not depend on initialization).
-
-
-Validation of submodules hash with
-
-    esp-idf-sbom validate-submodule-hash [path to repository]
-
-The `path to repository` is an optional path to the repository to be checked, if not provided the current working directory is checked.
-
 ## Usage example
 
 This is an example of basic usage for the blink project, which is part of the ESP-IDF.
@@ -199,6 +188,41 @@ The `sbom.yml` is a simple yaml file, which may contain the following entries.
     component. For more detailed information please see the SPDX specification.
     As for supplier, *Person:* or *Organization:* prefix should be used for
     originator value.
+* **hash**:
+    SHA of the directory(`git-tree` object) the manifest file describes or HEAD SHA of a submodule. This value
+    is used during the manifest file validation to check if the hash in the manifest file matches the
+    SHA recorded in the `git-tree`. Its purpose is to make sure that the information in the manifest
+    file is up-to-date. For example if a submodule or 3rd party library is updated, the
+    version in the manifest file should be probably updated too. The SHA value can be obtained
+    e.g. with `git ls-tree HEAD <path>`, where `<path>` is a package directory, which is described by
+    the manifest file. Please note that a hash value for a directory, not a submodule, cannot
+    be placed in manifest file, which is stored within the same directory, because the directory SHA
+    in `git-tree` will change every time the manifest file changes(chicken egg problem). To make
+    the hash variable work, it needs to be placed in a referenced manifest, which is not stored
+    within a directory it describes. For example freertos component can have main `sbom.yml`
+    manifest file, which refers to `sbom_FreeRTOS-Kernel.yml` manifest describing the `FreeRTOS-Kernel`
+    package in the `FreeRTOS-Kernel` directory.
+
+components/freertos/sbom.yml
+```
+manifests:
+  - path: sbom_FreeRTOS-Kernel.yml
+    dest: FreeRTOS-Kernel
+```
+components/freertos/sbom_FreeRTOS-Kernel.yml
+```
+name: 'freertos'
+version: '10.4.3'
+cpe: cpe:2.3:o:amazon:freertos:{}:*:*:*:*:*:*:*
+supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+originator: 'Organization: Amazon Web Services'
+description: An open-source, real-time operating system (RTOS) with additional features and patches from Espressif.
+hash: 4e8101b6f57a0640ae54c6da605c1b532c0f8f89
+cve-exclude-list:
+  - cve: CVE-2021-43997
+    reason: This vulnerability only affects ARMv7-M and ARMv8-M ports of FreeRTOS and hence does not affect Espressif SoCs which are not based on these architectures.
+```
+
 * **license**:
     License expression explicitly declared by the author.
 * **cve-exclude-list**:
@@ -306,7 +330,7 @@ as a default supplier may be guessed based on git repository or package URL. The
 may be disabled by using the '--no-guess' option.
 
 For git submodules, the `.gitmodules` configuration file is also checked for additional submodule
-information. Submodule configuration may contain keys with the `sbom-` prefix, which are considered as
+information. Submodule configuration may contain variables with the `sbom-` prefix, which are considered as
 SBOM manifest information. All keys used in the `sbom.yml` manifest file can also be specified in
 `.gitmodules` with the `git-config` format instead of yaml.
 
@@ -334,6 +358,41 @@ values are added. If e.g. `version` is found in `sbom.yml` any other
 3. `sbom` dictionary/namespace in `idf_component.yml`
 4. sbom information contained in submodule configuration in `.gitmodules`
 5. `idf_component.yml` information provided for component manager
+
+
+### Validating manifest files
+
+Manifest files are validated while the SBOM is generated. They can be also validated explicitly
+with the `esp-idf-sbom manifest validate` command.
+
+    esp-idf-sbom manifest validate [PATH_TO_VALIDATE...]
+
+`PATH_TO_VALIDATE` is an optional path to a manifest file(sbom.yml, idf_manifest.yml or .gitmodules) or
+directory, which will be searched for manifest files. If `PATH_TO_VALIDATE` is not provided, the current
+working directory is used.
+
+Usage example:
+
+    $ esp-idf-sbom manifest validate ~/work/esp-idf ~/work/idf-extra-components/
+    $ esp-idf-sbom manifest validate ~/work/esp-idf/.gitmodules ~/work/esp-idf/components/freertos/FreeRTOS-Kernel/sbom.yml
+
+
+### Checking manifest files for vulnerabilities
+
+The `esp-idf-sbom` tool uses the generated SBOM SPDX file to check for possible vulnerabilities.
+It also allows to scan for vulnerabilities based on the information presented in manifest
+files. This can be used e.g. to scan a whole repository without a need to generate the SBOM SPDX file.
+
+    esp-idf-sbom validate-submodule-hash [PATH_TO_CHECK...]
+
+`PATH_TO_CHECK` is an optional path to a manifest file(sbom.yml, idf_manifest.yml or .gitmodules) or
+directory, which will be searched for manifest files. If `PATH_TO_CHECK` is not provided, the current
+working directory is used.
+
+Usage example:
+
+    $ esp-idf-sbom manifest check ~/work/esp-idf ~/work/idf-extra-components/
+    $ esp-idf-sbom manifest check ~/work/esp-idf/.gitmodules ~/work/esp-idf/components/freertos/FreeRTOS-Kernel/sbom.yml
 
 
 ## Licenses and Copyrights
