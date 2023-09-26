@@ -221,6 +221,13 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
 
     def check_hash(sha:str) -> bool:
         git_sha = git.get_tree_sha(directory)
+        if git_sha is None:
+            # Even though the manifest contains hash variable, it may happen
+            # that it's no longer part of git. For example the component might
+            # have been exported or simply copied out of the git tree.
+            # This is the case for managed components. Since there is no git information
+            # available, we just skip this check.
+            return True
         msg = (f'Manifest in  \"{source}\" contains SHA \"{sha}\", which does not '
                f'match SHA \"{git_sha}\" recorded in git-tree for directory "{directory}". '
                f'Please update \"hash\" in \"{source}\" manifest '

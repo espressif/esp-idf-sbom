@@ -189,9 +189,13 @@ def get_submodules_config(fn: str) -> CFGDict:
     return sub_cfg
 
 
-def get_tree_sha(fullpath: str):
+def get_tree_sha(fullpath: str) -> Optional[str]:
     """Return object's SHA from git-tree at fullpath"""
     gitwdir = get_gitwdir(fullpath)
+    if not gitwdir:
+        # The fullpath is not within a git tree, so there
+        # no point of trying to find out the tree object SHA.
+        return None
     relpath = utils.prelpath(fullpath, gitwdir)
     if relpath == '.':
         # The fullpath is a git root, probably submodule, so get the HEAD SHA
