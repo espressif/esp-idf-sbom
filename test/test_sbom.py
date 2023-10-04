@@ -207,3 +207,24 @@ def test_validate_sbom(hello_world_build: Path) -> None:
          '-o', output_fn, proj_desc_path],
         check=True)
     run(['pyspdxtools', '-i', output_fn], check=True)
+
+
+def test_multiple_cpes(hello_world_build: Path) -> None:
+    """Test that multiple CPE values can be specified in manifest file."""
+    manifest = hello_world_build / 'main' / 'sbom.yml'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+
+    content = f'''
+              cpe:
+                - cpe:2.3:a:VENDOR1:PRODUCT1:1.0:*:*:*:*:*:*:*
+                - cpe:2.3:a:VENDOR2:PRODUCT2:1.0:*:*:*:*:*:*:*
+              '''
+
+    manifest.write_text(dedent(content))
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', proj_desc_path],
+            check=True, capture_output=True, text=True)
+
+    assert 'PRODUCT1' in p.stdout
+    assert 'PRODUCT2' in p.stdout
+
+    manifest.unlink()

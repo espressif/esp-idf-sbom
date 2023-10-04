@@ -176,7 +176,8 @@ The `sbom.yml` is a simple yaml file, which may contain the following entries.
 * **url**:
     Link to package download location.
 * **cpe**:
-    CPE used for vulnerabilities check against NVD.
+    CPE used for vulnerabilities check against NVD. This can be single CPE value or a
+    list of CPEs.
 * **supplier**:
     Package supplier. Person or organization distributing the package. Should be prefixed
     with *Person:* or *Organization:* as described in SPDX specification.
