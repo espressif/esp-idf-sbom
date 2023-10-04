@@ -479,6 +479,10 @@ def main():
     log.err.debug(f'environ: {env}')
     log.err.debug(f'args: {args}')
 
+    if 'func' not in args:
+        parser.print_help(sys.stderr)
+        sys.exit(1)
+
     return args.func(args)
 
 
