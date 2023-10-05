@@ -154,7 +154,7 @@ class SPDXObject:
         'version': '',
         'repository': '',
         'url': '',
-        'cpe': '',
+        'cpe': [],
         'supplier': '',
         'originator': '',
         'description': '',
@@ -449,9 +449,8 @@ class SPDXPackage(SPDXObject):
         self.tags: SPDXTags = SPDXTags()
 
         self.manifest = self.get_manifest(self.dir)
-        if self.manifest['cpe']:
-            # CPE may contain version placeholder.
-            self.manifest['cpe'] = self.manifest['cpe'].format(self.manifest['version'])
+        # CPEs may contain version placeholder.
+        self.manifest['cpe'] = [cpe.format(self.manifest['version']) for cpe in self.manifest['cpe']]
 
         if not self.manifest['version']:
             self.manifest['version'] = self.guess_version(self.dir, self.name)
@@ -486,7 +485,7 @@ class SPDXPackage(SPDXObject):
 
         cpe_name = None
         if self.manifest['cpe']:
-            cpe_name = self.manifest['cpe'].split(':')[4]
+            cpe_name = self.manifest['cpe'][0].split(':')[4]
         self['PackageName'] = [self.manifest['name'] or cpe_name or f'{self.mark}-{self.name}']
         if self.manifest['description']:
             self['PackageSummary'] = [f'<text>{self.manifest["description"]}</text>']
@@ -519,8 +518,8 @@ class SPDXPackage(SPDXObject):
         if self.manifest['repository']:
             self['ExternalRef'] += [f'OTHER repository {self.manifest["repository"]}']
 
-        if self.manifest['cpe']:
-            self['ExternalRef'] += [f'SECURITY cpe23Type {self.manifest["cpe"]}']
+        for cpe in self.manifest['cpe']:
+            self['ExternalRef'] += [f'SECURITY cpe23Type {cpe}']
 
         if self.manifest['cve-exclude-list']:
             cve_info = {'cve-exclude-list': self.manifest['cve-exclude-list']}
@@ -906,7 +905,7 @@ class SPDXSubmodule(SPDXPackage):
         module_cfg = git.get_submodule_config(self.info['git_wdir'], self.info['name'])
 
         # Transform manifest information from variables in gitconfig into manifest dict
-        module_sbom = mft.get_submodule_manifet(module_cfg)
+        module_sbom = mft.get_submodule_manifest(module_cfg)
 
         sbom_path = utils.pjoin(self.info['git_wdir'], '.gitmodules')
         mft.validate(module_sbom, f'{sbom_path} submodule {self.info["name"]}', self.info['path'])

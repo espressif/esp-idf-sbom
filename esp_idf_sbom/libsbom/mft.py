@@ -28,14 +28,18 @@ def load(path: str) -> Dict[str,Any]:
 
     try:
         with open(path, 'r') as f:
-            return yaml.safe_load(f.read()) or {}
+            manifest = yaml.safe_load(f.read()) or {}
     except (OSError, yaml.parser.ParserError) as e:
         log.err.die(f'Cannot parse manifest file "{path}": {e}')
+
+    # Convert cpe into a list
+    if 'cpe' in manifest and type(manifest['cpe']) is not list:
+        manifest['cpe'] = [manifest['cpe']]
 
     return manifest
 
 
-def get_submodule_manifet(cfg: Dict[str, Any]) -> Dict[str, Any]:
+def get_submodule_manifest(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Transform sbom information specified in .gitmodules into manifest dictionary.
 
     :param cfg:   Submodule git config dictionary.
@@ -84,6 +88,10 @@ def get_submodule_manifet(cfg: Dict[str, Any]) -> Dict[str, Any]:
             # validate_manifest will report errors if path or directory doesn't exist
             manifests_paths_list.append({'path': path, 'dest': directory})
         module_sbom['manifests'] = manifests_paths_list
+
+    # Convert cpe into a list
+    if 'cpe' in module_sbom and type(module_sbom['cpe']) is not list:
+        module_sbom['cpe'] = [module_sbom['cpe']]
 
     return module_sbom
 
@@ -163,7 +171,7 @@ def get_manifests(sources: List[str]) -> List[Dict[str, Any]]:
     for submodule_file in manifest_source_files['.gitmodules']:
         submodules = git.get_submodules_config(submodule_file)
         for submodule_name, submodule_info in submodules.items():
-            manifest = get_submodule_manifet(submodule_info)
+            manifest = get_submodule_manifest(submodule_info)
             if not manifest:
                 continue
             directory = utils.pjoin(os.path.dirname(submodule_file), submodule_info['path'])
@@ -194,11 +202,12 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             return True
         raise schema.SchemaError((f'Value {url} must have "git", "http" or "https" scheme and domain.'))
 
-    def check_cpe(cpe: str) -> bool:
-        # Note: WFN, well-formed CPE name, attributes rules are stricter
-        if re.match(r'^cpe:2\.3:[aho](?::\S+){10}', cpe):
-            return True
-        raise schema.SchemaError((f'Value "{cpe}" does not seem to be well-formed CPE name (WFN)'))
+    def check_cpes(cpes: str) -> bool:
+        for cpe in cpes:
+            # Note: WFN, well-formed CPE name, attributes rules are stricter
+            if not re.match(r'^cpe:2\.3:[aho](?::\S+){10}', cpe):
+                raise schema.SchemaError((f'Value "{cpe}" does not seem to be well-formed CPE name (WFN)'))
+        return True
 
     def check_license(lic: str) -> bool:
         try:
@@ -256,7 +265,7 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             schema.Optional('version'): schema.Or(str,float,int),
             schema.Optional('repository'): schema.And(str, check_url),
             schema.Optional('url'): schema.And(str, check_url),
-            schema.Optional('cpe'): schema.And(str, check_cpe),
+            schema.Optional('cpe'): schema.And(list, check_cpes),
             schema.Optional('supplier'): schema.And(str, check_person_organization),
             schema.Optional('originator'): schema.And(str, check_person_organization),
             schema.Optional('description'): str,

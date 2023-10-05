@@ -227,7 +227,7 @@ def cmd_manifest_check(args: Namespace) -> int:
             # Add version to CPEs
             version = manifest.get('version', '')
             cpes = [cpe.format(version) for cpe in cpes]
-            name = manifest.get('name', manifest['cpe'].split(':')[4])
+            name = manifest.get('name', manifest['cpe'][0].split(':')[4])
             cve_exclude_list = {cve['cve']: cve['reason'] for cve in manifest.get('cve-exclude-list', [])}
             for cpe in cpes:
                 vulns = nvd.check(cpe, not progress_disabled)
@@ -479,8 +479,12 @@ def main():
     log.err.debug(f'environ: {env}')
     log.err.debug(f'args: {args}')
 
+    if 'func' not in args:
+        parser.print_help(sys.stderr)
+        sys.exit(1)
+
     return args.func(args)
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
