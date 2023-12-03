@@ -2,142 +2,62 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import sys
-from typing import TextIO
+from typing import IO, Any, Optional
 
-"""
-Simple logger with colors support.
-"""
+from rich.console import Console
 
-ALWAYS = 0
-DEBUG  = 1
-INFO   = 2
-WARN   = 3
-ERROR  = 4
-NEVER  = 5
+console_stderr = None
+console_stdout = None
+debug_on = False
 
 
-class Log:
-    """Abstract base class for loggers."""
-    def __init__(self, colors: bool=True, level: int=ALWAYS) -> None:
-        self.config(colors, level)
-
-    def config(self, colors: bool=True, level: int=ALWAYS) -> None:
-        self.colors = colors
-        self.level = level
-
-        self.colors_map = {
-            'BLACK':   '\033[1;30m',
-            'RED':     '\033[1;31m',
-            'GREEN':   '\033[1;32m',
-            'YELLOW':  '\033[1;33m',
-            'BLUE':    '\033[1;34m',
-            'MAGENTA': '\033[1;35m',
-            'CYAN':    '\033[1;36m',
-            'WHITE':   '\033[1;37m',
-            'RESET':   '\033[0m',
-        }
-
-        if not colors:
-            # Colors are not allowed. Replace all colors in colors_map
-            # with empty string.
-            for key in self.colors_map.keys():
-                self.colors_map[key] = ''
-
-    def __getattr__(self, key: str) -> str:
-        # Color from colors_map
-        return self.colors_map.get(key, '')
-
-    def set_color(self, color: str) -> None:
-        self.dump(color, '')
-
-    def reset_color(self) -> None:
-        self.dump(self.RESET, '')
-
-    def dump(self, msg: str, end: str='\n') -> None:
-        """Actual output implemented by subclasses."""
-        raise NotImplementedError
-
-    def log(self, msg: str, color: str='', level: int=ALWAYS, prefix: str='', end: str='\n') -> None:
-        """Main generic log method. It's used by other methods with specific parameters set.
-
-        :param msg: message to log
-        :param color: message color
-        :param level: message log level
-        :param prefix: prefix, which will be added before every line in message
-        :param end: string added to the end of message
-        """
-        if level < self.level:
-            return
-
-        if color:
-            reset = self.RESET
-        else:
-            reset = ''
-
-        msg = [f'{prefix}{color}{line}{reset}' for line in msg.splitlines(keepends=True)]  # type: ignore
-        self.dump(''.join(msg), end=end)
-
-    def debug(self, msg: str, end: str='\n') -> None:
-        self.log(msg, '', DEBUG, 'D: ', end=end)
-
-    def info(self, msg: str, end: str='\n') -> None:
-        self.log(msg, '', INFO, 'I: ', end=end)
-
-    def warn(self, msg: str, end: str='\n') -> None:
-        self.log(msg, self.YELLOW, WARN, 'W: ', end=end)
-
-    def err(self, msg: str, end: str='\n') -> None:
-        self.log(msg, self.RED, ERROR, 'E: ', end=end)
-
-    def die(self, msg: str, end: str='\n') -> None:
-        self.err(msg, end=end)
-        sys.exit(1)
-
-    def echo(self, msg: str, end: str='\n') -> None:
-        self.log(msg, '', ALWAYS, end=end)
-
-    def red(self, msg: str, end: str='\n') -> None:
-        self.log(msg, self.RED, ALWAYS, end=end)
-
-    def green(self, msg: str, end: str='\n') -> None:
-        self.log(msg, self.GREEN, ALWAYS, end=end)
-
-    def yellow(self, msg: str, end: str='\n') -> None:
-        self.log(msg, self.YELLOW, ALWAYS, end=end)
-
-    def __iadd__(self, msg: str):
-        # += operator
-        self.echo(msg, end='')
-        return self
+def err(*args: Any) -> None:
+    console_stderr.print('[red]error: ', *args)  # type: ignore
 
 
-class LogFile(Log):
-    def __init__(self, fd: TextIO, colors: bool=True, level: int=ALWAYS, force_colors: bool=False) -> None:
-        self.fd = fd
-        self.config(colors, level, force_colors)
-
-    def config(self, colors: bool=True, level: int=WARN, force_colors: bool=False) -> None:
-        if colors and not self.fd.isatty() and not force_colors:
-            colors = False
-        super().config(colors, level)
-
-    def dump(self, msg: str, end: str='\n') -> None:
-        self.fd.write(msg + end)
+def warn(*args: Any) -> None:
+    console_stderr.print('[yellow]warning: ', *args)  # type: ignore
 
 
-class LogString(Log):
-    def __init__(self, colors: bool=True, level: int=ALWAYS) -> None:
-        self.str = ''
-        super().__init__(colors, level)
-
-    def dump(self, msg: str, end: str='\n') -> None:
-        self.str += msg + end
-
-    def __str__(self) -> str:
-        return self.str
+def die(*args: Any) -> None:
+    err(*args)
+    sys.exit(1)
 
 
-# default logger for stdout
-out = LogFile(sys.stdout)
-# default logger for stderr
-err = LogFile(sys.stderr)
+def debug(*args: Any) -> None:
+    if debug_on:
+        console_stderr.print('[bright_blue]debug: ', *args)  # type: ignore
+
+
+def eprint(*args: Any) -> None:
+    console_stderr.print(*args)  # type: ignore
+
+
+def print(*args: Any) -> None:
+    console_stdout.print(*args)  # type: ignore
+
+
+def print_json(*args: Any) -> None:
+    console_stdout.print_json(*args)  # type: ignore
+
+
+def set_console(file: IO[str]=sys.stdout, quiet: bool=False, no_color: bool=False,
+                force_terminal_stdout: Optional[bool]=None, force_terminal_stderr: Optional[bool]=None,
+                debug: bool=False) -> None:
+    global console_stderr
+    global console_stdout
+    global debug_on
+
+    console_stderr = Console(stderr=True, quiet=quiet, no_color=no_color,
+                             force_terminal=force_terminal_stderr, emoji=False,
+                             soft_wrap=True)
+    width = None
+    if file is not sys.stdout:
+        # https://rich.readthedocs.io/en/stable/console.html#file-output
+        # Don't limit the output to console width if it dosn't go into stdout
+        width = 10000
+    console_stdout = Console(file=file, width=width, quiet=quiet, no_color=no_color,
+                             force_terminal=force_terminal_stdout, emoji=False,
+                             soft_wrap=True)
+
+    debug_on = debug

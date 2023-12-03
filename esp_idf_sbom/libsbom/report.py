@@ -7,12 +7,10 @@ import sys
 from argparse import Namespace
 from typing import Any, Dict, List
 
-from rich.align import Align
-from rich.console import Console
 from rich.table import Table
 
 from esp_idf_sbom import __version__
-from esp_idf_sbom.libsbom import utils
+from esp_idf_sbom.libsbom import log, utils
 
 empty_record = {
     'vulnerable': '',
@@ -104,16 +102,14 @@ def show(records: List[Dict[str,str]],
         if r['pkg_name'] not in severity_dict['packages']:
             severity_dict['packages'].append(r['pkg_name'])
 
-    console = Console(no_color=args.no_colors, emoji=False)
-
     if args.format == 'json':
         summary['records'] = record_list
-        console.print_json(json.dumps(summary))
+        log.print_json(json.dumps(summary))
         return
     elif args.format == 'csv':
-        console.print(','.join(utils.csv_escape(empty_record.keys())))
+        log.print(','.join(utils.csv_escape(empty_record.keys())))
         for r in record_list:
-            console.print(','.join(utils.csv_escape(r.values())))
+            log.print(','.join(utils.csv_escape(r.values())))
         return
 
     cvss_severity_color_map = {
@@ -165,7 +161,7 @@ def show(records: List[Dict[str,str]],
     table.add_row('[bright_blue]All packages affect by CVEs:', ', '.join(summary['cves_summary']['all_packages']))
     table.add_row('[bright_blue]Total number of CVEs:', str(summary['cves_summary']['total_cves_count']))
 
-    console.print(Align(table, align='center'), '\n')
+    log.print(table, '\n')
 
     # Table with newly identified vulnerabilities
     table = Table(title='[red]Packages with Identified Vulnerabilities',
@@ -189,7 +185,7 @@ def show(records: List[Dict[str,str]],
             info_table.add_column('key', overflow='fold')
             info_table.add_column('value', overflow='fold')
             info_table.add_row('[yellow]CVSS', r['cvss_version'])
-            info_table.add_row(f'[yellow]Vec.', r['cvss_vector_string'])
+            info_table.add_row('[yellow]Vec.', r['cvss_vector_string'])
             info_table.add_row('[yellow]CPE', r['cpe'])
             info_table.add_row('[yellow]Link', r['cve_link'])
             info_table.add_row('[yellow]Desc.', r['cve_desc'])
@@ -203,7 +199,7 @@ def show(records: List[Dict[str,str]],
                       end_section=True)
 
     if table.row_count:
-        console.print(Align(table, align='center'), '\n')
+        log.print(table, '\n')
 
     # Table with vulnerabilities in cve-exclude-list
     table = Table(title='[green]Packages with Excluded Vulnerabilities',
@@ -228,7 +224,7 @@ def show(records: List[Dict[str,str]],
             info_table.add_column('key', overflow='fold')
             info_table.add_column('value', overflow='fold')
             info_table.add_row('[yellow]CVSS', r['cvss_version'])
-            info_table.add_row(f'[yellow]Vec.', r['cvss_vector_string'])
+            info_table.add_row('[yellow]Vec.', r['cvss_vector_string'])
             info_table.add_row('[yellow]CPE', r['cpe'])
             info_table.add_row('[yellow]Link', r['cve_link'])
             info_table.add_row('[yellow]Desc.', r['cve_desc'])
@@ -243,7 +239,7 @@ def show(records: List[Dict[str,str]],
                       end_section=True)
 
     if table.row_count:
-        console.print(Align(table, align='center'), '\n')
+        log.print(table, '\n')
 
     # Table with packages which were scanned and no vulnerability was found
     table = Table(title='[green]Packages with No Identified Vulnerabilities',
@@ -261,7 +257,7 @@ def show(records: List[Dict[str,str]],
                       end_section=True)
 
     if table.row_count:
-        console.print(Align(table, align='center'), '\n')
+        log.print(table, '\n')
 
     # Table with packages which were not scanned because of missing CPE
     table = Table(title='[green]Packages without CPE Information',
@@ -277,4 +273,4 @@ def show(records: List[Dict[str,str]],
                       end_section=True)
 
     if table.row_count:
-        console.print(Align(table, align='center'))
+        log.print(table)

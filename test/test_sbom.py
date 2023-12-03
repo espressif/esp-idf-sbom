@@ -41,7 +41,7 @@ def test_check_sbom(hello_world_build: Path) -> None:
     output_fn = Path(tmpdir.name) / 'sbom.spdx'
     proj_desc_path = hello_world_build / 'build' / 'project_description.json'
     run([sys.executable, '-m', 'esp_idf_sbom', 'create', '-o', output_fn, proj_desc_path], check=True)
-    run([sys.executable, '-m', 'esp_idf_sbom', '-v', 'check', output_fn], check=True)
+    run([sys.executable, '-m', 'esp_idf_sbom', 'check', output_fn], check=True)
 
 
 def test_sbom_project_manifest(hello_world_build: Path) -> None:
