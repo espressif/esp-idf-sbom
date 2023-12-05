@@ -24,7 +24,7 @@ WARNED = False
 
 
 # https://nvd.nist.gov/developers/vulnerabilities
-def check(cpe: str, progress: bool=False) -> List[Dict[str, Any]]:
+def check(cpe: str) -> List[Dict[str, Any]]:
     """Checks given CPE against NVD and returns its reponse.
     When NVD API key is not provided, sleeps for 30 seconds to
     meet NVD's 5 requests per rolling 30 seconds windows limit.
@@ -41,23 +41,19 @@ def check(cpe: str, progress: bool=False) -> List[Dict[str, Any]]:
         if apikey:
             req.add_header('apikey', apikey)
 
-        log.err.debug(f'NVD request url: {url}')
-        log.err.debug('NVD request headers:')
-        log.err.debug('\n'.join([f'{h}: {v}' for h, v in req.header_items()]))
+        log.debug(f'NVD request url: {url}')
+        log.debug('NVD request headers:')
+        log.debug('\n'.join([f'{h}: {v}' for h, v in req.header_items()]))
 
         try:
             res = urllib.request.urlopen(req)
         except urllib.error.HTTPError as e:
             if e.code == 403:
                 # https://nvd.nist.gov/developers/start-here Rate Limits
-                if progress:
-                    # if progress takes place echo new line, so the warning
-                    # is on new line
-                    log.err.warn('')
                 if not WARNED:
-                    log.err.warn(HINT)
+                    log.warn(HINT)
                     WARNED = True
-                log.err.warn(f'Sleeping for 30 seconds...')
+                log.warn(f'Sleeping for 30 seconds...')
                 time.sleep(30)
                 continue
 
@@ -65,8 +61,8 @@ def check(cpe: str, progress: bool=False) -> List[Dict[str, Any]]:
 
         data = json.loads(res.read().decode())
 
-        log.err.debug('NVD response:')
-        log.err.debug(json.dumps(data, indent=4))
+        log.debug('NVD response:')
+        log.debug(json.dumps(data, indent=4))
 
         vulns += data['vulnerabilities']
 

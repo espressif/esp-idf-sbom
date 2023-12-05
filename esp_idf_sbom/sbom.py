@@ -10,7 +10,6 @@ from argparse import Namespace
 from typing import Dict, List
 
 import yaml
-from rich.console import Console
 from rich.progress import (BarColumn, MofNCompleteColumn, Progress, TextColumn,
                            TimeElapsedColumn)
 
@@ -19,9 +18,7 @@ from esp_idf_sbom.libsbom import log, mft, nvd, report, spdx
 
 def cmd_create(args: Namespace) -> int:
     spdx_sbom = spdx.SPDXDocument(args, args.input_file)
-    spdx_sbom.write(args.output_file)
-    if args.print and args.output_file:
-        spdx_sbom.write(force_colors=args.force_colors)
+    log.print(spdx_sbom.dump())
     return 0
 
 
@@ -42,14 +39,13 @@ def cmd_check(args: Namespace) -> int:
     if not args.check_all_packages:
         packages = spdx.filter_packages(packages)
 
-    progress_disabled = args.quiet or args.no_progress
     progress = Progress(
         BarColumn(),
         MofNCompleteColumn(),
         TimeElapsedColumn(),
         TextColumn('{task.description}'),
-        disable=progress_disabled,
-        console=Console(stderr=True, no_color=args.no_colors, emoji=False))
+        disable=args.no_progress,
+        console=log.console_stderr)
 
     progress.start()
 
@@ -80,10 +76,10 @@ def cmd_check(args: Namespace) -> int:
 
             for cpe in cpes:
                 try:
-                    vulns = nvd.check(cpe, not progress_disabled)
+                    vulns = nvd.check(cpe)
                 except RuntimeError as e:
                     progress.stop()
-                    log.err.die(f'{e}')
+                    log.die(f'{e}')
                 for vuln in vulns:
                     cve_id = vuln['cve']['id']
                     cve_link = f'https://nvd.nist.gov/vuln/detail/{cve_id}'
@@ -147,7 +143,7 @@ def cmd_check(args: Namespace) -> int:
 
     except KeyboardInterrupt:
         progress.stop()
-        log.err.die('Process terminated')
+        log.die('Process terminated')
 
     progress.update(progress_task,advance=0, refresh=True, description='')
     progress.stop()
@@ -162,14 +158,13 @@ def cmd_check(args: Namespace) -> int:
 
 
 def cmd_manifest_validate(args: Namespace) -> int:
-    progress_disabled = args.quiet or args.no_progress
     progress = Progress(
         BarColumn(),
         MofNCompleteColumn(),
         TimeElapsedColumn(),
         TextColumn('{task.description}'),
-        disable=progress_disabled,
-        console=Console(stderr=True, no_color=args.no_colors, emoji=False))
+        disable=args.no_progress,
+        console=log.console_stderr)
 
     progress.start()
     try:
@@ -185,10 +180,10 @@ def cmd_manifest_validate(args: Namespace) -> int:
 
     except RuntimeError as e:
         progress.stop()
-        log.err.die(str(e))
+        log.die(str(e))
     except KeyboardInterrupt:
         progress.stop()
-        log.err.die('Process terminated')
+        log.die('Process terminated')
 
     progress.update(progress_task,advance=0, refresh=True, description='')
     progress.stop()
@@ -200,14 +195,13 @@ def cmd_manifest_check(args: Namespace) -> int:
     record_list: List[Dict[str,str]] = []
     exit_code = 0
 
-    progress_disabled = args.quiet or args.no_progress
     progress = Progress(
         BarColumn(),
         MofNCompleteColumn(),
         TimeElapsedColumn(),
         TextColumn('{task.description}'),
-        disable=progress_disabled,
-        console=Console(stderr=True, no_color=args.no_colors, emoji=False))
+        disable=args.no_progress,
+        console=log.console_stderr)
 
     progress.start()
     try:
@@ -230,7 +224,7 @@ def cmd_manifest_check(args: Namespace) -> int:
             name = manifest.get('name', manifest['cpe'][0].split(':')[4])
             cve_exclude_list = {cve['cve']: cve['reason'] for cve in manifest.get('cve-exclude-list', [])}
             for cpe in cpes:
-                vulns = nvd.check(cpe, not progress_disabled)
+                vulns = nvd.check(cpe)
 
                 for vuln in vulns:
                     cve_id = vuln['cve']['id']
@@ -290,10 +284,10 @@ def cmd_manifest_check(args: Namespace) -> int:
 
     except RuntimeError as e:
         progress.stop()
-        log.err.die(str(e))
+        log.die(str(e))
     except KeyboardInterrupt:
         progress.stop()
-        log.err.die('Process terminated')
+        log.die('Process terminated')
 
     progress.update(progress_task,advance=0, refresh=True, description='')
     progress.stop()
@@ -307,28 +301,21 @@ def main():
     parser.add_argument('-q', '--quiet',
                         action='store_true',
                         default=bool(os.environ.get('SBOM_QUIET')),
-                        help=('By default auxiliary messages like errors, warnings, debug messages '
-                              'or progress are reported to the standard error stream. With this option '
-                              'set, all such messages are suppressed.'))
-    parser.add_argument('-n', '--no-colors',
+                        help='Suppress all output.')
+    parser.add_argument('-n', '--no-color',
                         action='store_true',
-                        default=bool(os.environ.get('SBOM_NO_COLORS')),
+                        default=bool(os.environ.get('SBOM_NO_COLOR')),
                         help=('Do not emit color codes. By default color codes are used when stdout '
                               'or stderr is connected to a terminal.'))
-    parser.add_argument('-f', '--force-colors',
+    parser.add_argument('-f', '--force-terminal',
                         action='store_true',
-                        default=bool(os.environ.get('SBOM_FORCE_COLORS')),
-                        help=('Emit color codes even when stdout or stderr '
-                              'is not connected to a terminal.'))
-    parser.add_argument('-v', '--verbose',
-                        action='store_true',
-                        default=bool(os.environ.get('SBOM_VERBOSE')),
-                        help=('Be verbose. Messages are printed to standard error output.'))
+                        default=bool(os.environ.get('SBOM_FORCE_TERMINAL')) or None,
+                        help=('Enable terminal control codes even if out is not attached to terminal. '
+                              'This option is ignored if used along with the "--output-file" option.'))
     parser.add_argument('-d', '--debug',
                         action='store_true',
                         default=bool(os.environ.get('SBOM_DEBUG')),
                         help=('Print debug information. Messages are printed to standard error output.'))
-
     parser.add_argument('--no-progress',
                         action='store_true',
                         default=bool(os.environ.get('SBOM_CHECK_NO_PROGRESS')),
@@ -395,10 +382,6 @@ def main():
                                      'to identify versions. With this option PackageSupplier and '
                                      'PackageVersion will be omitted, unless explicitly stated in '
                                      'sbom.yml, idf_component.yml or .gitmodules.'))
-    create_parser.add_argument('-p', '--print',
-                               action='store_true',
-                               default=bool(os.environ.get('SBOM_CREATE_PRINT')),
-                               help=('Print generated SBOM file to stdout even if "--output-file" is used.'))
     create_parser.add_argument('--file-tags',
                                action='store_true',
                                default=bool(os.environ.get('SBOM_CREATE_NO_FILE_TAGS')),
@@ -416,6 +399,10 @@ def main():
                               nargs='?',
                               help=('Path to the SBOM file generated by the ESP-IDF sbom tool. '
                                     'If not provided or "-", read from stdin.'))
+
+    check_parser.add_argument('-o', '--output-file',
+                              metavar='OUTPUT_FILE',
+                              help=('Print output to the specified file instead of stdout.'))
 
     check_parser.add_argument('--check-all-packages',
                               action='store_true',
@@ -450,6 +437,11 @@ def main():
     manifest_check_parser = manifest_subparsers.add_parser('check',
                                                            help=('Check manifest files for vulnerabilities.'))
     manifest_check_parser.set_defaults(func=cmd_manifest_check)
+
+    manifest_check_parser.add_argument('-o', '--output-file',
+                                       metavar='OUTPUT_FILE',
+                                       help=('Print output to the specified file instead of stdout.'))
+
     manifest_check_parser.add_argument('--format',
                                        choices=['table', 'json', 'csv'],
                                        help=('table - Print report table. This is default.'
@@ -462,28 +454,38 @@ def main():
                                        help=('Manifest file(sbom.yml, idf_manifest.yml or .gitmodules) or '
                                              'directory, which will be searched for manifest files.'))
 
-    args = parser.parse_args()
-    if args.quiet:
-        log_level = log.NEVER
-    elif args.debug:
-        log_level = log.DEBUG
-    elif args.verbose:
-        log_level = log.INFO
-    else:
-        log_level = log.WARN
+    ofile = sys.stdout
+    try:
+        args = parser.parse_args()
+        if args.force_terminal:
+            force_terminal_stdout = True
+            force_terminal_stderr = True
+        else:
+            force_terminal_stdout = None
+            force_terminal_stderr = None
 
-    log.err.config(not args.no_colors, log_level, args.force_colors)
-    log.out.config(not args.no_colors, log.ALWAYS, args.force_colors)
+        if hasattr(args, 'output_file') and args.output_file:
+            force_terminal_stdout = False
+            ofile = open(args.output_file, 'w')
 
-    env = {key: value for key, value in os.environ.items() if key.startswith('SBOM_')}
-    log.err.debug(f'environ: {env}')
-    log.err.debug(f'args: {args}')
+        log.set_console(ofile, args.quiet, args.no_color, force_terminal_stdout,
+                        force_terminal_stderr, args.debug)
 
-    if 'func' not in args:
-        parser.print_help(sys.stderr)
+        env = {key: value for key, value in os.environ.items() if key.startswith('SBOM_')}
+        log.debug(f'environ: {env}')
+        log.debug(f'args: {args}')
+
+        if 'func' not in args:
+            parser.print_help(sys.stderr)
+            sys.exit(1)
+
+        return args.func(args)
+
+    except KeyboardInterrupt:
         sys.exit(1)
-
-    return args.func(args)
+    finally:
+        if ofile:
+            ofile.close()
 
 
 if __name__ == '__main__':

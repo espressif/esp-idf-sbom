@@ -30,7 +30,7 @@ def load(path: str) -> Dict[str,Any]:
         with open(path, 'r') as f:
             manifest = yaml.safe_load(f.read()) or {}
     except (OSError, yaml.parser.ParserError) as e:
-        log.err.die(f'Cannot parse manifest file "{path}": {e}')
+        log.die(f'Cannot parse manifest file "{path}": {e}')
 
     # Convert cpe into a list
     if 'cpe' in manifest and type(manifest['cpe']) is not list:
@@ -128,7 +128,7 @@ def get_files(sources: List[str]) -> Dict[str, Set[str]]:
                         continue
                     add_file(os.path.join(root, file))
         else:
-            log.err.die(f'"{source}" is not file nor directory')
+            log.die(f'"{source}" is not file nor directory')
 
     return manifest_files
 
@@ -237,7 +237,7 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             # This is the case for managed components. Since there is no git information
             # available, we just skip this check.
             return True
-        msg = (f'Manifest in  \"{source}\" contains SHA \"{sha}\", which does not '
+        msg = (f'Manifest in \"{source}\" contains SHA \"{sha}\", which does not '
                f'match SHA \"{git_sha}\" recorded in git-tree for directory "{directory}". '
                f'Please update \"hash\" in \"{source}\" manifest '
                f'and also please do not forget to update version and other '
@@ -280,5 +280,5 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
     except schema.SchemaError as e:
         msg = f'Manifest in "{source}" for "{directory}" is not valid: {e}'
         if die:
-            log.err.die(msg)
+            log.die(msg)
         raise RuntimeError(msg)
