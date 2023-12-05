@@ -1,0 +1,21 @@
+- id: validate-sbom-manifest
+  name: Validate ESP-IDF SBOM Manifest Files
+  description: This hook validates ESP-IDF SBOM Manifest files
+  entry: python -m esp_idf_sbom --no-progress manifest validate
+  language: python
+  # Always run against the whole repository, ignoring any files
+  # passed in by pre-commit. While we can limit this to manifest
+  # files only, e.g. sbom.yml, idf_component.yml or .gitmodules,
+  # it would not properly handle submodule updates. For example
+  # if submodule is updated, we want to make sure that the sbom
+  # information in .gitmodules is updated too and that the hash
+  # recorded in .gitmodules is updated. Meaning submodule update
+  # would not trigger this plugin, because no manifest was changed.
+  # There could also be a problem with referenced manifests, which
+  # do not have any fixed names. This could be probably handled by
+  # checking all modified yml files, even if they are not manifest
+  # files for sbom. So to be on the safe path, let's just check
+  # all possible manifest files explicitly every time this plugin
+  # is used. It's quite fast and hopefully should not cause any problems.
+  files: '^$'
+  always_run: True
