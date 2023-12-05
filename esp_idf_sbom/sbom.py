@@ -166,6 +166,7 @@ def cmd_manifest_validate(args: Namespace) -> int:
         disable=args.no_progress,
         console=log.console_stderr)
 
+    exit_code = 0
     progress.start()
     try:
         progress_task = progress.add_task('Validating manifests')
@@ -176,11 +177,12 @@ def cmd_manifest_validate(args: Namespace) -> int:
 
         for manifest in manifests:
             progress.update(progress_task, advance=1, refresh=True, description=manifest['_src'])
-            mft.validate(manifest, manifest['_src'], manifest['_dst'], die=False)
+            try:
+                mft.validate(manifest, manifest['_src'], manifest['_dst'], die=False)
+            except RuntimeError as e:
+                log.err(str(e))
+                exit_code = 1
 
-    except RuntimeError as e:
-        progress.stop()
-        log.die(str(e))
     except KeyboardInterrupt:
         progress.stop()
         log.die('Process terminated')
@@ -188,7 +190,7 @@ def cmd_manifest_validate(args: Namespace) -> int:
     progress.update(progress_task,advance=0, refresh=True, description='')
     progress.stop()
 
-    return 0
+    return exit_code
 
 
 def cmd_manifest_check(args: Namespace) -> int:

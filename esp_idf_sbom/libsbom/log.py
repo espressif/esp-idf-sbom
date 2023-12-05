@@ -21,7 +21,7 @@ def warn(*args: Any) -> None:
 
 def die(*args: Any) -> None:
     err(*args)
-    sys.exit(1)
+    sys.exit(128)
 
 
 def debug(*args: Any) -> None:
