@@ -32,6 +32,7 @@ def check(cpe: str) -> List[Dict[str, Any]]:
     base_url = 'https://services.nvd.nist.gov/rest/json/cves/2.0'
     vulns = []
     start_idx = 0
+    unavailable_cnt = 0
     apikey = os.environ.get('NVDAPIKEY')
     global WARNED
 
@@ -55,6 +56,11 @@ def check(cpe: str) -> List[Dict[str, Any]]:
                     WARNED = True
                 log.warn(f'Sleeping for 30 seconds...')
                 time.sleep(30)
+                continue
+            elif e.code == 503 and unavailable_cnt < 3:
+                unavailable_cnt += 1
+                log.warn(f'NVD server unavailable(503). Retrying({unavailable_cnt}) in 10 seconds...')
+                time.sleep(10)
                 continue
 
             raise RuntimeError(f'HTTP GET for "{url}" returned error: "{e}"')
