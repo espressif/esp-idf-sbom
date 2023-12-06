@@ -414,6 +414,16 @@ variable. This information is used as a value for the `PackageLicenseDeclared` S
 given **project**, **component** or **submodule**.
 
 
+## Return Values
+
+* **0**:
+    No error, no vulnerability found, manifest file(s) valid.
+* **1**:
+    Vulnerability found or manifest file not valid.
+* **128**:
+    Fatal error.
+
+
 [1]: https://en.wikipedia.org/wiki/Software_supply_chain
 [2]: https://spdx.dev
 [3]: https://docs.espressif.com/projects/esp-idf/en/latest
