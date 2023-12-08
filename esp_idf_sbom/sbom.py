@@ -416,7 +416,7 @@ def main():
                                     'which are not linked into the final binary will be checked too.'))
 
     check_parser.add_argument('--format',
-                              choices=['table', 'json', 'csv'],
+                              choices=['table', 'json', 'csv', 'markdown'],
                               default=os.environ.get('SBOM_CHECK_FORMAT', 'table'),
                               help=('table - Print report table. This is default.'
                                     'json - Print report in JSON format. '
@@ -445,7 +445,7 @@ def main():
                                        help=('Print output to the specified file instead of stdout.'))
 
     manifest_check_parser.add_argument('--format',
-                                       choices=['table', 'json', 'csv'],
+                                       choices=['table', 'json', 'csv', 'markdown'],
                                        help=('table - Print report table. This is default.'
                                              'json - Print report in JSON format. '
                                              'csv - Print report in CSV format.'))

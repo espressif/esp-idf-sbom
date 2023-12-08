@@ -98,7 +98,7 @@ The default report format consists of multiple tables:
 5. Packages without CPE information not applicable for vulnerability check
 
 The output format may be changed with the `--format` option, which supports exporting
-the report into **json** or **csv** format.
+the report into **json**, **csv** or **markdown** format.
 
 If package is not vulnerable to a specific CVE, it can be added to the manifest **cve-exclude-list**
 list and checker will not report it as identified vulnerability, but as excluded vulnerability.

@@ -7,6 +7,7 @@ import sys
 from argparse import Namespace
 from typing import Any, Dict, List
 
+from rich.box import MARKDOWN
 from rich.table import Table
 
 from esp_idf_sbom import __version__
@@ -110,6 +111,14 @@ def show(records: List[Dict[str,str]],
         log.print(','.join(utils.csv_escape(empty_record.keys())))
         for r in record_list:
             log.print(','.join(utils.csv_escape(r.values())))
+        return
+    elif args.format == 'markdown':
+        table = Table(box=MARKDOWN)
+        for key in empty_record.keys():
+            table.add_column(key, overflow='fold')
+        for r in record_list:
+            table.add_row(*r.values())
+        log.print(table)
         return
 
     cvss_severity_color_map = {
