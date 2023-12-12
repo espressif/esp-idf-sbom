@@ -159,6 +159,7 @@ class SPDXObject:
         'originator': '',
         'description': '',
         'license': '',
+        'copyright': [],
         'cve-exclude-list': [],
         'manifests': [],
     }
@@ -304,6 +305,7 @@ class SPDXObject:
 
         # idf_component.yml may contains special sbom section
         idf_component_sbom = idf_component_yml.get('sbom', dict())
+        mft.fix(idf_component_sbom)
         mft.validate(idf_component_sbom, sbom_path, directory)
         self.update_manifest(manifest, idf_component_sbom)
 
@@ -453,6 +455,12 @@ class SPDXPackage(SPDXObject):
 
         if args.file_tags:
             self.tags = self.get_tags(exclude_dirs)
+
+        if self.manifest['copyright']:
+            # SPDX doesn't have equivalent to PackageLicenseDeclared
+            # for copyrights, so just add copyrights from manifest
+            # into PackageCopyrightText.
+            self.tags.copyrights |= set(self.manifest['copyright'])
 
         cpe_name = None
         if self.manifest['cpe']:
