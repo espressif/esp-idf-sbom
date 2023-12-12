@@ -5,6 +5,7 @@
 Simple module for git interaction.
 """
 
+import os
 from typing import Any, Dict, List, Optional
 
 from esp_idf_sbom.libsbom import utils
@@ -198,18 +199,19 @@ def get_tree_sha(fullpath: str) -> Optional[str]:
         return None
     relpath = utils.prelpath(fullpath, gitwdir)
     if relpath == '.':
-        # The fullpath is a git root, probably submodule, so get the HEAD SHA
-        output = _helper(['git', '-C', gitwdir, 'rev-parse', 'HEAD'])
-    else:
-        output = _helper(['git', '-C', gitwdir, 'ls-tree', 'HEAD', relpath])
+        # If fullpath is a git root directory, it's most probably
+        # a git submodule. We are interested in the submodule hash
+        # as recorded in superproject, not in the hash on which
+        # the submodule is checked out in working tree. So this
+        # tries to run the ls-tree command on fullpath parent git.
+        relpath = os.path.basename(gitwdir)
+        gitwdir = os.path.dirname(gitwdir)
+
+    output = _helper(['git', '-C', gitwdir, 'ls-tree', 'HEAD', relpath])
 
     if not output:
         return None
-    splitted = output.split()
-    if len(splitted) > 1:
-        return splitted[2]
-
-    return splitted[0]
+    return output.split()[2]
 
 
 def get_branch(git_wdir: str) -> str:
