@@ -14,7 +14,7 @@ import re
 import sys
 import uuid
 from argparse import Namespace
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Iterator, List, Optional, Set
 
 import yaml
 from license_expression import ExpressionError, get_spdx_licensing
@@ -462,8 +462,7 @@ class SPDXPackage(SPDXObject):
 
         self.files = self.get_files(self.dir, self.name, exclude_dirs)
 
-        if args.file_tags:
-            self.tags = self.get_tags(exclude_dirs)
+        self.tags = self.get_tags(exclude_dirs)
 
         if self.manifest['copyright']:
             # SPDX doesn't have equivalent to PackageLicenseDeclared
@@ -563,6 +562,10 @@ class SPDXPackage(SPDXObject):
 
     def get_tags(self, exclude_dirs: Optional[List[str]]=None) -> SPDXTags:
         tags: SPDXTags = SPDXTags()
+
+        if not self.args.file_tags:
+            return tags
+
         if self.files:
             tags = SPDXFileObjsTags(self.files)
         else:
@@ -728,11 +731,7 @@ class SPDXProject(SPDXPackage):
 
         return manifest
 
-    def get_tags(self, exclude_dirs: Optional[List[str]]=None) -> SPDXTags:
-        # Collect tags from components and subpackages which have
-        # relationship with Project package.
-        tags: SPDXTags = SPDXTags()
-
+    def walk_packages(self) -> Iterator[SPDXPackage]:
         def walk_subpackages(subpackages):
             for subpackage in subpackages:
                 yield subpackage
@@ -741,9 +740,16 @@ class SPDXProject(SPDXPackage):
         for component in self.components.values():
             if not self._component_used(component.info):
                 continue
-            tags |= component.tags
-            for subpackage in walk_subpackages(component.subpackages):
-                tags |= subpackage.tags
+            yield component
+            yield from walk_subpackages(component.subpackages)
+
+    def get_tags(self, exclude_dirs: Optional[List[str]]=None) -> SPDXTags:
+        # Collect tags from components and subpackages which have
+        # relationship with Project package.
+        tags: SPDXTags = SPDXTags()
+
+        for package in self.walk_packages():
+            tags |= package.tags
         return tags
 
     def add_relationships(self) -> None:

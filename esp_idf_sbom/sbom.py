@@ -8,10 +8,9 @@ import json
 import os
 import sys
 from argparse import Namespace
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import yaml
-from rich.panel import Panel
 from rich.progress import (BarColumn, MofNCompleteColumn, Progress, TextColumn,
                            TimeElapsedColumn)
 from rich.table import Table
@@ -182,31 +181,56 @@ def cmd_license(args: Namespace) -> int:
     # this information to print an overall report about licenses
     # and copyrights used by the project application.
     tags = spdx_sbom.project.tags
+    proj_name = spdx_sbom.project.name
     copyrights = list(tags.copyrights)
     licenses_merged = tags.licenses_expressions | tags.licenses_expressions_declared
     license_concluded = tags.simplify_licenses(licenses_merged)
     licenses = list(licenses_merged)
 
+    packages = []
+    if args.packages:
+        for package in spdx_sbom.project.walk_packages():
+            package_copyrights = list(package.tags.copyrights)
+            package_licenses_merged = package.tags.licenses_expressions | package.tags.licenses_expressions_declared
+            package_license_concluded = tags.simplify_licenses(package_licenses_merged)
+            package_licenses = list(package_licenses_merged)
+
+            package_info: Dict[str, Any] = {}
+            package_info['name'] = package.name
+            package_info['license_concluded'] = package_license_concluded
+            package_info['licenses'] = package_licenses
+            package_info['copyrights'] = package_copyrights
+            packages.append(package_info)
+
     if args.format == 'json':
         log.print_json(json.dumps(
             {'license_concluded': license_concluded,
              'licenses': licenses,
-             'copyrights': copyrights}))
+             'copyrights': copyrights,
+             'packages': packages}))
         return 0
 
-    log.print(Panel(license_concluded, title='License concluded', expand=False), '\n')
-
-    table = Table(title='List of identified licenses', show_header=True)
-    table.add_column('License', overflow='fold')
+    table = Table(title=f'Licenses and copyrights for project {proj_name}', show_header=False)
+    table.add_column(overflow='fold')
+    table.add_column(overflow='fold')
+    table.add_row('License concluded', license_concluded)
     for lic in licenses:
-        table.add_row(lic)
+        table.add_row('License', lic)
+    for c in copyrights:
+        table.add_row('Copyright', c)
     log.print(table, '\n')
 
-    table = Table(title='List of identified copyrights', show_header=True)
-    table.add_column('Copyright', overflow='fold')
-    for c in copyrights:
-        table.add_row(c)
-    log.print(table, '\n')
+    for pkg in packages:
+        table = Table(title=f'Licenses and copyrights for package {pkg["name"]}', show_header=False)
+        table.add_column(overflow='fold')
+        table.add_column(overflow='fold')
+        table.add_row('License concluded', pkg['license_concluded'])
+        for lic in pkg['licenses']:
+            table.add_row('License', lic)
+        for c in pkg['copyrights']:
+            table.add_row('Copyright', c)
+        log.print(table, '\n')
+
     return 0
 
 
@@ -493,6 +517,11 @@ def main():
                                 default=os.environ.get('SBOM_LICENSE_FORMAT', 'table'),
                                 help=('table - Print report table. This is default.'
                                       'json - Print report in JSON format.'))
+
+    license_parser.add_argument('-p', '--packages',
+                                action='store_true',
+                                default=bool(os.environ.get('SBOM_LICENSE_PACKAGES')),
+                                help='Include also per package license and copyright information.')
 
     manifest_parser = subparsers.add_parser('manifest',
                                             help=('Commands operating atop of manifest files.'))
