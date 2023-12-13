@@ -32,9 +32,18 @@ class SPDXTags:
     # SPDX license parser/validator
     licensing = get_spdx_licensing()
 
+    def simplify_licenses(self, licenses: Set[str]) -> str:
+        exprs = [f'({expr})' for expr in licenses]
+        expr = ' AND '.join(exprs)
+        parsed = self.licensing.parse(expr)
+        if parsed is None:
+            return ''
+        return str(parsed.simplify())
+
     def __init__(self) -> None:
         self.licenses: Set[str] = set()
         self.licenses_expressions: Set[str] = set()
+        self.licenses_expressions_declared: Set[str] = set()
         self.copyrights: Set[str] = set()
         self.contributors: Set[str] = set()
 
@@ -47,15 +56,15 @@ class SPDXTags:
         # sure the concluded license is correct.
         # Use parentheses around each found license expression to make
         # sure the concluded license is correct.
+        return self.simplify_licenses(self.licenses_expressions)
 
-        exprs = [f'({expr})' for expr in self.licenses_expressions]
-        expr = ' AND '.join(exprs)
-        parsed = self.licensing.parse(expr)
-        return str(parsed.simplify())
+    def get_license_declared(self) -> str:
+        return self.simplify_licenses(self.licenses_expressions_declared)
 
     def __ior__(self, other):
         # Tags unification.
         self.licenses_expressions |= other.licenses_expressions
+        self.licenses_expressions_declared |= other.licenses_expressions_declared
         self.licenses |= other.licenses
         self.copyrights |= other.copyrights
         self.contributors |= other.contributors
@@ -462,6 +471,11 @@ class SPDXPackage(SPDXObject):
             # into PackageCopyrightText.
             self.tags.copyrights |= set(self.manifest['copyright'])
 
+        if self.manifest['license']:
+            # Store license declared in manifest, so we can use it later in
+            # project package.
+            self.tags.licenses_expressions_declared |= set([self.manifest['license']])
+
         cpe_name = None
         if self.manifest['cpe']:
             cpe_name = self.manifest['cpe'][0].split(':')[4]
@@ -484,11 +498,8 @@ class SPDXPackage(SPDXObject):
                 self['PackageLicenseInfoFromFiles'] = ['NOASSERTION']
         else:
             self['FilesAnalyzed'] = ['false']
-        if self.tags.licenses_expressions:
-            self['PackageLicenseConcluded'] = [self.tags.get_license_concluded()]
-        else:
-            self['PackageLicenseConcluded'] = ['NOASSERTION']
-        self['PackageLicenseDeclared'] = [self.manifest['license'] or 'NOASSERTION']
+        self['PackageLicenseConcluded'] = [self.tags.get_license_concluded() or 'NOASSERTION']
+        self['PackageLicenseDeclared'] = [self.tags.get_license_declared() or 'NOASSERTION']
         if self.tags.copyrights:
             self['PackageCopyrightText'] = ['<text>{}</text>'.format('\n'.join(self.tags.copyrights))]
         else:
