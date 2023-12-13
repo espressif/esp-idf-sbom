@@ -41,7 +41,7 @@ def load(path: str) -> Dict[str,Any]:
     try:
         with open(path, 'r') as f:
             manifest = yaml.safe_load(f.read()) or {}
-    except (OSError, yaml.parser.ParserError) as e:
+    except (OSError, yaml.parser.ParserError, yaml.scanner.ScannerError) as e:
         log.die(f'Cannot parse manifest file "{path}": {e}')
 
     fix(manifest)
