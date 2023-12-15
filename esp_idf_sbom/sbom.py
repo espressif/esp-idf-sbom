@@ -4,14 +4,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
+import json
 import os
 import sys
 from argparse import Namespace
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import yaml
 from rich.progress import (BarColumn, MofNCompleteColumn, Progress, TextColumn,
                            TimeElapsedColumn)
+from rich.table import Table
 
 from esp_idf_sbom.libsbom import log, mft, nvd, report, spdx
 
@@ -155,6 +157,81 @@ def cmd_check(args: Namespace) -> int:
     report.show(record_list, args, proj_name, proj_ver)
 
     return exit_code
+
+
+def cmd_license(args: Namespace) -> int:
+    # Set options how the SPDXDocument should be generated.
+    # We need to make sure that that file_tags is enabled,
+    # so licenses and copyrights are collected from the
+    # component/package files.
+    args.rem_config = True
+    args.rem_unused = True
+    args.files = 'rem'
+    args.no_guess = False
+    args.file_tags = True
+    args.rem_submodules = False
+    args.rem_subpackages = False
+    args.add_config_deps = False
+    args.add_unused_deps = False
+    spdx_sbom = spdx.SPDXDocument(args, args.input_file)
+
+    # The Project SPDX object already contains aggregated
+    # licenses and copyrights from packages/components
+    # which were linked into the final binary. We can use
+    # this information to print an overall report about licenses
+    # and copyrights used by the project application.
+    tags = spdx_sbom.project.tags
+    proj_name = spdx_sbom.project.name
+    copyrights = list(tags.copyrights)
+    licenses_merged = tags.licenses_expressions | tags.licenses_expressions_declared
+    license_concluded = tags.simplify_licenses(licenses_merged)
+    licenses = list(licenses_merged)
+
+    packages = []
+    if args.packages:
+        for package in spdx_sbom.project.walk_packages():
+            package_copyrights = list(package.tags.copyrights)
+            package_licenses_merged = package.tags.licenses_expressions | package.tags.licenses_expressions_declared
+            package_license_concluded = tags.simplify_licenses(package_licenses_merged)
+            package_licenses = list(package_licenses_merged)
+
+            package_info: Dict[str, Any] = {}
+            package_info['name'] = package.name
+            package_info['license_concluded'] = package_license_concluded
+            package_info['licenses'] = package_licenses
+            package_info['copyrights'] = package_copyrights
+            packages.append(package_info)
+
+    if args.format == 'json':
+        log.print_json(json.dumps(
+            {'license_concluded': license_concluded,
+             'licenses': licenses,
+             'copyrights': copyrights,
+             'packages': packages}))
+        return 0
+
+    table = Table(title=f'Licenses and copyrights for project {proj_name}', show_header=False)
+    table.add_column(overflow='fold')
+    table.add_column(overflow='fold')
+    table.add_row('License concluded', license_concluded)
+    for lic in licenses:
+        table.add_row('License', lic)
+    for c in copyrights:
+        table.add_row('Copyright', c)
+    log.print(table, '\n')
+
+    for pkg in packages:
+        table = Table(title=f'Licenses and copyrights for package {pkg["name"]}', show_header=False)
+        table.add_column(overflow='fold')
+        table.add_column(overflow='fold')
+        table.add_row('License concluded', pkg['license_concluded'])
+        for lic in pkg['licenses']:
+            table.add_row('License', lic)
+        for c in pkg['copyrights']:
+            table.add_row('Copyright', c)
+        log.print(table, '\n')
+
+    return 0
 
 
 def cmd_manifest_validate(args: Namespace) -> int:
@@ -421,6 +498,30 @@ def main():
                               help=('table - Print report table. This is default.'
                                     'json - Print report in JSON format. '
                                     'csv - Print report in CSV format.'))
+
+    license_parser = subparsers.add_parser('license',
+                                           help=('Print licenses and copyrights used in the project '
+                                                 'described by PROJECT_DESCRIPTION json file.'))
+    license_parser.set_defaults(func=cmd_license)
+    license_parser.add_argument('input_file',
+                                metavar='PROJECT_DESCRIPTION',
+                                help=('Path to the project_description.json file generated '
+                                      'by the ESP-IDF sbom tool.'))
+
+    license_parser.add_argument('-o', '--output-file',
+                                metavar='OUTPUT_FILE',
+                                help=('Print output to the specified file instead of stdout.'))
+
+    license_parser.add_argument('--format',
+                                choices=['table', 'json'],
+                                default=os.environ.get('SBOM_LICENSE_FORMAT', 'table'),
+                                help=('table - Print report table. This is default.'
+                                      'json - Print report in JSON format.'))
+
+    license_parser.add_argument('-p', '--packages',
+                                action='store_true',
+                                default=bool(os.environ.get('SBOM_LICENSE_PACKAGES')),
+                                help='Include also per package license and copyright information.')
 
     manifest_parser = subparsers.add_parser('manifest',
                                             help=('Commands operating atop of manifest files.'))

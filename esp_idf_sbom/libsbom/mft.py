@@ -15,6 +15,18 @@ from esp_idf_sbom.libsbom import git, log, utils
 licensing = get_spdx_licensing()
 
 
+def fix(manifest: Dict[str, Any]) -> None:
+    """Fix manifest keys, e.g. convert string entries to list."""
+
+    # Convert cpe into a list
+    if 'cpe' in manifest and type(manifest['cpe']) is not list:
+        manifest['cpe'] = [manifest['cpe']]
+
+    # Convert copyrights into a list
+    if 'copyright' in manifest and type(manifest['copyright']) is not list:
+        manifest['copyright'] = [manifest['copyright']]
+
+
 def load(path: str) -> Dict[str,Any]:
     """Load manifest file
 
@@ -29,12 +41,10 @@ def load(path: str) -> Dict[str,Any]:
     try:
         with open(path, 'r') as f:
             manifest = yaml.safe_load(f.read()) or {}
-    except (OSError, yaml.parser.ParserError) as e:
+    except (OSError, yaml.parser.ParserError, yaml.scanner.ScannerError) as e:
         log.die(f'Cannot parse manifest file "{path}": {e}')
 
-    # Convert cpe into a list
-    if 'cpe' in manifest and type(manifest['cpe']) is not list:
-        manifest['cpe'] = [manifest['cpe']]
+    fix(manifest)
 
     return manifest
 
@@ -270,6 +280,7 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             schema.Optional('originator'): schema.And(str, check_person_organization),
             schema.Optional('description'): str,
             schema.Optional('license'): schema.And(str, check_license),
+            schema.Optional('copyright'): list,
             schema.Optional('hash'): schema.And(str, check_hash),
             schema.Optional('cve-exclude-list'): cve_exclude_list_schema,
             schema.Optional('manifests'): manifests_schema,

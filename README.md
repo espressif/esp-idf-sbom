@@ -226,6 +226,9 @@ cve-exclude-list:
 
 * **license**:
     License expression explicitly declared by the author.
+* **copyright**:
+    Copyright explicitly declared by the author. This can be single string or a
+    list of copyrights.
 * **cve-exclude-list**:
     List of already evaluated CVEs, which do not apply to this package. This can be used
     to exclude CVEs from the `esp-idf-sbom` checker report in case the package is not
@@ -288,6 +291,7 @@ Information from the `sbom.yml` manifest file are mapped to the following SPDX t
 | supplier        | PackageSupplier              |
 | originator      | PackageOriginator            |
 | license         | PackageLicenseDeclared       |
+| copyright       | PackageCopyrightText         |
 | cve-exclude-list| PackageComment               |
 
 Even though the `sbom.yml` file is the primary source of information, the esp-idf-sbom tool

@@ -14,7 +14,7 @@ import re
 import sys
 import uuid
 from argparse import Namespace
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Iterator, List, Optional, Set
 
 import yaml
 from license_expression import ExpressionError, get_spdx_licensing
@@ -32,9 +32,18 @@ class SPDXTags:
     # SPDX license parser/validator
     licensing = get_spdx_licensing()
 
+    def simplify_licenses(self, licenses: Set[str]) -> str:
+        exprs = [f'({expr})' for expr in licenses]
+        expr = ' AND '.join(exprs)
+        parsed = self.licensing.parse(expr)
+        if parsed is None:
+            return ''
+        return str(parsed.simplify())
+
     def __init__(self) -> None:
         self.licenses: Set[str] = set()
         self.licenses_expressions: Set[str] = set()
+        self.licenses_expressions_declared: Set[str] = set()
         self.copyrights: Set[str] = set()
         self.contributors: Set[str] = set()
 
@@ -47,15 +56,15 @@ class SPDXTags:
         # sure the concluded license is correct.
         # Use parentheses around each found license expression to make
         # sure the concluded license is correct.
+        return self.simplify_licenses(self.licenses_expressions)
 
-        exprs = [f'({expr})' for expr in self.licenses_expressions]
-        expr = ' AND '.join(exprs)
-        parsed = self.licensing.parse(expr)
-        return str(parsed.simplify())
+    def get_license_declared(self) -> str:
+        return self.simplify_licenses(self.licenses_expressions_declared)
 
     def __ior__(self, other):
         # Tags unification.
         self.licenses_expressions |= other.licenses_expressions
+        self.licenses_expressions_declared |= other.licenses_expressions_declared
         self.licenses |= other.licenses
         self.copyrights |= other.copyrights
         self.contributors |= other.contributors
@@ -159,6 +168,7 @@ class SPDXObject:
         'originator': '',
         'description': '',
         'license': '',
+        'copyright': [],
         'cve-exclude-list': [],
         'manifests': [],
     }
@@ -304,6 +314,7 @@ class SPDXObject:
 
         # idf_component.yml may contains special sbom section
         idf_component_sbom = idf_component_yml.get('sbom', dict())
+        mft.fix(idf_component_sbom)
         mft.validate(idf_component_sbom, sbom_path, directory)
         self.update_manifest(manifest, idf_component_sbom)
 
@@ -451,8 +462,18 @@ class SPDXPackage(SPDXObject):
 
         self.files = self.get_files(self.dir, self.name, exclude_dirs)
 
-        if args.file_tags:
-            self.tags = self.get_tags(exclude_dirs)
+        self.tags = self.get_tags(exclude_dirs)
+
+        if self.manifest['copyright']:
+            # SPDX doesn't have equivalent to PackageLicenseDeclared
+            # for copyrights, so just add copyrights from manifest
+            # into PackageCopyrightText.
+            self.tags.copyrights |= set(self.manifest['copyright'])
+
+        if self.manifest['license']:
+            # Store license declared in manifest, so we can use it later in
+            # project package.
+            self.tags.licenses_expressions_declared |= set([self.manifest['license']])
 
         cpe_name = None
         if self.manifest['cpe']:
@@ -476,11 +497,8 @@ class SPDXPackage(SPDXObject):
                 self['PackageLicenseInfoFromFiles'] = ['NOASSERTION']
         else:
             self['FilesAnalyzed'] = ['false']
-        if self.tags.licenses_expressions:
-            self['PackageLicenseConcluded'] = [self.tags.get_license_concluded()]
-        else:
-            self['PackageLicenseConcluded'] = ['NOASSERTION']
-        self['PackageLicenseDeclared'] = [self.manifest['license'] or 'NOASSERTION']
+        self['PackageLicenseConcluded'] = [self.tags.get_license_concluded() or 'NOASSERTION']
+        self['PackageLicenseDeclared'] = [self.tags.get_license_declared() or 'NOASSERTION']
         if self.tags.copyrights:
             self['PackageCopyrightText'] = ['<text>{}</text>'.format('\n'.join(self.tags.copyrights))]
         else:
@@ -544,6 +562,10 @@ class SPDXPackage(SPDXObject):
 
     def get_tags(self, exclude_dirs: Optional[List[str]]=None) -> SPDXTags:
         tags: SPDXTags = SPDXTags()
+
+        if not self.args.file_tags:
+            return tags
+
         if self.files:
             tags = SPDXFileObjsTags(self.files)
         else:
@@ -709,11 +731,7 @@ class SPDXProject(SPDXPackage):
 
         return manifest
 
-    def get_tags(self, exclude_dirs: Optional[List[str]]=None) -> SPDXTags:
-        # Collect tags from components and subpackages which have
-        # relationship with Project package.
-        tags: SPDXTags = SPDXTags()
-
+    def walk_packages(self) -> Iterator[SPDXPackage]:
         def walk_subpackages(subpackages):
             for subpackage in subpackages:
                 yield subpackage
@@ -722,9 +740,16 @@ class SPDXProject(SPDXPackage):
         for component in self.components.values():
             if not self._component_used(component.info):
                 continue
-            tags |= component.tags
-            for subpackage in walk_subpackages(component.subpackages):
-                tags |= subpackage.tags
+            yield component
+            yield from walk_subpackages(component.subpackages)
+
+    def get_tags(self, exclude_dirs: Optional[List[str]]=None) -> SPDXTags:
+        # Collect tags from components and subpackages which have
+        # relationship with Project package.
+        tags: SPDXTags = SPDXTags()
+
+        for package in self.walk_packages():
+            tags |= package.tags
         return tags
 
     def add_relationships(self) -> None:
