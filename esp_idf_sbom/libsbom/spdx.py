@@ -29,6 +29,7 @@ class SPDXTags:
     SPDX_LICENSE_RE = re.compile(r'SPDX-License-Identifier: *(.*)')
     SPDX_COPYRIGHT_RE = re.compile(r'SPDX-FileCopyrightText: *(.*)')
     SPDX_CONTRIBUTOR_RE = re.compile(r'SPDX-FileContributor: *(.*)')
+    COPYRIGHT_RE = re.compile(r'([ \d,-]+)(.*)', flags=re.DOTALL)
     # SPDX license parser/validator
     licensing = get_spdx_licensing()
 
@@ -39,6 +40,91 @@ class SPDXTags:
         if parsed is None:
             return ''
         return str(parsed.simplify())
+
+    def simplify_copyrights(self, copyrights: Set[str]) -> Set[str]:
+        """Simplify copyright years. If the same copyright is used at
+        multiple places with different years, this will unify the years."""
+
+        # Simple dict, where key is a copyright text and value is a list of
+        # year ranges.
+        copyrights_years: Dict[str, List[List[int]]] = dict()
+        # Resulting copyrights with unified/simplified years.
+        copyrights_simplified: Set[str] = set()
+        for copr in copyrights:
+            try:
+                match = self.COPYRIGHT_RE.match(copr)
+                if match is None:
+                    raise ValueError
+
+                years = match.group(1).strip()
+                text = match.group(2).strip()
+                years_ranges = []
+
+                for year in years.split(','):
+                    if not year:
+                        continue
+                    year_nums = [int(y) for y in year.split('-') if y]
+                    if len(year_nums) == 1:
+                        # Simple year, expand it to a range. For example year 2023
+                        # will be expanded to a range 2023-2023. This allows internally
+                        # to work with single years and year ranges in a unified way.
+                        year_nums = year_nums * 2
+                    if len(year_nums) != 2:
+                        raise ValueError
+
+                    years_ranges.append(year_nums)
+
+                if not years_ranges:
+                    raise ValueError
+
+                if text not in copyrights_years:
+                    copyrights_years[text] = []
+
+                copyrights_years[text] += years_ranges
+
+            except ValueError:
+                # Copyright does not match expected format, so just add it as it is.
+                copyrights_simplified.add(copr)
+
+        for text, ranges in copyrights_years.items():
+            # Sort year ranges based on their sizes. Range covering
+            # the most years is first.
+            ranges.sort(key=lambda x: x[1] - x[0], reverse=True)
+
+            # Remove ranges which are covered by other ranges.
+            # For example 2020-2023 will be removed if e.g. 2015-2023 exists.
+            ranges_simplified = []
+            while ranges:
+                cur = ranges.pop()
+                for rng in ranges:
+                    if rng[0] <= cur[0] and cur[1] <= rng[1]:
+                        # Current range is subset of some other range, so remove it.
+                        break
+                else:
+                    ranges_simplified.append(cur)
+
+            # Sort simplified ranges by their starting years.
+            ranges_simplified.sort(key=lambda x: x[0])
+
+            # Check if year ranges can be merged. For example 2015-2018
+            # and 2018-2023 can be merged into a single 2015-2023 range.
+            ranges_merged = []
+            cur = ranges_simplified.pop(0)
+            while ranges_simplified:
+                rng = ranges_simplified.pop(0)
+                if rng[0] <= cur[1] + 1:
+                    # merge
+                    cur = [cur[0], rng[1]]
+                else:
+                    ranges_merged.append(cur)
+                    cur = rng
+            else:
+                ranges_merged.append(cur)
+
+            ranges_strs = [f'{rng[0]}' if rng[0] == rng[1] else f'{rng[0]}-{rng[1]}'for rng in ranges_merged]
+            copyrights_simplified.add('{} {}'.format(', '.join(ranges_strs), text))
+
+        return copyrights_simplified
 
     def __init__(self) -> None:
         self.licenses: Set[str] = set()

@@ -228,3 +228,26 @@ def test_multiple_cpes(hello_world_build: Path) -> None:
     assert 'PRODUCT2' in p.stdout
 
     manifest.unlink()
+
+
+def test_copyright_notices_unification(hello_world_build: Path) -> None:
+    """Test copyright notices unification in license command."""
+
+    manifest = hello_world_build / 'main' / 'sbom.yml'
+    content = f'''
+              copyright:
+                - 2001-2003 John Doe
+                - 2005 John Doe
+                - 2007-2010 John Doe
+                - 2002-2003 John Doe
+                - 2008-2015 John Doe
+                - 2011 John Doe
+              '''
+    manifest.write_text(dedent(content))
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'license', '-u', proj_desc_path],
+            check=True, capture_output=True, text=True)
+
+    assert f'2001-2003, 2005, 2007-2015 John Doe' in p.stdout
+
+    manifest.unlink()
