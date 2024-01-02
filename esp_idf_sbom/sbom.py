@@ -77,11 +77,8 @@ def cmd_check(args: Namespace) -> int:
                 cve_exclude_list = {cve['cve']: cve['reason'] for cve in comment_yaml['cve-exclude-list']}
 
             for cpe in cpes:
-                try:
-                    vulns = nvd.check(cpe)
-                except RuntimeError as e:
-                    progress.stop()
-                    log.die(f'{e}')
+                vulns = nvd.check(cpe)
+
                 for vuln in vulns:
                     cve_id = vuln['cve']['id']
                     cve_link = f'https://nvd.nist.gov/vuln/detail/{cve_id}'
@@ -143,6 +140,9 @@ def cmd_check(args: Namespace) -> int:
                     record['cpe'] = ', '.join(cpes)
                 record_list.append(record)
 
+    except (RuntimeError, OSError) as e:
+        progress.stop()
+        log.die(str(e))
     except KeyboardInterrupt:
         progress.stop()
         log.die('Process terminated')
@@ -367,7 +367,7 @@ def cmd_manifest_check(args: Namespace) -> int:
                 record['cpe'] = ', '.join(cpes)
                 record_list.append(record)
 
-    except RuntimeError as e:
+    except (RuntimeError, OSError) as e:
         progress.stop()
         log.die(str(e))
     except KeyboardInterrupt:
