@@ -182,7 +182,10 @@ def cmd_license(args: Namespace) -> int:
     # and copyrights used by the project application.
     tags = spdx_sbom.project.tags
     proj_name = spdx_sbom.project.name
-    copyrights = list(tags.copyrights)
+    if args.unify_copyrights:
+        copyrights = list(tags.simplify_copyrights(tags.copyrights))
+    else:
+        copyrights = list(tags.copyrights)
     licenses_merged = tags.licenses_expressions | tags.licenses_expressions_declared
     license_concluded = tags.simplify_licenses(licenses_merged)
     licenses = list(licenses_merged)
@@ -190,7 +193,10 @@ def cmd_license(args: Namespace) -> int:
     packages = []
     if args.packages:
         for package in spdx_sbom.project.walk_packages():
-            package_copyrights = list(package.tags.copyrights)
+            if args.unify_copyrights:
+                package_copyrights = list(package.tags.simplify_copyrights(package.tags.copyrights))
+            else:
+                package_copyrights = list(package.tags.copyrights)
             package_licenses_merged = package.tags.licenses_expressions | package.tags.licenses_expressions_declared
             package_license_concluded = tags.simplify_licenses(package_licenses_merged)
             package_licenses = list(package_licenses_merged)
@@ -522,6 +528,12 @@ def main():
                                 action='store_true',
                                 default=bool(os.environ.get('SBOM_LICENSE_PACKAGES')),
                                 help='Include also per package license and copyright information.')
+
+    license_parser.add_argument('-u', '--unify-copyrights',
+                                action='store_true',
+                                default=bool(os.environ.get('SBOM_LICENSE_UNIFY_COPYRIGHTS')),
+                                help=('Unify copyright years. If the same copyright is used at different '
+                                      'places with different years or year ranges, this option will unify them.'))
 
     manifest_parser = subparsers.add_parser('manifest',
                                             help=('Commands operating atop of manifest files.'))
