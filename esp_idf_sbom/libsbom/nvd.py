@@ -47,7 +47,9 @@ def check(cpe: str) -> List[Dict[str, Any]]:
         log.debug('\n'.join([f'{h}: {v}' for h, v in req.header_items()]))
 
         try:
-            res = urllib.request.urlopen(req)
+            with urllib.request.urlopen(req, timeout=30) as res:
+                data = json.loads(res.read().decode())
+
         except urllib.error.HTTPError as e:
             if e.code == 403:
                 # https://nvd.nist.gov/developers/start-here Rate Limits
@@ -64,8 +66,6 @@ def check(cpe: str) -> List[Dict[str, Any]]:
                 continue
 
             raise RuntimeError(f'HTTP GET for "{url}" returned error: "{e}"')
-
-        data = json.loads(res.read().decode())
 
         log.debug('NVD response:')
         log.debug(json.dumps(data, indent=4))
