@@ -53,6 +53,7 @@ setup(
     extras_require={
         'dev': [
             'pytest',
+            'commitizen',
             'spdx-tools>=v0.8.0rc1',
         ],
     },
