@@ -103,6 +103,9 @@ def get_submodule_manifest(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if 'cpe' in module_sbom and type(module_sbom['cpe']) is not list:
         module_sbom['cpe'] = [module_sbom['cpe']]
 
+    if 'copyright' in module_sbom and type(module_sbom['copyright']) is not list:
+        module_sbom['copyright'] = [module_sbom['copyright']]
+
     return module_sbom
 
 
