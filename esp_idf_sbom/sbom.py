@@ -52,7 +52,7 @@ def cmd_check(args: Namespace) -> int:
     progress.start()
 
     try:
-        progress_task = progress.add_task('Checking pakcages', total=len(packages))
+        progress_task = progress.add_task('Checking packages', total=len(packages))
         for pkg in packages.values():
             package_added = False
             progress.update(progress_task,advance=1, refresh=True, description=pkg['PackageName'][0])
@@ -161,7 +161,7 @@ def cmd_check(args: Namespace) -> int:
 
 def cmd_license(args: Namespace) -> int:
     # Set options how the SPDXDocument should be generated.
-    # We need to make sure that that file_tags is enabled,
+    # We need to make sure that file_tags is enabled,
     # so licenses and copyrights are collected from the
     # component/package files.
     args.rem_config = True
@@ -381,6 +381,84 @@ def cmd_manifest_check(args: Namespace) -> int:
     return exit_code
 
 
+def cmd_manifest_license(args: Namespace) -> int:
+    if not os.path.isdir(args.path):
+        log.die(f'"{args.path}" is not a directory')
+
+    progress = Progress(
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        TextColumn('{task.description}'),
+        disable=args.no_progress,
+        console=log.console_stderr)
+
+    packages = []
+    progress.start()
+    try:
+        progress_task = progress.add_task('Collecting licenses and copyrights information')
+        progress.update(progress_task, refresh=True, description='searching for manifest files')
+
+        manifests = mft.get_manifests(args.path)
+        progress.update(progress_task, advance=0, refresh=True, total=len(manifests))
+        manifest_paths = [manifest['_dst'] for manifest in manifests]
+
+        for manifest in manifests:
+            progress.update(progress_task, advance=1, refresh=True, description=manifest['_src'])
+
+            exclude_dirs = manifest_paths.copy()
+            exclude_dirs.remove(manifest['_dst'])
+
+            tags = spdx.SPDXDirTags(manifest['_dst'], exclude_dirs)
+
+            if 'copyright' in manifest:
+                # Store copyrights declared in manifest
+                tags.copyrights |= set(manifest['copyright'])
+
+            if 'license' in manifest:
+                # Store license declared in manifest
+                tags.licenses_expressions_declared |= set([manifest['license']])
+
+            if args.unify_copyrights:
+                package_copyrights = list(tags.simplify_copyrights(tags.copyrights))
+            else:
+                package_copyrights = list(tags.copyrights)
+            package_licenses_merged = tags.licenses_expressions | tags.licenses_expressions_declared
+            package_license_concluded = tags.simplify_licenses(package_licenses_merged)
+            package_licenses = list(package_licenses_merged)
+
+            package_info: Dict[str, Any] = {}
+            package_info['name'] = manifest['name'] if 'name' in manifest else manifest['_src']
+            package_info['license_concluded'] = package_license_concluded
+            package_info['licenses'] = package_licenses
+            package_info['copyrights'] = package_copyrights
+            packages.append(package_info)
+
+        progress.update(progress_task,advance=0, refresh=True, description='')
+        progress.stop()
+
+        if args.format == 'json':
+            log.print_json(json.dumps(packages))
+            return 0
+
+        for pkg in packages:
+            table = Table(title=f'Licenses and copyrights for package {pkg["name"]}', show_header=False)
+            table.add_column(overflow='fold')
+            table.add_column(overflow='fold')
+            table.add_row('License concluded', pkg['license_concluded'])
+            for lic in pkg['licenses']:
+                table.add_row('License', lic)
+            for c in pkg['copyrights']:
+                table.add_row('Copyright', c)
+            log.print(table, '\n')
+
+    except KeyboardInterrupt:
+        progress.stop()
+        log.die('Process terminated')
+
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(prog='esp-idf-sbom', description='ESP-IDF SBOM tool')
     parser.add_argument('-q', '--quiet',
@@ -568,6 +646,27 @@ def main():
                                        nargs='*',
                                        help=('Manifest file(sbom.yml, idf_manifest.yml or .gitmodules) or '
                                              'directory, which will be searched for manifest files.'))
+
+    manifest_license_parser = manifest_subparsers.add_parser('license',
+                                                             help=('Print licenses and copyrights for manifest files '
+                                                                   'found in specified path'))
+    manifest_license_parser.set_defaults(func=cmd_manifest_license)
+    manifest_license_parser.add_argument('path',
+                                         metavar='PATH',
+                                         default=os.path.curdir,
+                                         nargs='?',
+                                         help=('Path to scan for manifest files, which will be used to generate '
+                                               'licenses and copyrights information.'))
+    manifest_license_parser.add_argument('--format',
+                                         choices=['table', 'json'],
+                                         default=os.environ.get('SBOM_LICENSE_FORMAT', 'table'),
+                                         help=('table - Print report table. This is default.'
+                                               'json - Print report in JSON format.'))
+    manifest_license_parser.add_argument('-u', '--unify-copyrights',
+                                         action='store_true',
+                                         default=bool(os.environ.get('SBOM_LICENSE_UNIFY_COPYRIGHTS')),
+                                         help=('Unify copyright years. If the same copyright is used at different '
+                                               'places with different years or year ranges, this option will unify them.'))
 
     ofile = sys.stdout
     try:
