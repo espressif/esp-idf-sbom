@@ -50,6 +50,8 @@ pre-commit_hooks_MR:
     - git diff-tree --no-commit-id --name-only -r ${from_sha} ${CI_COMMIT_SHA}
     - echo "Running pre-commit:"
     - pre-commit run --from ${from_sha} --to ${CI_COMMIT_SHA}
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 # ------------------------------------------------------------------------------------------------------
 
 # TESTS
