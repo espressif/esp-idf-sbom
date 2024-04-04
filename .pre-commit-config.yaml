@@ -38,3 +38,9 @@ repos:
     hooks:
       - id: conventional-precommit-linter
         stages: [commit-msg]
+
+  - repo: https://github.com/espressif/check-copyright/
+    rev: v1.0.3
+    hooks:
+      - id: check-copyright
+        args: ['--config', 'check_copyright_config.yaml']
