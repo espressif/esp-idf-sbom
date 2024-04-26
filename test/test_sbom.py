@@ -251,3 +251,28 @@ def test_copyright_notices_unification(hello_world_build: Path) -> None:
     assert f'2001-2003, 2005, 2007-2015 John Doe' in p.stdout
 
     manifest.unlink()
+
+
+def test_sbom_spdx_id(hello_world_build: Path) -> None:
+    """ Create subpackage directory with '+' character in its name.
+    It should be replaced, because '+' is not allowed in SPDXID
+    identifier. Validate the generated sbom.spd to make sure
+    the SPDX identifier is sanitized.
+    main
+    └── sub+package
+        └── sbom.yml
+    """
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.spdx'
+
+    subpackage_path = hello_world_build / 'main' / 'sub+package'
+    subpackage_path.mkdir(parents=True)
+    (subpackage_path / 'sbom.yml').write_text('name: spdxid test')
+
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+
+    run([sys.executable, '-m', 'esp_idf_sbom', 'create', '-o',
+         output_fn, proj_desc_path], check=True)
+    run(['pyspdxtools', '-i', output_fn], check=True)
+
+    shutil.rmtree(subpackage_path)
