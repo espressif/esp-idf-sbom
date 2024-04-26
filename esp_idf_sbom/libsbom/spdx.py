@@ -228,10 +228,10 @@ class SPDXObject:
     self[tag]  = [value, ...] # assign new list of value(s) to tag
     self[tag] += [value, ...] # add value(s) to existing tag
     """
-    # SPDXID tag value has an requirement that it should contain
+    # SPDXID tag value has a requirement that it should contain
     # only letters, numbers, ., and/or -. Used in sanitize_spdxid()
     # to create valid SPDXID value.
-    SPDXID_RE = re.compile(r'[^0-9a-zA-Z\.\-\+]')
+    SPDXID_RE = re.compile(r'[^0-9a-zA-Z\.\-]')
     SPDX_TAGS = ['SPDXVersion', 'DataLicense', 'SPDXID', 'DocumentName', 'DocumentNamespace',
                  'Creator', 'Created', 'CreatorComment', 'Relationship', 'PackageName', 'PackageSummary',
                  'PackageVersion', 'PackageSupplier', 'PackageOriginator', 'PackageDownloadLocation', 'FilesAnalyzed',
