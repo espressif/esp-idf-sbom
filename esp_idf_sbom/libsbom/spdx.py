@@ -791,7 +791,15 @@ class SPDXProject(SPDXPackage):
             reqs = set(info['reqs'] + info['priv_reqs'] + info['managed_reqs'] + info['managed_priv_reqs'])
             log.debug(f'component {name} requires: {reqs}')
             for req in reqs:
-                if not self._component_used(build_components[req]):
+                try:
+                    if not self._component_used(build_components[req]):
+                        continue
+                except KeyError:
+                    # This is a workaround for components that are required by other components, but
+                    # are not actually registered. For instance, "esp_phy" might be required by "bt",
+                    # but "esp_phy" is not registered as a component on the esp32p4. This situation
+                    # can occur in the early stages of new chip support. This should be fixed in
+                    # build system by https://github.com/espressif/esp-idf/issues/13447.
                     continue
                 components[name]['Relationship'] += [f'{components[name]["SPDXID"][0]} DEPENDS_ON {components[req]["SPDXID"][0]}']
 
