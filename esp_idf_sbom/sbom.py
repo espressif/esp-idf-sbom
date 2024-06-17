@@ -77,10 +77,11 @@ def cmd_check(args: Namespace) -> int:
                 cve_exclude_list = {cve['cve']: cve['reason'] for cve in comment_yaml['cve-exclude-list']}
 
             for cpe in cpes:
-                vulns = nvd.check(cpe)
+                vulns = nvd.check(cpe, args.name)
 
                 for vuln in vulns:
                     cve_id = vuln['cve']['id']
+                    status = vuln['cve']['vulnStatus']
                     cve_link = f'https://nvd.nist.gov/vuln/detail/{cve_id}'
                     cve_desc = [desc['value'] for desc in vuln['cve']['descriptions'] if desc['lang'] == 'en'][0]
                     vulnerable = ''
@@ -106,6 +107,8 @@ def cmd_check(args: Namespace) -> int:
                     if cve_id in cve_exclude_list:
                         exclude_reason = cve_exclude_list[cve_id]
                         vulnerable = 'EXCLUDED'
+                    elif status in ['Received', 'Awaiting Analysis', 'Undergoing Analysis']:
+                        vulnerable = 'MAYBE'
                     else:
                         vulnerable = 'YES'
                         exit_code = 1
@@ -123,6 +126,7 @@ def cmd_check(args: Namespace) -> int:
                     record['cvss_vector_string'] = cvss_vector_string
                     record['cvss_base_score'] = cvss_base_score
                     record['cvss_base_severity'] = cvss_base_severity
+                    record['status'] = status
                     record_list.append(record)
                     package_added = True
 
@@ -309,10 +313,11 @@ def cmd_manifest_check(args: Namespace) -> int:
             name = manifest.get('name', manifest['cpe'][0].split(':')[4])
             cve_exclude_list = {cve['cve']: cve['reason'] for cve in manifest.get('cve-exclude-list', [])}
             for cpe in cpes:
-                vulns = nvd.check(cpe)
+                vulns = nvd.check(cpe, args.name)
 
                 for vuln in vulns:
                     cve_id = vuln['cve']['id']
+                    status = vuln['cve']['vulnStatus']
                     cve_link = f'https://nvd.nist.gov/vuln/detail/{cve_id}'
                     cve_desc = [desc['value'] for desc in vuln['cve']['descriptions'] if desc['lang'] == 'en'][0]
                     vulnerable = ''
@@ -338,6 +343,8 @@ def cmd_manifest_check(args: Namespace) -> int:
                     if cve_id in cve_exclude_list:
                         exclude_reason = cve_exclude_list[cve_id]
                         vulnerable = 'EXCLUDED'
+                    elif status in ['Received', 'Awaiting Analysis', 'Undergoing Analysis']:
+                        vulnerable = 'MAYBE'
                     else:
                         vulnerable = 'YES'
                         exit_code = 1
@@ -355,6 +362,7 @@ def cmd_manifest_check(args: Namespace) -> int:
                     record['cvss_vector_string'] = cvss_vector_string
                     record['cvss_base_score'] = cvss_base_score
                     record['cvss_base_severity'] = cvss_base_severity
+                    record['status'] = status
                     record_list.append(record)
                     package_added = True
 
@@ -567,6 +575,13 @@ def main():
                               metavar='OUTPUT_FILE',
                               help=('Print output to the specified file instead of stdout.'))
 
+    check_parser.add_argument('-n', '--name',
+                              action='store_true',
+                              help=('Use the package name given in the CPE to perform a keyword search '
+                                    'in the NVD for CVEs that are pending analysis. This might result '
+                                    'in unrelated false reports, but it can also offer an early glimpse '
+                                    'of newly reported CVEs.'))
+
     check_parser.add_argument('--check-all-packages',
                               action='store_true',
                               default=bool(os.environ.get('SBOM_CHECK_ALL')),
@@ -634,6 +649,13 @@ def main():
     manifest_check_parser.add_argument('-o', '--output-file',
                                        metavar='OUTPUT_FILE',
                                        help=('Print output to the specified file instead of stdout.'))
+
+    manifest_check_parser.add_argument('-n', '--name',
+                                       action='store_true',
+                                       help=('Use the package name given in the CPE to perform a keyword search '
+                                             'in the NVD for CVEs that are pending analysis. This might result '
+                                             'in unrelated false reports, but it can also offer an early glimpse '
+                                             'of newly reported CVEs.'))
 
     manifest_check_parser.add_argument('--format',
                                        choices=['table', 'json', 'csv', 'markdown'],

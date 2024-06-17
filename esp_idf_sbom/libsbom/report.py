@@ -26,6 +26,7 @@ empty_record = {
     'cve_link': '',
     'cve_desc': '',
     'exclude_reason': '',
+    'status': '',
 }
 
 
@@ -36,6 +37,7 @@ def show(records: List[Dict[str,str]],
     # Sort records based on CVSS base score
     records_sorted = sorted(records, key=lambda r: float(r['cvss_base_score'] or 0), reverse=True)
     record_list = [r for r in records_sorted if r['vulnerable'] == 'YES']
+    record_list += [r for r in records_sorted if r['vulnerable'] == 'MAYBE']
     record_list += [r for r in records_sorted if r['vulnerable'] == 'EXCLUDED']
     record_list += [r for r in records_sorted if r['vulnerable'] == 'NO']
     record_list += [r for r in records_sorted if r['vulnerable'] == 'SKIPPED']
@@ -190,9 +192,11 @@ def show(records: List[Dict[str,str]],
                r['cvss_version'],
                r['cpe'],
                r['cve_link'],
+               r['status'],
                r['cve_desc']]):
             info_table.add_column('key', overflow='fold')
             info_table.add_column('value', overflow='fold')
+            info_table.add_row('[yellow]Status', r['status'])
             info_table.add_row('[yellow]CVSS', r['cvss_version'])
             info_table.add_row('[yellow]Vec.', r['cvss_vector_string'])
             info_table.add_row('[yellow]CPE', r['cpe'])
@@ -204,6 +208,35 @@ def show(records: List[Dict[str,str]],
                       cvss_severity_color_map[r['cvss_base_severity']] + r['cve_id'],
                       cvss_severity_color_map[r['cvss_base_severity']] + r['cvss_base_score'],
                       cvss_severity_color_map[r['cvss_base_severity']] + r['cvss_base_severity'],
+                      info_table,
+                      end_section=True)
+
+    if table.row_count:
+        log.print(table, '\n')
+
+    # Table of potential vulnerabilities identified through keyword search
+    table = Table(title='[yellow]Packages with Possible Vulnerabilities',
+                  caption='May contain false positives not related to the reported packages.')
+    table.add_column('Package', vertical='middle', justify='center', overflow='fold')
+    table.add_column('Version', vertical='middle', justify='center', overflow='fold')
+    table.add_column('CVE ID', vertical='middle', justify='center', overflow='fold')
+    table.add_column('Information', vertical='middle', justify='center', overflow='fold')
+
+    for r in record_list:
+        if r['vulnerable'] != 'MAYBE':
+            continue
+        info_table = Table(show_edge=False, show_header=False, box=None)
+        if any([r['cve_link'],
+                r['cve_desc']]):
+            info_table.add_column('key', overflow='fold')
+            info_table.add_column('value', overflow='fold')
+            info_table.add_row('[yellow]Status', r['status'])
+            info_table.add_row('[yellow]Link', r['cve_link'])
+            info_table.add_row('[yellow]Desc.', r['cve_desc'])
+
+        table.add_row('[bright_blue]' + r['pkg_name'],
+                      r['pkg_version'],
+                      r['cve_id'],
                       info_table,
                       end_section=True)
 
