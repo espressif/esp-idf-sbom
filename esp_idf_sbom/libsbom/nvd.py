@@ -23,10 +23,8 @@ https://nvd.nist.gov/developers/start-here, section "Rate Limits".'''
 WARNED = False
 
 
-# https://nvd.nist.gov/developers/vulnerabilities
-def check(cpe: str) -> List[Dict[str, Any]]:
-    """Checks given CPE against NVD and returns its reponse.
-    When NVD API key is not provided, sleeps for 30 seconds to
+def nvd_request(params: str) -> List[Dict[str, Any]]:
+    """When NVD API key is not provided, sleeps for 30 seconds to
     meet NVD's 5 requests per rolling 30 seconds windows limit.
     """
     base_url = 'https://services.nvd.nist.gov/rest/json/cves/2.0'
@@ -37,7 +35,7 @@ def check(cpe: str) -> List[Dict[str, Any]]:
     global WARNED
 
     while True:
-        url = f'{base_url}?cpeName={cpe}&startIndex={start_idx}'
+        url = f'{base_url}?{params}&startIndex={start_idx}'
         req = urllib.request.Request(url)
         if apikey:
             req.add_header('apikey', apikey)
@@ -67,6 +65,15 @@ def check(cpe: str) -> List[Dict[str, Any]]:
 
             raise RuntimeError(f'HTTP GET for "{url}" returned error: "{e}"')
 
+        except OSError as e:
+            # We may encounter a read error from the underlying socket. If that happens,
+            # allow up to 3 retries along with 503 HTTP error.
+            unavailable_cnt += 1
+            log.warn(f'Unable to read response from NVD server: {e}. Retrying({unavailable_cnt}).')
+            if unavailable_cnt < 3:
+                continue
+            raise
+
         log.debug('NVD response:')
         log.debug(json.dumps(data, indent=4))
 
@@ -77,3 +84,25 @@ def check(cpe: str) -> List[Dict[str, Any]]:
             break
 
     return vulns
+
+
+# https://nvd.nist.gov/developers/vulnerabilities
+def check(cpe: str, search_name: bool=False) -> List[Dict[str, Any]]:
+    """Checks given CPE against NVD and returns its reponse."""
+
+    # Check vulnerabilities that have already been processed in the NVD and have an assigned CPE.
+    cpe_vulns = nvd_request(f'cpeName={cpe}')
+
+    if not search_name:
+        return cpe_vulns
+
+    # Check for vulnerabilities using the package name from CPE and do keywordSearch.
+    pkg_name = cpe.split(':')[4]
+    keyword_vulns = nvd_request(f'keywordSearch={pkg_name}')
+
+    for vuln in keyword_vulns:
+        if vuln['cve']['vulnStatus'] in ['Received', 'Awaiting Analysis', 'Undergoing Analysis']:
+            # CVE not analyzed in NVD, include it in the results.
+            cpe_vulns.append(vuln)
+
+    return cpe_vulns
