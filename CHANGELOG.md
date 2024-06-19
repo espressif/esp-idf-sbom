@@ -1,3 +1,13 @@
+## v0.16.0 (2024-06-19)
+
+### New Features
+
+- introduce -n/--name option to enable querying NVD by package name
+
+### Bug Fixes
+
+- skip unregistered components
+
 ## v0.15.0 (2024-04-29)
 
 ### New Features
