@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 import os
@@ -105,6 +105,10 @@ def get_submodule_manifest(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     if 'copyright' in module_sbom and type(module_sbom['copyright']) is not list:
         module_sbom['copyright'] = [module_sbom['copyright']]
+
+    # Convert virtpackages into a list
+    if 'virtpackages' in module_sbom and type(module_sbom['virtpackages']) is not list:
+        module_sbom['virtpackages'] = [module_sbom['virtpackages']]
 
     return module_sbom
 
@@ -215,7 +219,7 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             return True
         raise schema.SchemaError((f'Value {url} must have "git", "http" or "https" scheme and domain.'))
 
-    def check_cpes(cpes: str) -> bool:
+    def check_cpes(cpes: List[str]) -> bool:
         for cpe in cpes:
             # Note: WFN, well-formed CPE name, attributes rules are stricter
             if not re.match(r'^cpe:2\.3:[aho](?::\S+){10}', cpe):
@@ -260,6 +264,11 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             return True
         raise schema.SchemaError(msg)
 
+    def check_virtpackages(pkgs: List[str]) -> bool:
+        for pkg in pkgs:
+            check_manifest_path(pkg)
+        return True
+
     cve_exclude_list_schema = schema.Schema(
         [{
             'cve': str,
@@ -287,6 +296,7 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             schema.Optional('hash'): schema.And(str, check_hash),
             schema.Optional('cve-exclude-list'): cve_exclude_list_schema,
             schema.Optional('manifests'): manifests_schema,
+            schema.Optional('virtpackages'): schema.And(list, check_virtpackages),
         }, ignore_extra_keys=True)
 
     try:
