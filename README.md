@@ -277,6 +277,25 @@ cve-exclude-list:
         - virt_pkg2.yml
 ```
 
+* **if**:
+    An expression utilizing the configuration variables can conditionally
+    include a package. This condition is disregarded for **project** and
+    **component** packages, which are always included. The operators listed
+    below, in order of decreasing precedence, can be used. The order of
+    operations can be adjusted using brackets. If the expression evaluates to
+    **true**, the package is included. The **--disable-conditions** option can
+    disable conditions usage.
+
+    - **!**: negation
+    - **<**, **>**, **>=**, **<=**: comparison
+    - **=**, **!=**: equal, not equal
+    - **&&**: logical and
+    - **||**: logical or
+```
+      if: 'IDF_TARGET = "esp32"'
+      if: '(IDF_TARGET_ESP32 || IDF_TARGET = "esp32") && !IDF_TOOLCHAIN_GCC'
+      if: '1536 <= FREERTOS_ISR_STACKSIZE < 0xffff'
+```
 
 Example of the `sbom.yml` manifest file for the ESP-IDF blink project.
 

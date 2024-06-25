@@ -49,6 +49,7 @@ setup(
         'schema',
         'license-expression',
         'rich',
+        'pyparsing',
     ],
     extras_require={
         'dev': [

@@ -10,7 +10,7 @@ import schema
 import yaml
 from license_expression import ExpressionError, get_spdx_licensing
 
-from esp_idf_sbom.libsbom import git, log, utils
+from esp_idf_sbom.libsbom import expr, git, log, utils
 
 licensing = get_spdx_licensing()
 
@@ -269,6 +269,13 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             check_manifest_path(pkg)
         return True
 
+    def check_if(expression: str) -> bool:
+        try:
+            expr.evaluate(expression)
+        except RuntimeError as e:
+            raise schema.SchemaError((f'Expression "{expression}" is not valid: {e}'))
+        return True
+
     cve_exclude_list_schema = schema.Schema(
         [{
             'cve': str,
@@ -297,6 +304,7 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             schema.Optional('cve-exclude-list'): cve_exclude_list_schema,
             schema.Optional('manifests'): manifests_schema,
             schema.Optional('virtpackages'): schema.And(list, check_virtpackages),
+            schema.Optional('if'): schema.And(str, check_if),
         }, ignore_extra_keys=True)
 
     try:
