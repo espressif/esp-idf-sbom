@@ -12,6 +12,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List
 
+import yaml
+
 from esp_idf_sbom.libsbom import log
 
 HINT = '''\
@@ -44,8 +46,11 @@ def nvd_request(params: str) -> List[Dict[str, Any]]:
         log.debug('NVD request headers:')
         log.debug('\n'.join([f'{h}: {v}' for h, v in req.header_items()]))
 
+        # NVD recommends waiting for six seconds between requests.
+        # https://nvd.nist.gov/developers/start-here
+        time.sleep(6)
         try:
-            with urllib.request.urlopen(req, timeout=30) as res:
+            with urllib.request.urlopen(req, timeout=60) as res:
                 data = json.loads(res.read().decode())
 
         except urllib.error.HTTPError as e:
@@ -68,9 +73,10 @@ def nvd_request(params: str) -> List[Dict[str, Any]]:
         except OSError as e:
             # We may encounter a read error from the underlying socket. If that happens,
             # allow up to 3 retries along with 503 HTTP error.
-            unavailable_cnt += 1
-            log.warn(f'Unable to read response from NVD server: {e}. Retrying({unavailable_cnt}).')
             if unavailable_cnt < 3:
+                unavailable_cnt += 1
+                log.warn(f'Unable to read response from NVD server: {e}. Retrying({unavailable_cnt}) in 10 second...')
+                time.sleep(10)
                 continue
             raise
 
@@ -86,6 +92,36 @@ def nvd_request(params: str) -> List[Dict[str, Any]]:
     return vulns
 
 
+def get_excluded_cves(cache: Dict[str, Dict[str, Any]]={}) -> Dict[str, Any]:
+    """Retrieve the YAML file from the esp-idf-sbom repository, which includes a list of excluded CVEs."""
+
+    if 'cves' in cache:
+        # Download the excluded CVEs once per script run, not for each check.
+        return cache['cves']
+
+    cves: Dict[str, Any] = {}
+    url = 'https://raw.githubusercontent.com/espressif/esp-idf-sbom/master/excluded_cves.yaml'
+    req = urllib.request.Request(url)
+
+    for retry in range(1, 4):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as res:
+                cves = yaml.safe_load(res.read().decode())
+            break
+
+        except urllib.error.HTTPError as e:
+            log.warn(f'Cannot download list of excluded CVEs: {e}. Retrying({retry}) ...')
+
+        except yaml.YAMLError as e:
+            log.warn(f'Cannot load list of excluded CVEs: {e}')
+            break
+    else:
+        log.warn(f'Failed to download list of excluded CVEs')
+
+    cache['cves'] = cves
+    return cves
+
+
 # https://nvd.nist.gov/developers/vulnerabilities
 def check(cpe: str, search_name: bool=False) -> List[Dict[str, Any]]:
     """Checks given CPE against NVD and returns its reponse."""
@@ -96,6 +132,9 @@ def check(cpe: str, search_name: bool=False) -> List[Dict[str, Any]]:
     if not search_name:
         return cpe_vulns
 
+    # Obtain the list of excluded CVEs to filter them out from the unanalyzed CVEs provided by NVD.
+    excluded_cves = get_excluded_cves()
+
     # Check for vulnerabilities using the package name from CPE and do keywordSearch.
     pkg_name = cpe.split(':')[4]
     keyword_vulns = nvd_request(f'keywordSearch={pkg_name}')
@@ -103,6 +142,9 @@ def check(cpe: str, search_name: bool=False) -> List[Dict[str, Any]]:
     for vuln in keyword_vulns:
         if vuln['cve']['vulnStatus'] in ['Received', 'Awaiting Analysis', 'Undergoing Analysis']:
             # CVE not analyzed in NVD, include it in the results.
+            if vuln['cve']['id'] in excluded_cves:
+                # This CVE was previously analyzed and determined to be a false positive, unrelated to ESP-IDF.
+                continue
             cpe_vulns.append(vuln)
 
     return cpe_vulns
