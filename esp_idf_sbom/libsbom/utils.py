@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -15,6 +15,16 @@ from urllib.parse import urlparse
 def pjoin(*paths: str) -> str:
     """Join input paths and return resulting path with forward slashes."""
     return Path().joinpath(*paths).as_posix()
+
+
+def pbasename(path: str) -> str:
+    """Return final path component."""
+    return Path(path).name
+
+
+def pdirname(path: str) -> str:
+    """Return the directory component of a path."""
+    return Path(path).parents[0].as_posix()
 
 
 def prelpath(path: str, base: str) -> str:

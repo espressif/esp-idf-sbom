@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# SPDX-FileCopyrightText: 2023 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
@@ -558,6 +558,9 @@ def main():
                                default=bool(os.environ.get('SBOM_CREATE_NO_FILE_TAGS')),
                                help=('Scan files for SPDX file tags. This includes SPDX-License-Identifier, '
                                      'SPDX-FileCopyrightText and SPDX-FileContributor'))
+    create_parser.add_argument('--disable-conditions',
+                               action='store_true',
+                               help=('When processing manifest files, disregard the conditions for the "if" key.'))
 
     check_parser = subparsers.add_parser('check',
                                          help=('Check components/submodules in the ESP-IDF SBOM file '
@@ -627,6 +630,10 @@ def main():
                                 default=bool(os.environ.get('SBOM_LICENSE_UNIFY_COPYRIGHTS')),
                                 help=('Unify copyright years. If the same copyright is used at different '
                                       'places with different years or year ranges, this option will unify them.'))
+
+    license_parser.add_argument('--disable-conditions',
+                                action='store_true',
+                                help=('When processing manifest files, disregard the conditions for the "if" key.'))
 
     manifest_parser = subparsers.add_parser('manifest',
                                             help=('Commands operating atop of manifest files.'))

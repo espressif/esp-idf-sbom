@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -20,7 +20,7 @@ import yaml
 from license_expression import ExpressionError, get_spdx_licensing
 
 from esp_idf_sbom import __version__
-from esp_idf_sbom.libsbom import git, log, mft, utils
+from esp_idf_sbom.libsbom import expr, git, log, mft, utils
 
 
 class SPDXTags:
@@ -255,8 +255,11 @@ class SPDXObject:
         'description': '',
         'license': '',
         'copyright': [],
+        'hash': '',
         'cve-exclude-list': [],
         'manifests': [],
+        'virtpackages': [],
+        'if': '',
     }
 
     # Global dictionary with manifest files referenced in sbom.yml or idf_component.yml
@@ -440,6 +443,7 @@ class SPDXDocument(SPDXObject):
     """Main SPDX Creation Information"""
     def __init__(self, args: Namespace, proj_desc_path: str):
         proj_desc = self._get_proj_desc(proj_desc_path)
+        self._set_expr_variables(proj_desc, args)
 
         super().__init__(args, proj_desc)
 
@@ -475,6 +479,18 @@ class SPDXDocument(SPDXObject):
 
         return proj_desc  # type: ignore
 
+    def _set_expr_variables(self, proj_desc: Dict[str, Any], args: Namespace) -> None:
+        sdkconfig_path = utils.pjoin(proj_desc['build_dir'], 'config', 'sdkconfig.json')
+        try:
+            with open(sdkconfig_path, 'r') as f:
+                sdkconfig = json.load(f)
+        except (OSError, ValueError) as e:
+            log.warn((f'Unable to read configuration variables from the sdkconfig JSON file: {e}. '
+                      'Conditional statements in manifest files will not be considered.'))
+            args.disable_conditions = True
+        else:
+            expr.set_variables(sdkconfig)
+
     def dump(self) -> str:
         header = ' '.join('\"' + arg + '\"' if ' ' in arg else arg for arg in sys.argv)
         out = '[blue]'
@@ -491,17 +507,22 @@ class SPDXDocument(SPDXObject):
 
 
 class SPDXPackage(SPDXObject):
-    """Base class for all SPDX packages: project, toolchain, component, subpackage, submodule.
+    """Base class for all SPDX packages: project, toolchain, component, subpackage, virtpackage, submodule.
     It implements basic functionality, which may be customized by overriding selected methods.
-    get_subpackages:   Create packages for subpackages and submodules. If package doesn't have
+    get_subpackages:   Create packages for subpackages, virtpackages and submodules. If package doesn't have
                        any subpackages, e.g. toolchain o project, it may return empty list, so
                        the base class doesn't attempt to find subpackages.
+    get_manifest:      Return the manifest for a given package. For example, a package may have manifest
+                       information in the .gitmodules file, which needs to be transformed.
     add_relationships: Add package SPDX relationships. For example project adds its own relationships
                        based on the component list.
     get_files:         Create SPDXFile objects for files included in the package. For example
                        project contains only the final bin file.
     get_tags:          Create SPDXTags object for package. For example project gathers tags from
                        components and thier subpackages/submodules.
+    include_package:   Return True if the package should be included in the SBOM. This is used for
+                       evaluating "if" expressions in manifest files. Certain packages, such as project
+                       and component packages, cannot be excluded.
     dump:              Print package SPDX representation.
     """
 
@@ -511,12 +532,19 @@ class SPDXPackage(SPDXObject):
         self.name = name
         self.mark = mark
         self.dir = path
+        self.include = True
+        self.args = args
 
         self.subpackages: List['SPDXPackage'] = []
         self.files: List['SPDXFile'] = []
         self.tags: SPDXTags = SPDXTags()
 
         self.manifest = self.get_manifest(self.dir)
+
+        if not self.include_package():
+            self.include = False
+            return
+
         # CPEs may contain version placeholder.
         self.manifest['cpe'] = [cpe.format(self.manifest['version']) for cpe in self.manifest['cpe']]
 
@@ -528,18 +556,6 @@ class SPDXPackage(SPDXObject):
 
         if not self.manifest['supplier']:
             self.manifest['supplier'] = self.guess_supplier(self.dir, self.manifest['url'], self.manifest['repository'])
-
-        # Add referenced manifests into the global list
-        for referenced_manifest in self.manifest['manifests']:
-            # get full paths to the referenced manifest file and its destination directory
-            path = utils.pjoin(self.dir, referenced_manifest['path'])
-            dest = utils.pjoin(self.dir, referenced_manifest['dest'])
-            if dest in self.REFERENCED_MANIFESTS:
-                existing_path = self.REFERENCED_MANIFESTS[dest]
-                log.die((f'Destination "{dest}" for referenced manifest "{path}" already has manifest '
-                         f'file "{existing_path}". Two manifest files are referencing same destination.'))
-
-            self.REFERENCED_MANIFESTS[dest] = path
 
         self.subpackages = self.get_subpackages()
 
@@ -605,6 +621,14 @@ class SPDXPackage(SPDXObject):
 
         self.add_relationships()
 
+    def include_package(self) -> bool:
+        if self.args.disable_conditions:
+            # Expressions disregarded due to the --disable-conditions command line option.
+            return True
+        if not self.manifest['if']:
+            return True
+        return expr.evaluate(self.manifest['if'])
+
     def add_relationships(self):
         for subpkg in self.subpackages:
             self['Relationship'] += [f'{self["SPDXID"][0]} DEPENDS_ON {subpkg["SPDXID"][0]}']
@@ -614,8 +638,29 @@ class SPDXPackage(SPDXObject):
 
         subpackages: List['SPDXPackage'] = []
 
+        # Add referenced manifests into the global list
+        for referenced_manifest in self.manifest['manifests']:
+            # get full paths to the referenced manifest file and its destination directory
+            path = utils.pjoin(self.dir, referenced_manifest['path'])
+            dest = utils.pjoin(self.dir, referenced_manifest['dest'])
+            if dest in self.REFERENCED_MANIFESTS:
+                existing_path = self.REFERENCED_MANIFESTS[dest]
+                log.die((f'Destination "{dest}" for referenced manifest "{path}" already has manifest '
+                         f'file "{existing_path}". Two manifest files are referencing same destination.'))
+
+            self.REFERENCED_MANIFESTS[dest] = path
+
         if self.args.rem_submodules and self.args.rem_subpackages:
             return subpackages
+
+        pkg: Optional[SPDXPackage] = None
+
+        for virtpkg in self.manifest['virtpackages']:
+            fullpath = utils.pjoin(self.dir, virtpkg)
+            name = '{}-{}'.format(self.name, utils.prelpath(fullpath, self.dir))
+            pkg = SPDXVirtpackage(self.args, self.proj_desc, fullpath, name)
+            if pkg.include:
+                subpackages.append(pkg)
 
         submodules_info: List[Dict[str,str]] = []
         if not self.args.rem_submodules:
@@ -626,15 +671,19 @@ class SPDXPackage(SPDXObject):
         submodules_info_dict = {i['path']:i for i in submodules_info}
 
         for root, dirs, files in utils.pwalk(self.dir, [self.dir]):
+            pkg = None
             if not self.args.rem_subpackages and root in submodules_info_dict:
                 submodule_info = submodules_info_dict[root]
                 name = '{}-{}'.format(self.name, utils.prelpath(submodule_info['path'], self.dir))
-                subpackages.append(SPDXSubmodule(self.args, self.proj_desc, name, submodule_info))
+                pkg = SPDXSubmodule(self.args, self.proj_desc, name, submodule_info)
                 dirs.clear()
             elif not self.args.rem_subpackages and ('sbom.yml' in files or root in self.REFERENCED_MANIFESTS):
                 name = '{}-{}'.format(self.name, utils.prelpath(root, self.dir))
-                subpackages.append(SPDXSubpackage(self.args, self.proj_desc, root, name))
+                pkg = SPDXSubpackage(self.args, self.proj_desc, root, name)
                 dirs.clear()
+
+            if pkg is not None and pkg.include:
+                subpackages.append(pkg)
 
         return subpackages
 
@@ -805,6 +854,12 @@ class SPDXProject(SPDXPackage):
 
         return components
 
+    def include_package(self):
+        if self.manifest['if']:
+            log.warn((f'The manifest file for the project "{self.dir}" includes an "if" expression '
+                      f'that will be disregarded. The project package cannot be excluded.'))
+        return True
+
     def get_files(self, path: str, prefix: str, exclude_dirs: Optional[List[str]]=None) -> List['SPDXFile']:
         # project has just the final binary file
         if not self.include_files():
@@ -905,6 +960,10 @@ class SPDXToolchain(SPDXPackage):
         manifest['supplier'] = self.ESPRESSIF_SUPPLIER
         return manifest
 
+    def include_package(self):
+        # The toolchain package cannot be excluded using an "if" expression in the manifest file.
+        return True
+
     def get_subpackages(self):
         # There are not subpackages for toolchain
         return []
@@ -971,6 +1030,43 @@ class SPDXComponent(SPDXPackage):
         self.info = info
         super().__init__(args, proj_desc, info['dir'], name, 'component')
 
+    def include_package(self):
+        if self.manifest['if']:
+            log.warn((f'The manifest file for the component "{self.dir}" includes an "if" expression '
+                      f'that will be disregarded. The component package cannot be excluded.'))
+        return True
+
+
+class SPDXVirtpackage(SPDXPackage):
+    """SPDX Package Information for virtual package."""
+    def __init__(self, args: Namespace, proj_desc: Dict[str, Any], path: str, name: str):
+        self.manifest_path = path
+        super().__init__(args, proj_desc, utils.pdirname(path), name, 'virtpackage')
+
+    def get_manifest(self, directory: str) -> Dict[str, Any]:
+        manifest = self.EMPTY_MANIFEST.copy()
+        sbom_yml = mft.load(self.manifest_path)
+        mft.validate(sbom_yml, self.manifest_path, utils.pdirname(self.manifest_path))
+        self.update_manifest(manifest, sbom_yml)
+        if len(manifest['manifests']) > 0:
+            log.warn(f'Disregarding referenced manifests in the virtual package manifest located at {self.manifest_path}')
+        return manifest
+
+    def get_subpackages(self):
+        # A virtual package cannot have subpackages.
+        return []
+
+    def get_files(self, path: str, prefix: str, exclude_dirs: Optional[List[str]]=None) -> List['SPDXFile']:
+        # A virtual package cannot have files.
+        return []
+
+    def get_tags(self, exclude_dirs: Optional[List[str]]=None) -> SPDXTags:
+        # A virtual package cannot include SPDX file tags since it lacks any files.
+        return SPDXTags()
+
+    def add_relationships(self):
+        return
+
 
 class SPDXSubpackage(SPDXPackage):
     """SPDX Package Information for subpackage."""
@@ -984,7 +1080,7 @@ class SPDXSubmodule(SPDXPackage):
         self.info = info
         super().__init__(args, proj_desc, info['path'], name, 'submodule')
 
-    def get_manifest(self, directory: str) -> Dict[str,str]:
+    def get_manifest(self, directory: str) -> Dict[str, Any]:
         # Convert sbom information from .gitmodule config into expected manifest dictionary
         # and extend already created manifest if it's missing some information.
         manifest = super().get_manifest(directory)

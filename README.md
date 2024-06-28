@@ -126,7 +126,8 @@ provided by the ESP-IDF build system and SBOM manifest files. The resulting SBOM
 file contains SPDX packages for the final **project** application, used **toolchain**,
 **components** used during build, git **submodules** and **subpackages**. The **subpackages**
 are created based on `sbom.yml` manifest files found in **submodules** and **subpackages**
-sub-directories or referenced manifest files. Please see [Manifest file](#manifest-file).
+sub-directories or referenced manifest files or manifest files for virtual packages.
+Please see [Manifest file](#manifest-file).
 
 Packages are linked together with SPDX *DEPENDS_ON* relationships with the **project** package
 as the root package. By default packages for configuration only components and components not
@@ -262,6 +263,39 @@ cve-exclude-list:
           dest: subpackage
 ```
 
+* **virtpackages**:
+    In some situations, it can be beneficial to define a relationship or dependency
+    on a package that isn't physically available during compilation. For example,
+    certain functionality required by an application might be implemented in ROM
+    and used by the application. A case in point is mbedtls, which could reside in
+    the ROM and be utilized by the application depending on configuration settings.
+    In these instances, a virtual package can be useful to represent this
+    dependency.
+```
+      virtpackages:
+        - virt_pkg1.yml
+        - virt_pkg2.yml
+```
+
+* **if**:
+    An expression utilizing the configuration variables can conditionally
+    include a package. This condition is disregarded for **project** and
+    **component** packages, which are always included. The operators listed
+    below, in order of decreasing precedence, can be used. The order of
+    operations can be adjusted using brackets. If the expression evaluates to
+    **true**, the package is included. The **--disable-conditions** option can
+    disable conditions usage.
+
+    - **!**: negation
+    - **<**, **>**, **>=**, **<=**: comparison
+    - **=**, **!=**: equal, not equal
+    - **&&**: logical and
+    - **||**: logical or
+```
+      if: 'IDF_TARGET = "esp32"'
+      if: '(IDF_TARGET_ESP32 || IDF_TARGET = "esp32") && !IDF_TOOLCHAIN_GCC'
+      if: '1536 <= FREERTOS_ISR_STACKSIZE < 0xffff'
+```
 
 Example of the `sbom.yml` manifest file for the ESP-IDF blink project.
 

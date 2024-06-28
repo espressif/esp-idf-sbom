@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 import os
@@ -270,3 +270,92 @@ def test_sbom_spdx_id(hello_world_build: Path) -> None:
     run(['pyspdxtools', '-i', output_fn], check=True)
 
     shutil.rmtree(subpackage_path)
+
+
+def test_virtual_package(hello_world_build: Path) -> None:
+    """Verify that a virtual package can be included in the manifest file."""
+    manifest = hello_world_build / 'main' / 'sbom.yml'
+    virtpackage = hello_world_build / 'main' / 'virtpackage.yml'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+
+    content = f'''
+              virtpackages:
+                - virtpackage.yml
+              '''
+
+    manifest.write_text(dedent(content))
+
+    content = f'''
+              name: TEST_VIRTUAL_PACKAGE
+              '''
+
+    virtpackage.write_text(dedent(content))
+
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', proj_desc_path],
+            check=True, capture_output=True, text=True)
+
+    assert 'TEST_VIRTUAL_PACKAGE' in p.stdout
+
+    manifest.unlink()
+    virtpackage.unlink()
+    return
+
+
+def test_manifest_expression(hello_world_build: Path) -> None:
+    """Add a virtual package with several different "if" expressions and check whether it is included."""
+    manifest = hello_world_build / 'main' / 'sbom.yml'
+    virtpackage = hello_world_build / 'main' / 'virtpackage.yml'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+
+    content = f'''
+              virtpackages:
+                - virtpackage.yml
+              '''
+
+    manifest.write_text(dedent(content))
+
+    # Should be included
+    content = f'''
+              name: EXPR_VIRTUAL_PACKAGE
+              if: 'IDF_TARGET = "esp32" && !!!!IDF_TARGET_ESP32 && LOG_DEFAULT_LEVEL > 1'
+              '''
+    virtpackage.write_text(dedent(content))
+
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', proj_desc_path],
+            check=True, capture_output=True, text=True)
+
+    assert 'EXPR_VIRTUAL_PACKAGE' in p.stdout
+
+    # Should be included
+    content = f'''
+              name: EXPR_VIRTUAL_PACKAGE
+              if: 'IDF_TARGET_ESP32S3 || (IDF_TARGET = "esp32" && IDF_TARGET_ARCH_XTENSA = True)'
+              '''
+    virtpackage.write_text(dedent(content))
+
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', proj_desc_path],
+            check=True, capture_output=True, text=True)
+
+    assert 'EXPR_VIRTUAL_PACKAGE' in p.stdout
+
+    # Should NOT be included
+    content = f'''
+              name: EXPR_VIRTUAL_PACKAGE
+              if: 'IDF_TARGET_ESP32S3 || !IDF_TARGET_ARCH_XTENSA'
+              '''
+    virtpackage.write_text(dedent(content))
+
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', proj_desc_path],
+            check=True, capture_output=True, text=True)
+
+    assert 'EXPR_VIRTUAL_PACKAGE' not in p.stdout
+
+    # Should be included because the --disable-conditions is used
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--disable-conditions', proj_desc_path],
+            check=True, capture_output=True, text=True)
+
+    assert 'EXPR_VIRTUAL_PACKAGE' in p.stdout
+
+    manifest.unlink()
+    virtpackage.unlink()
+    return
