@@ -44,3 +44,13 @@ repos:
     hooks:
       - id: check-copyright
         args: ['--config', 'check_copyright_config.yaml']
+
+  - repo: local
+    hooks:
+      - id: validate-excluded-cves
+        name: Validate Excluded CVEs
+        entry: test/validate_excluded_cves.py
+        language: python
+        files: 'excluded_cves.yaml'
+        additional_dependencies:
+          - PyYAML

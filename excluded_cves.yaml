@@ -1,0 +1,6 @@
+# This file lists excluded CVEs to be used with the --name option during
+# esp-idf-sbom check or manifest check, helping to exclude false positives for
+# unanalyzed CVEs in the NVD database.
+
+CVE-2021-47262: related to the Linux kernel
+CVE-2021-47264: related to the Linux kernel
