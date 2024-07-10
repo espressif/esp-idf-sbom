@@ -1,3 +1,11 @@
+## v0.17.0 (2024-07-10)
+
+### New Features
+
+- add a global list of excluded CVEs
+- allow conditional expressions in manifest files
+- introduce virtual package support
+
 ## v0.16.0 (2024-06-19)
 
 ### New Features
