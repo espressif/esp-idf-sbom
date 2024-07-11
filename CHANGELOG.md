@@ -1,3 +1,10 @@
+## v0.17.1 (2024-07-11)
+
+### Bug Fixes
+
+- correct global variable annotation for Python versions prior to 3.8
+- ensure pyparsing usage remains compatible with version 2.2.2 or newer
+
 ## v0.17.0 (2024-07-10)
 
 ### New Features
