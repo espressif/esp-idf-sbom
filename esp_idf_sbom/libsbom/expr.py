@@ -77,6 +77,11 @@ def _eval_unary_operator(toks: pp.ParseResults) -> bool:
     return not _boolit(toks[0][1])
 
 
+# CPython versions before 3.8 do not allow annotated global variables to be used with forward references.
+# https://bugs.python.org/issue34939
+_variables: Dict[str, Any] = {}
+
+
 def _eval_variable(toks: pp.ParseResults):
     # Return the variable value from sdkconfig.json or from predefined boolean variables.
     # If the variable is not found, return False by default.
@@ -93,7 +98,6 @@ def _eval_variable(toks: pp.ParseResults):
     return _variables.get(variable, default_variables.get(variable, False))
 
 
-_variables: Dict[str, Any] = {}
 _variable = ppc.identifier.setParseAction(_eval_variable)
 _hex = pp.Regex(r'0[xX][0-9a-fA-F]+').setParseAction(lambda t: int(t[0][2:], 16))
 _number = ppc.number
