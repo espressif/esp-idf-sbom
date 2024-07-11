@@ -12,7 +12,7 @@ import pyparsing as pp
 # Parse actions used should not have any side effects, ensuring
 # the safety of using packrat. Parsing expressions with brackets
 # is very slow without caching.
-pp.ParserElement.enable_packrat()
+pp.ParserElement.enablePackrat()
 
 ppc = pp.pyparsing_common
 
@@ -77,6 +77,11 @@ def _eval_unary_operator(toks: pp.ParseResults) -> bool:
     return not _boolit(toks[0][1])
 
 
+# CPython versions before 3.8 do not allow annotated global variables to be used with forward references.
+# https://bugs.python.org/issue34939
+_variables: Dict[str, Any] = {}
+
+
 def _eval_variable(toks: pp.ParseResults):
     # Return the variable value from sdkconfig.json or from predefined boolean variables.
     # If the variable is not found, return False by default.
@@ -93,21 +98,20 @@ def _eval_variable(toks: pp.ParseResults):
     return _variables.get(variable, default_variables.get(variable, False))
 
 
-_variables: Dict[str, Any] = {}
-_variable = ppc.identifier.set_parse_action(_eval_variable)
-_hex = pp.Regex(r'0[xX][0-9a-fA-F]+').set_parse_action(lambda t: int(t[0][2:], 16))
+_variable = ppc.identifier.setParseAction(_eval_variable)
+_hex = pp.Regex(r'0[xX][0-9a-fA-F]+').setParseAction(lambda t: int(t[0][2:], 16))
 _number = ppc.number
 _string = pp.QuotedString('"', '\\')
 
-_expr = pp.infix_notation(
+_expr = pp.infixNotation(
     _variable | _hex | _number | _string,
     [
         # Precedence according to Linux bison scripts/kconfig/parser.y
-        ('!', 1, pp.OpAssoc.RIGHT, _eval_unary_operator),
-        (pp.one_of('< > >= <='), 2, pp.OpAssoc.LEFT, _eval_comparison_operator),
-        (pp.one_of('= !='), 2, pp.OpAssoc.LEFT, _eval_comparison_operator),
-        ('&&', 2, pp.OpAssoc.LEFT, _eval_logical_operator),
-        ('||', 2, pp.OpAssoc.LEFT, _eval_logical_operator),
+        ('!', 1, pp.opAssoc.RIGHT, _eval_unary_operator),
+        (pp.oneOf('< > >= <='), 2, pp.opAssoc.LEFT, _eval_comparison_operator),
+        (pp.oneOf('= !='), 2, pp.opAssoc.LEFT, _eval_comparison_operator),
+        ('&&', 2, pp.opAssoc.LEFT, _eval_logical_operator),
+        ('||', 2, pp.opAssoc.LEFT, _eval_logical_operator),
     ])
 
 
