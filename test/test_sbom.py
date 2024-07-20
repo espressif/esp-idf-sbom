@@ -41,7 +41,10 @@ def test_check_sbom(hello_world_build: Path) -> None:
     output_fn = Path(tmpdir.name) / 'sbom.spdx'
     proj_desc_path = hello_world_build / 'build' / 'project_description.json'
     run([sys.executable, '-m', 'esp_idf_sbom', 'create', '-o', output_fn, proj_desc_path], check=True)
-    run([sys.executable, '-m', 'esp_idf_sbom', 'check', output_fn], check=True)
+    # Avoid using check=True, because if a vulnerability is found, esp-idf-sbom will return 1.
+    # A return value of 128 indicates a fatal error.
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', output_fn])
+    assert p.returncode in [0,1]
 
 
 def test_sbom_project_manifest(hello_world_build: Path) -> None:
@@ -389,3 +392,23 @@ def test_subpackages_exclusion(hello_world_build: Path) -> None:
     assert 'FILEFILEFILE' not in p.stdout
 
     shutil.rmtree(subpackage_path)
+
+
+def test_local_db() -> None:
+    """Scan an older version of FreeRTOS using the local NVD mirror and verify that the expected CVEs are reported."""
+    tmpdir = TemporaryDirectory()
+    manifest = Path(tmpdir.name) / 'sbom.yml'
+
+    content = f'''
+              cpe: cpe:2.3:o:amazon:freertos:10.0.0:*:*:*:*:*:*:*
+              '''
+
+    manifest.write_text(dedent(content))
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'manifest', 'check', '--local-db', '--format', 'csv', manifest],
+            capture_output=True, text=True)
+
+    assert re.search(r'YES.+CVE-2021-31571', p.stdout) is not None
+    assert re.search(r'YES.+CVE-2021-31572', p.stdout) is not None
+    assert re.search(r'YES.+CVE-2021-31572', p.stdout) is not None
+
+    manifest.unlink()
