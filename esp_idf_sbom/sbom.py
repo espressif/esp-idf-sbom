@@ -390,9 +390,6 @@ def cmd_manifest_check(args: Namespace) -> int:
 
 
 def cmd_manifest_license(args: Namespace) -> int:
-    if not os.path.isdir(args.path):
-        log.die(f'"{args.path}" is not a directory')
-
     progress = Progress(
         BarColumn(),
         MofNCompleteColumn(),
@@ -407,7 +404,7 @@ def cmd_manifest_license(args: Namespace) -> int:
         progress_task = progress.add_task('Collecting licenses and copyrights information')
         progress.update(progress_task, refresh=True, description='searching for manifest files')
 
-        manifests = mft.get_manifests(args.path)
+        manifests = mft.get_manifests(args.license_paths)
         progress.update(progress_task, advance=0, refresh=True, total=len(manifests))
         manifest_paths = [manifest['_dst'] for manifest in manifests]
 
@@ -646,7 +643,7 @@ def main():
                                           metavar='PATH_TO_VALIDATE',
                                           default=[os.path.curdir],
                                           nargs='*',
-                                          help=('Manifest file(sbom.yml, idf_manifest.yml or .gitmodules) or '
+                                          help=('Manifest file (sbom.yml, idf_manifest.yml or .gitmodules) or '
                                                 'directory, which will be searched for manifest files.'))
 
     manifest_check_parser = manifest_subparsers.add_parser('check',
@@ -673,19 +670,19 @@ def main():
                                        metavar='PATH_TO_CHECK',
                                        default=[os.path.curdir],
                                        nargs='*',
-                                       help=('Manifest file(sbom.yml, idf_manifest.yml or .gitmodules) or '
+                                       help=('Manifest file (sbom.yml, idf_manifest.yml or .gitmodules) or '
                                              'directory, which will be searched for manifest files.'))
 
     manifest_license_parser = manifest_subparsers.add_parser('license',
                                                              help=('Print licenses and copyrights for manifest files '
                                                                    'found in specified path'))
     manifest_license_parser.set_defaults(func=cmd_manifest_license)
-    manifest_license_parser.add_argument('path',
-                                         metavar='PATH',
-                                         default=os.path.curdir,
-                                         nargs='?',
-                                         help=('Path to scan for manifest files, which will be used to generate '
-                                               'licenses and copyrights information.'))
+    manifest_license_parser.add_argument('license_paths',
+                                         metavar='LICENCE_PATH',
+                                         default=[os.path.curdir],
+                                         nargs='*',
+                                         help=('Manifest file (sbom.yml, idf_manifest.yml or .gitmodules) or '
+                                               'directory, which will be searched for manifest files.'))
     manifest_license_parser.add_argument('--format',
                                          choices=['table', 'json'],
                                          default=os.environ.get('SBOM_LICENSE_FORMAT', 'table'),
