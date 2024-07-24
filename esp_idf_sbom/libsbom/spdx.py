@@ -918,6 +918,17 @@ class SPDXProject(SPDXPackage):
         build_components = self.proj_desc['build_component_info']
         reqs = set()
         for name, info in build_components.items():
+            if not self._component_used(build_components[name]):
+                # Do not include requirements from a component that the project
+                # binary did not use, as it might be a transitional component.
+                # This means its library is not linked, but its requirements could be.
+                # In such cases, we want the requirements to be added as project
+                # dependencies if they are not required by any other linked component.
+                # This might be an instance of common components. For example, newlib,
+                # which is listed under common components, is required for nvs_flash.
+                # If nvs_flash is not linked, newlib is not included in the SPDX
+                # project package relationships.
+                continue
             tmp = info['reqs'] + info['priv_reqs'] + info['managed_reqs'] + info['managed_priv_reqs']
             reqs |= set(tmp)
 
