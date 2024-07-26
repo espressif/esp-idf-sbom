@@ -359,3 +359,33 @@ def test_manifest_expression(hello_world_build: Path) -> None:
     manifest.unlink()
     virtpackage.unlink()
     return
+
+
+def test_subpackages_exclusion(hello_world_build: Path) -> None:
+    """ Create a subpackage in the main component and add an sbom.yml file
+    for it along with the FILEFILEFILE file. Verify that the FILEFILEFILE file from subpackage
+    is not included in the sbom if the subpackage is excluded based on the "if" condition.
+    main
+    └── subpackage
+        ├── sbom.yml
+        └── FILEFILEFILE
+    """
+    subpackage_path = hello_world_build / 'main' / 'subpackage'
+    subpackage_path.mkdir(parents=True)
+
+    content = f'''
+              name: SUBPACKAGE
+              if: 'NONEXISTING'
+              '''
+
+    (subpackage_path / 'sbom.yml').write_text(dedent(content))
+    (subpackage_path / 'FILEFILEFILE').touch()
+
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files=auto', proj_desc_path],
+            check=True, capture_output=True, text=True)
+
+    assert 'FILEFILEFILE' not in p.stdout
+
+    shutil.rmtree(subpackage_path)
