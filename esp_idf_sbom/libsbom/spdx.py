@@ -557,10 +557,11 @@ class SPDXPackage(SPDXObject):
         if not self.manifest['supplier']:
             self.manifest['supplier'] = self.guess_supplier(self.dir, self.manifest['url'], self.manifest['repository'])
 
-        self.subpackages = self.get_subpackages()
+        all_subpackages = self.get_subpackages()
+        self.subpackages = [subpkg for subpkg in all_subpackages if subpkg.include]
 
         # exclude subpackage paths if any
-        exclude_dirs = [subpkg.dir for subpkg in self.subpackages]
+        exclude_dirs = [subpkg.dir for subpkg in all_subpackages]
 
         self.files = self.get_files(self.dir, self.name, exclude_dirs)
 
@@ -659,8 +660,7 @@ class SPDXPackage(SPDXObject):
             fullpath = utils.pjoin(self.dir, virtpkg)
             name = '{}-{}'.format(self.name, utils.prelpath(fullpath, self.dir))
             pkg = SPDXVirtpackage(self.args, self.proj_desc, fullpath, name)
-            if pkg.include:
-                subpackages.append(pkg)
+            subpackages.append(pkg)
 
         submodules_info: List[Dict[str,str]] = []
         if not self.args.rem_submodules:
@@ -682,7 +682,7 @@ class SPDXPackage(SPDXObject):
                 pkg = SPDXSubpackage(self.args, self.proj_desc, root, name)
                 dirs.clear()
 
-            if pkg is not None and pkg.include:
+            if pkg is not None:
                 subpackages.append(pkg)
 
         return subpackages
