@@ -2,5 +2,9 @@
 # esp-idf-sbom check or manifest check, helping to exclude false positives for
 # unanalyzed CVEs in the NVD database.
 
-CVE-2021-47262: related to the Linux kernel
-CVE-2021-47264: related to the Linux kernel
+CVE-2021-47262: Related to the Linux kernel
+CVE-2021-47264: Related to the Linux kernel
+CVE-2024-2212: Related to Eclipse ThreadX xQueueCreate() and xQueueCreateSet() functions from the FreeRTOS compatibility API
+CVE-2024-3017: Related to OpenThread Border Router(OTBR)
+CVE-2024-27983: Related to Node.js
+CVE-2024-25581: Related to PowerDNS DNSdist
