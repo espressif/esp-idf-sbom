@@ -28,6 +28,11 @@ def get_gitdir(path: str) -> str:
     return _helper(['git', '-C', path, 'rev-parse', '--absolute-git-dir'])
 
 
+def get_gitpath(path: str) -> str:
+    """Resolve path within gitdir."""
+    return _helper(['git', 'rev-parse', '--git-path', path])
+
+
 def submodule_foreach_enum(git_wdir: str, cache: Dict[str,List[Dict[str,str]]]={}) -> List[Dict[str,str]]:
     """Return list of dictionaries with info about submodules found in git
     working directory. No recursive search is done and this function needs

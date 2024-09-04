@@ -1,8 +1,9 @@
 - id: validate-sbom-manifest
   name: Validate ESP-IDF SBOM Manifest Files
   description: This hook validates ESP-IDF SBOM Manifest files
-  entry: python -m esp_idf_sbom --no-progress manifest validate
+  entry: python -m esp_idf_sbom --no-progress manifest validate --skip-on-rebase
   language: python
+  stages: [post-commit]
   # Always run against the whole repository, ignoring any files
   # passed in by pre-commit. While we can limit this to manifest
   # files only, e.g. sbom.yml, idf_component.yml or .gitmodules,
