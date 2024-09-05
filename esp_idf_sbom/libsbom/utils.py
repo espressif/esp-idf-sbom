@@ -130,6 +130,6 @@ def run(cmd:    List[str],
 
     if strip:
         out = out.strip()
-        err = out.strip()
+        err = err.strip()
 
     return (p.returncode, out, err)  # type: ignore

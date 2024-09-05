@@ -103,6 +103,25 @@ the report into **json**, **csv** or **markdown** format.
 If package is not vulnerable to a specific CVE, it can be added to the manifest **cve-exclude-list**
 list and checker will not report it as identified vulnerability, but as excluded vulnerability.
 
+The vulnerability check typically uses the NVD REST API by default, provided by
+[https://nvd.nist.gov](https://nvd.nist.gov). However, an alternative source of
+information for the vulnerability check can be a local NVD mirror, available
+from the [esp-nvd-mirror][6] repository. The NVD mirror may provide a faster
+and more reliable way to perform vulnerability checks in case there are
+availability issues with NVD API endpoints or when a large number of packages
+need to be scanned quickly. You can enable the use of the local NVD mirror with
+the `--local-db` option.
+
+    esp-idf-sbom check --local-db [SBOM file]
+
+By default, the `--local-db` option updates the NVD mirror before performing a
+vulnerability check. To disable this, use the `--no-sync-db` option. Be aware
+that the initial setup of the NVD mirror may take some time. You can also
+update the NVD mirror manually with the `sync-db` command.
+
+    esp-idf-sbom sync-db
+    esp-idf-sbom check --local-db --no-sync-db [SBOM file]
+
 
 ## Usage example
 
@@ -432,6 +451,8 @@ Usage example:
 
     $ esp-idf-sbom manifest check ~/work/esp-idf ~/work/idf-extra-components/
     $ esp-idf-sbom manifest check ~/work/esp-idf/.gitmodules ~/work/esp-idf/components/freertos/FreeRTOS-Kernel/sbom.yml
+    # Use a local NVD mirror for vulnerability checks.
+    $ esp-idf-sbom manifest check --local-db ~/work/esp-idf ~/work/idf-extra-components/
 
 
 ## Licenses and Copyrights
@@ -467,3 +488,4 @@ given **project**, **component** or **submodule**.
 [3]: https://docs.espressif.com/projects/esp-idf/en/latest
 [4]: https://nvd.nist.gov
 [5]: https://en.wikipedia.org/wiki/Common_Platform_Enumeration
+[6]: https://github.com/espressif/esp-nvd-mirror

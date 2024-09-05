@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 import datetime
@@ -11,7 +11,7 @@ from rich.box import MARKDOWN
 from rich.table import Table
 
 from esp_idf_sbom import __version__
-from esp_idf_sbom.libsbom import log, utils
+from esp_idf_sbom.libsbom import log, nvd, utils
 
 empty_record = {
     'vulnerable': '',
@@ -44,10 +44,16 @@ def show(records: List[Dict[str,str]],
 
     pkgs_cnt = len({record['pkg_name'] for record in record_list})
 
+    if args.local_db:
+        version = nvd.local_db_version()
+        database = f'NATIONAL VULNERABILITY DATABASE MIRROR ({version})'
+    else:
+        database = 'NATIONAL VULNERABILITY DATABASE REST API (https://nvd.nist.gov)'
+
     # Get summary
     summary: Dict[str, Any] = {
         'date': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
-        'database': 'NATIONAL VULNERABILITY DATABASE (https://nvd.nist.gov)',
+        'database': database,
         'tool': {
             'name': 'esp-idf-sbom',
             'version': __version__,

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -7,14 +7,16 @@ NVD National Vulnerability Database checker
 
 import json
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict, List
 
 import yaml
 
-from esp_idf_sbom.libsbom import log
+from esp_idf_sbom.libsbom import CPE, git, log, utils
 
 HINT = '''\
 NVD REST API five requests in a rolling 30 second window reached.
@@ -23,6 +25,8 @@ https://nvd.nist.gov/developers/request-an-api-key and set the NVDAPIKEY
 environmental variable. For more information please see
 https://nvd.nist.gov/developers/start-here, section "Rate Limits".'''
 WARNED = False
+
+NVD_MIRROR_URL = 'https://github.com/espressif/esp-nvd-mirror.git'
 
 
 def nvd_request(params: str) -> List[Dict[str, Any]]:
@@ -123,11 +127,14 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]]={}) -> Dict[str, Any]:
 
 
 # https://nvd.nist.gov/developers/vulnerabilities
-def check(cpe: str, search_name: bool=False) -> List[Dict[str, Any]]:
+def check(cpe: str, search_name: bool=False, localdb: bool=False) -> List[Dict[str, Any]]:
     """Checks given CPE against NVD and returns its reponse."""
 
     # Check vulnerabilities that have already been processed in the NVD and have an assigned CPE.
-    cpe_vulns = nvd_request(f'cpeName={cpe}')
+    if localdb:
+        cpe_vulns = repo_check(cpe)
+    else:
+        cpe_vulns = nvd_request(f'cpeName={cpe}')
 
     if not search_name:
         return cpe_vulns
@@ -137,7 +144,10 @@ def check(cpe: str, search_name: bool=False) -> List[Dict[str, Any]]:
 
     # Check for vulnerabilities using the package name from CPE and do keywordSearch.
     pkg_name = cpe.split(':')[4]
-    keyword_vulns = nvd_request(f'keywordSearch={pkg_name}')
+    if localdb:
+        keyword_vulns = repo_keyword(pkg_name)
+    else:
+        keyword_vulns = nvd_request(f'keywordSearch={pkg_name}')
 
     for vuln in keyword_vulns:
         if vuln['cve']['vulnStatus'] in ['Received', 'Awaiting Analysis', 'Undergoing Analysis']:
@@ -148,3 +158,231 @@ def check(cpe: str, search_name: bool=False) -> List[Dict[str, Any]]:
             cpe_vulns.append(vuln)
 
     return cpe_vulns
+
+
+def local_db_path() -> str:
+    dst_path = Path.home() / '.esp-idf-sbom' / 'nvd'
+    dst_path.mkdir(parents=True, exist_ok=True)
+    return str(dst_path)
+
+
+def local_db_version() -> str:
+    db_path = local_db_path()
+    cmd = ['git', '-C', db_path, 'rev-parse', 'HEAD']
+    rv, stdout, stderr = utils.run(cmd, die=True)
+    sha = stdout.strip()
+    return f'{NVD_MIRROR_URL}@{sha}'
+
+
+# Scanning is performed for each CPE individually, primarily because the NVD REST
+# API does not support querying multiple CPEs in a single request. When using a
+# local NVD mirror, this would require searching through the git repository for
+# each CPE, which is time-consuming. To address this, a cache is used to search
+# for all CPEs at once locally and store the relevant CVEs in cache. Subsequently,
+# scanning is still done per CPE, as with the NVD REST API, but it uses this
+# local cache.
+CVE_CACHE: List[Dict[str, Any]] = []
+
+
+def cache_cves(cpes: List[str], keyword: bool) -> None:
+    if not cpes:
+        return
+
+    if not git.get_gitdir(local_db_path()):
+        raise RuntimeError('Local NVD mirror repository not found. Please use the sync-db command.')
+
+    global CVE_CACHE
+    cpe_bases = [':'.join(cpe.split(':')[:5]) + ':' for cpe in cpes]
+    cpe_products = [cpe.split(':')[4] for cpe in cpes]
+
+    repo = local_db_path()
+
+    cmd = ['git', '-C', repo, 'grep', '-l', '-i']
+    for cpe_base in cpe_bases:
+        cmd += ['-e', cpe_base]
+    if keyword:
+        for cpe_product in cpe_products:
+            cmd += ['-e', cpe_product]
+    cmd += ['HEAD', '--', 'cve']
+
+    rv, stdout, stderr = utils.run(cmd)
+    if rv not in [0,1]:
+        # git fatal error
+        raise RuntimeError(stderr)
+    for cve_fn in stdout.splitlines():
+        rv, stdout, stderr = utils.run(['git', '-C', repo, 'show', cve_fn], die=True)
+        cve = json.loads(stdout)
+        CVE_CACHE.append(cve)
+
+
+def get_cves_for_cpe(cpe: str) -> List[Dict[str, Any]]:
+    global CVE_CACHE
+    res: List[Dict[str, Any]] = []
+    cpe_base = ':'.join(cpe.split(':')[:5])
+
+    for cve in CVE_CACHE:
+        if 'configurations' not in cve['cve']:
+            # There was no configuration, so the CVE has not been analyzed yet.
+            continue
+
+        configurations = cve['cve']['configurations']
+
+        for configuration in configurations:
+            for node in configuration['nodes']:
+                for cpe_match in node['cpeMatch']:
+                    criteria = cpe_match['criteria'].lower()
+                    if criteria.startswith(cpe_base):
+                        res.append(cve)
+                        break
+                else:
+                    continue
+                break
+            else:
+                continue
+            break
+
+    return res
+
+
+def get_match_criteria(criteria_id: str) -> List[str]:
+    repo = local_db_path()
+    criteria_fn = f'HEAD:cpematch/{criteria_id[:2]}/{criteria_id}.json'
+
+    rv, stdout, stderr = utils.run(['git', '-C', repo, 'show', criteria_fn])
+    if rv:
+        log.warn(f'Match Criteria {criteria_id}: File not found')
+        return []
+
+    match_criteria = json.loads(stdout)
+    if 'matches' not in match_criteria['matchString']:
+        return [match_criteria['matchString']['criteria']]
+
+    return [match['cpeName'] for match in match_criteria['matchString']['matches']]
+
+
+def evaluate_cpematch(cpe: str, cpe_match: Dict[str, Any]) -> bool:
+    if not cpe_match['vulnerable']:
+        return False
+
+    criteria = cpe_match['criteria']
+    if CPE.compare(cpe, criteria) not in [CPE.AV_REL_EQUAL, CPE.AV_REL_SUBSET]:
+        # If cpe is not a subset of the criteria, skip matching with CPE names (targets)
+        # from the match criteria. We can likely return True immediately if cpe and
+        # criteria are AV_REL_EQUAL.
+        return False
+
+    criteria_id = cpe_match['matchCriteriaId']
+    targets = get_match_criteria(criteria_id)
+    if not targets:
+        log.warn(f'No CPE Names found for {criteria_id}. CPE {cpe} has not been evaluated.')
+        return False
+
+    for target in targets:
+        try:
+            if CPE.match(cpe, target):
+                return True
+        except RuntimeError as e:
+            log.warn(e)
+            continue
+
+    return False
+
+
+def evaluate_node(cpe: str, node: Dict[str, Any]) -> bool:
+    res_list: List[bool] = []
+    res: bool = False
+
+    operator = node.get('operator')
+    negate = node.get('negate', False)
+
+    for cpe_match in node['cpeMatch']:
+        cpe_match_res = evaluate_cpematch(cpe, cpe_match)
+        if operator == 'AND' and not cpe_match_res:
+            # Short-circuit evaluation
+            res = False
+            break
+        if operator == 'OR' and cpe_match_res:
+            # Short-circuit evaluation
+            res = True
+            break
+        res_list.append(cpe_match_res)
+    else:
+        if operator == 'AND':
+            res = all(res_list)
+        else:
+            res = any(res_list)
+
+    return not res if negate else res
+
+
+def is_configuration_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool:
+    # Applicability Language implementation
+    res_list: List[bool] = []
+    res: bool = False
+
+    operator = configuration.get('operator')
+    negate = configuration.get('negate', False)
+
+    for node in configuration['nodes']:
+        node_res = evaluate_node(cpe, node)
+        if operator == 'AND' and not node_res:
+            # Short-circuit evaluation
+            res = False
+            break
+        if operator == 'OR' and node_res:
+            # Short-circuit evaluation
+            res = True
+            break
+        res_list.append(node_res)
+    else:
+        if operator == 'AND':
+            res = all(res_list)
+        elif operator == 'OR':
+            res = any(res_list)
+        else:
+            assert len(res_list) == 1
+            res = res_list[0]
+
+    return not res if negate else res
+
+
+def repo_check(cpe: str) -> List[Dict[str, Any]]:
+    res: List[Dict[str, Any]] = []
+
+    cves = get_cves_for_cpe(cpe)
+    for cve in cves:
+        for configuration in cve['cve']['configurations']:
+            if is_configuration_vulnerable(cpe, configuration):
+                res.append(cve)
+                break
+    return res
+
+
+def repo_keyword(keyword: str) -> List[Dict[str, Any]]:
+    global CVE_CACHE
+    res: List[Dict[str, Any]] = []
+
+    for cve in CVE_CACHE:
+        for desc in cve['cve']['descriptions']:
+            value = desc['value']
+            # This should emulate the keywordSearch parameter of the NVD API.
+            # Keyword search operates as though a wildcard is placed after each
+            # keyword provided. For example, providing "circle" will return results
+            # such as "circles" but not "encircle".
+            if re.search(rf'(\s|^){keyword}', value, re.IGNORECASE):
+                res.append(cve)
+                break
+    return res
+
+
+def sync() -> int:
+    dst = local_db_path()
+    if not git.get_gitdir(dst):
+        log.eprint(f'Cloning NVD data from repository {NVD_MIRROR_URL} to {dst}. This may take some time.')
+        cmd = ['git', 'clone', '--mirror', '--depth', '1', NVD_MIRROR_URL, dst]
+    else:
+        log.eprint(f'Synchronizing NVD data from the remote repository {NVD_MIRROR_URL} to {dst}.')
+        cmd = ['git', '-C', dst, 'fetch']
+
+    rv, _, _ = utils.run(cmd, stdout=False, stderr=False)
+    return rv

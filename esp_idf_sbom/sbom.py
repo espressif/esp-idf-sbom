@@ -49,9 +49,21 @@ def cmd_check(args: Namespace) -> int:
         disable=args.no_progress,
         console=log.console_stderr)
 
-    progress.start()
-
     try:
+        if args.local_db:
+            if not args.no_sync_db:
+                nvd.sync()
+            log.eprint('Searching for possible CVEs in the local database')
+            cpes = []
+            for pkg in packages.values():
+                for cpe_ref in pkg.get('ExternalRef', []):
+                    if not cpe_ref.startswith('SECURITY cpe23Type'):
+                        continue
+                    _, _, cpe = cpe_ref.split()
+                    cpes.append(cpe)
+            nvd.cache_cves(cpes, args.name)
+
+        progress.start()
         progress_task = progress.add_task('Checking packages', total=len(packages))
         for pkg in packages.values():
             package_added = False
@@ -77,7 +89,7 @@ def cmd_check(args: Namespace) -> int:
                 cve_exclude_list = {cve['cve']: cve['reason'] for cve in comment_yaml['cve-exclude-list']}
 
             for cpe in cpes:
-                vulns = nvd.check(cpe, args.name)
+                vulns = nvd.check(cpe, args.name, args.local_db)
 
                 for vuln in vulns:
                     cve_id = vuln['cve']['id']
@@ -244,6 +256,10 @@ def cmd_license(args: Namespace) -> int:
     return 0
 
 
+def cmd_nvdsync(args: Namespace) -> int:
+    return nvd.sync()
+
+
 def cmd_manifest_validate(args: Namespace) -> int:
     progress = Progress(
         BarColumn(),
@@ -292,12 +308,24 @@ def cmd_manifest_check(args: Namespace) -> int:
         disable=args.no_progress,
         console=log.console_stderr)
 
-    progress.start()
     try:
-        progress_task = progress.add_task('Checking manifest files for vulnerabilities')
-        progress.update(progress_task, refresh=True, description='searching for manifest files')
+        if args.local_db and not args.no_sync_db:
+            nvd.sync()
 
+        log.eprint('Searching for manifest files')
         manifests = mft.get_manifests(args.check_paths)
+
+        if args.local_db:
+            log.eprint('Searching for possible CVEs in the local database')
+            cpes: List[str] = []
+            for manifest in manifests:
+                if 'cpe' not in manifest:
+                    continue
+                cpes += manifest['cpe'] if isinstance(manifest['cpe'], list) else [manifest['cpe']]
+            nvd.cache_cves(cpes, args.name)
+
+        progress.start()
+        progress_task = progress.add_task('Checking manifest files for vulnerabilities')
         progress.update(progress_task, advance=0, refresh=True, total=len(manifests))
 
         for manifest in manifests:
@@ -313,7 +341,7 @@ def cmd_manifest_check(args: Namespace) -> int:
             name = manifest.get('name', manifest['cpe'][0].split(':')[4])
             cve_exclude_list = {cve['cve']: cve['reason'] for cve in manifest.get('cve-exclude-list', [])}
             for cpe in cpes:
-                vulns = nvd.check(cpe, args.name)
+                vulns = nvd.check(cpe, args.name, args.local_db)
 
                 for vuln in vulns:
                     cve_id = vuln['cve']['id']
@@ -591,6 +619,16 @@ def main():
                                     'affect the resulting binary! For example components with libraries, '
                                     'which are not linked into the final binary will be checked too.'))
 
+    check_parser.add_argument('--local-db',
+                              action='store_true',
+                              default=bool(os.environ.get('SBOM_CHECK_LOCAL_DB')),
+                              help=('Use local NVD mirror for vulnerability check.'))
+
+    check_parser.add_argument('--no-sync-db',
+                              action='store_true',
+                              default=bool(os.environ.get('SBOM_CHECK_NO_SYNC_DB')),
+                              help=('Skip updating local NVD mirror before vulnerability check.'))
+
     check_parser.add_argument('--format',
                               choices=['table', 'json', 'csv', 'markdown'],
                               default=os.environ.get('SBOM_CHECK_FORMAT', 'table'),
@@ -632,6 +670,10 @@ def main():
                                 action='store_true',
                                 help=('When processing manifest files, disregard the conditions for the "if" key.'))
 
+    nvdsync_parser = subparsers.add_parser('sync-db',
+                                           help=('Update local NVD git repository.'))
+    nvdsync_parser.set_defaults(func=cmd_nvdsync)
+
     manifest_parser = subparsers.add_parser('manifest',
                                             help=('Commands operating atop of manifest files.'))
     manifest_subparsers = manifest_parser.add_subparsers(help='sub-command help')
@@ -660,6 +702,16 @@ def main():
                                              'in the NVD for CVEs that are pending analysis. This might result '
                                              'in unrelated false reports, but it can also offer an early glimpse '
                                              'of newly reported CVEs.'))
+
+    manifest_check_parser.add_argument('--local-db',
+                                       action='store_true',
+                                       default=bool(os.environ.get('SBOM_CHECK_LOCAL_DB')),
+                                       help=('Use local NVD mirror for vulnerability check.'))
+
+    manifest_check_parser.add_argument('--no-sync-db',
+                                       action='store_true',
+                                       default=bool(os.environ.get('SBOM_CHECK_NO_SYNC_DB')),
+                                       help=('Skip updating local NVD mirror before vulnerability check.'))
 
     manifest_check_parser.add_argument('--format',
                                        choices=['table', 'json', 'csv', 'markdown'],
