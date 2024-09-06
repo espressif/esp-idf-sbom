@@ -15,7 +15,7 @@ from rich.progress import (BarColumn, MofNCompleteColumn, Progress, TextColumn,
                            TimeElapsedColumn)
 from rich.table import Table
 
-from esp_idf_sbom.libsbom import log, mft, nvd, report, spdx
+from esp_idf_sbom.libsbom import git, log, mft, nvd, report, spdx
 
 
 def cmd_create(args: Namespace) -> int:
@@ -261,6 +261,14 @@ def cmd_nvdsync(args: Namespace) -> int:
 
 
 def cmd_manifest_validate(args: Namespace) -> int:
+    def is_git_rebase_in_progress() -> bool:
+        rebase_merge_dir = git.get_gitpath('rebase-merge')
+        rebase_apply_dir = git.get_gitpath('rebase-apply')
+        if os.path.isdir(rebase_merge_dir) or os.path.isdir(rebase_apply_dir):
+            return True
+
+        return False
+
     progress = Progress(
         BarColumn(),
         MofNCompleteColumn(),
@@ -270,8 +278,12 @@ def cmd_manifest_validate(args: Namespace) -> int:
         console=log.console_stderr)
 
     exit_code = 0
-    progress.start()
     try:
+        if args.skip_on_rebase and is_git_rebase_in_progress():
+            log.print('Git rebase is in progress, skipping the check.')
+            return exit_code
+
+        progress.start()
         progress_task = progress.add_task('Validating manifests')
         progress.update(progress_task, refresh=True, description='searching for manifest files')
 
@@ -687,6 +699,11 @@ def main():
                                           nargs='*',
                                           help=('Manifest file (sbom.yml, idf_manifest.yml or .gitmodules) or '
                                                 'directory, which will be searched for manifest files.'))
+
+    # Bypass validation if a git rebase is ongoing. Utilized by the pre-commit hook.
+    manifest_validate_parser.add_argument('--skip-on-rebase',
+                                          action='store_true',
+                                          help=argparse.SUPPRESS)
 
     manifest_check_parser = manifest_subparsers.add_parser('check',
                                                            help=('Check manifest files for vulnerabilities.'))
