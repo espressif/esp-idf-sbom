@@ -10,6 +10,20 @@ It also allows to check generated SBOM files for know vulnerabilities against
 the [National Vulnerability Database][4] (NVD) based on the
 [Common Platform Enumeration][5] (CPE) provided in the SBOM.
 
+### Table of Contents
+- [Required ESP-IDF versions](#required-esp-idf-versions)
+- [Installation](#installation)
+- [Creating SBOM](#creating-sbom)
+- [Checking vulnerabilities](#checking-vulnerabilities)
+- [Usage example](#usage-example)
+- [SPDX SBOM layout](#spdx-sbom-layout)
+- [Manifest file](#manifest-file)
+  - [Validating manifest files](#validating-manifest-files)
+  - [Checking manifest files for vulnerabilities](#checking-manifest-files-for-vulnerabilities)
+- [Licenses and Copyrights](#licenses-and-copyrights)
+- [Return Values](#return-values)
+- [Resources](#resources)
+
 ## Required ESP-IDF versions
 
 All release branches of currently supported ESP-IDF versions allow to
@@ -483,9 +497,15 @@ given **project**, **component** or **submodule**.
     Fatal error.
 
 
+## Resources
+
+* DevCon24 presentation - [Enhancing IoT Security Generating SBOMs with esp-idf-sbom][7]
+
+
 [1]: https://en.wikipedia.org/wiki/Software_supply_chain
 [2]: https://spdx.dev
 [3]: https://docs.espressif.com/projects/esp-idf/en/latest
 [4]: https://nvd.nist.gov
 [5]: https://en.wikipedia.org/wiki/Common_Platform_Enumeration
 [6]: https://github.com/espressif/esp-nvd-mirror
+[7]: https://www.youtube.com/watch?v=ODZwxKawVXo
