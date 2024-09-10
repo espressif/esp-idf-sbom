@@ -1,3 +1,16 @@
+## v0.18.0 (2024-09-10)
+
+### New Features
+
+- allow usage of local NVD mirror for vulnerability scanning
+
+### Bug Fixes
+
+- skip manifest validation in pre-commit if a git rebase is in progress
+- exclude files from sub-package if it's not included
+- properly manage input paths for the manifest license sub-command
+- include missing dependencies for the SPDX project package
+
 ## v0.17.1 (2024-07-11)
 
 ### Bug Fixes
