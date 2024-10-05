@@ -257,6 +257,7 @@ class SPDXObject:
         'copyright': [],
         'hash': '',
         'cve-exclude-list': [],
+        'cve-keywords': [],
         'manifests': [],
         'virtpackages': [],
         'if': '',
@@ -613,12 +614,24 @@ class SPDXPackage(SPDXObject):
         for cpe in self.manifest['cpe']:
             self['ExternalRef'] += [f'SECURITY cpe23Type {cpe}']
 
+        comment = ''
+
         if self.manifest['cve-exclude-list']:
             cve_info = {'cve-exclude-list': self.manifest['cve-exclude-list']}
             cve_info_yaml = yaml.dump(cve_info, indent=4)
             cve_info_desc = ('# The cve-exclude-list list contains CVEs, which were '
                              'already evaluated and the package is not vulnerable.')
-            self['PackageComment'] = [f'<text>\n{cve_info_desc}\n{cve_info_yaml}</text>']
+            comment += f'{cve_info_desc}\n{cve_info_yaml}'
+
+        if self.manifest['cve-keywords']:
+            cve_keywords = {'cve-keywords': self.manifest['cve-keywords']}
+            cve_keywords_yaml = yaml.dump(cve_keywords, indent=4)
+            cve_keywords_desc = ('# The cve-keywords list includes strings used '
+                                 'to search through CVE descriptions.')
+            comment += f'{cve_keywords_desc}\n{cve_keywords_yaml}'
+
+        if comment:
+            self['PackageComment'] = [f'<text>\n{comment}</text>']
 
         self.add_relationships()
 
@@ -1246,3 +1259,14 @@ def filter_packages(packages: Dict[str, Dict[str, List[str]]]):
     log.debug('filtered spdx packages:')
     log.debug(json.dumps(out, indent=4))
     return out
+
+
+def parse_package_comment(pkg: Dict[str, List[str]]) -> Dict[str, Any]:
+    comment_dict: Dict[str, Any] = {}
+    if 'PackageComment' not in pkg:
+        return comment_dict
+
+    comment = pkg['PackageComment'][0]
+    comment = comment[len('<text>'):-len('</text>')]
+    comment_dict = yaml.safe_load(comment)
+    return comment_dict
