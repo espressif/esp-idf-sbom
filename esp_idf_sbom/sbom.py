@@ -10,12 +10,29 @@ import sys
 from argparse import Namespace
 from typing import Any, Dict, List
 
-import yaml
 from rich.progress import (BarColumn, MofNCompleteColumn, Progress, TextColumn,
                            TimeElapsedColumn)
 from rich.table import Table
 
 from esp_idf_sbom.libsbom import git, log, mft, nvd, report, spdx
+
+NAME_ARG = {
+    'args': ['--extended-scan', '-n', '--name'],
+    'kwargs': {
+        'action': 'store_true',
+        'dest': 'name',
+        'help': ('If available, use the product part of the CPE and the keywords found '
+                 'under the cve-keywords key in the manifest or generated SBOM file to '
+                 'search for potential vulnerabilities. This involves scanning CVE '
+                 'descriptions for these keywords in CVEs that have not yet been analyzed '
+                 'by the NVD. The identified CVEs should be thoroughly examined for false '
+                 'positives. Using this option may result in a report that includes CVEs '
+                 'unrelated to the scanned components or CVEs that have already been fixed '
+                 'in the scanned component versions. Exercise caution when using this option, '
+                 'as it can provide early insights into newly reported CVEs but may also '
+                 'lead to misleading reports.'),
+    }
+}
 
 
 def cmd_create(args: Namespace) -> int:
@@ -55,106 +72,83 @@ def cmd_check(args: Namespace) -> int:
                 nvd.sync()
             log.eprint('Searching for possible CVEs in the local database')
             cpes = []
+            keywords = []
             for pkg in packages.values():
                 for cpe_ref in pkg.get('ExternalRef', []):
                     if not cpe_ref.startswith('SECURITY cpe23Type'):
                         continue
                     _, _, cpe = cpe_ref.split()
                     cpes.append(cpe)
-            nvd.cache_cves(cpes, args.name)
+                    if args.name:
+                        # Include the product (package name) from the CPE in the keywords
+                        keywords.append(cpe.split(':')[4])
+
+                comment = spdx.parse_package_comment(pkg)
+                if args.name:
+                    # Include keywords from the SPDX Package comment.
+                    keywords += comment.get('cve-keywords', [])
+            nvd.cache_cves(cpes, keywords)
 
         progress.start()
         progress_task = progress.add_task('Checking packages', total=len(packages))
         for pkg in packages.values():
+            pkg_records: List[Dict[str,str]] = []
+            pkg_name = pkg['PackageName'][0]
+            pkg_ver = pkg['PackageVersion'][0] if 'PackageVersion' in pkg else ''
             package_added = False
+
             progress.update(progress_task,advance=1, refresh=True, description=pkg['PackageName'][0])
 
             cpes = []
+            keywords = []
             for cpe_ref in pkg.get('ExternalRef', []):
                 if not cpe_ref.startswith('SECURITY cpe23Type'):
                     continue
                 _, _, cpe = cpe_ref.split()
                 cpes.append(cpe)
-
-            # Possible improvement if package does not explicitly specify CPE could be to use
-            # cpeMatchString parameter(https://nvd.nist.gov/developers/products) and find possible
-            # CPEs based on package name and version.
+                if args.name:
+                    # Include the product name from CPE in the keywords to ensure it is searched in the CVE description.
+                    product = cpe.split(':')[4]
+                    keywords.append(product)
 
             cve_exclude_list = {}
-            if 'PackageComment' in pkg:
+            comment = spdx.parse_package_comment(pkg)
+            if 'cve-exclude-list' in comment:
                 # get information about excluded CVEs
-                comment = pkg['PackageComment'][0]
-                comment = comment[len('<text>'):-len('</text>')]
-                comment_yaml = yaml.safe_load(comment)
-                cve_exclude_list = {cve['cve']: cve['reason'] for cve in comment_yaml['cve-exclude-list']}
+                cve_exclude_list = {cve['cve']: cve['reason'] for cve in comment['cve-exclude-list']}
+            if args.name:
+                keywords += comment.get('cve-keywords', [])
 
             for cpe in cpes:
-                vulns = nvd.check(cpe, args.name, args.local_db)
-
+                vulns = nvd.check_cpe(cpe, args.local_db)
                 for vuln in vulns:
-                    cve_id = vuln['cve']['id']
-                    status = vuln['cve']['vulnStatus']
-                    cve_link = f'https://nvd.nist.gov/vuln/detail/{cve_id}'
-                    cve_desc = [desc['value'] for desc in vuln['cve']['descriptions'] if desc['lang'] == 'en'][0]
-                    vulnerable = ''
-                    exclude_reason = ''
-                    cvss_version = ''
-                    cvss_vector_string = ''
-                    cvss_base_score = ''
-                    cvss_base_severity = ''
-
-                    metrics = vuln['cve'].get('metrics')
-                    cvss = None
-                    if metrics:
-                        # get the first CVSS
-                        first_cvss = next(iter(metrics), None)
-                        cvss = metrics[first_cvss][0] if first_cvss else None
-
-                    if cvss:
-                        cvss_version = cvss['cvssData'].get('version', '')
-                        cvss_vector_string = cvss['cvssData'].get('vectorString', '')
-                        cvss_base_score = str(cvss['cvssData'].get('baseScore', ''))
-                        cvss_base_severity = cvss['cvssData'].get('baseSeverity', cvss.get('baseSeverity', ''))
-
-                    if cve_id in cve_exclude_list:
-                        exclude_reason = cve_exclude_list[cve_id]
-                        vulnerable = 'EXCLUDED'
-                    elif status in ['Received', 'Awaiting Analysis', 'Undergoing Analysis']:
-                        vulnerable = 'MAYBE'
-                    else:
-                        vulnerable = 'YES'
-                        exit_code = 1
-
-                    record = report.empty_record.copy()
-                    record['pkg_name'] = pkg['PackageName'][0]
-                    record['pkg_version'] = pkg['PackageVersion'][0] if 'PackageVersion' in pkg else ''
-                    record['vulnerable'] = vulnerable
-                    record['exclude_reason'] = exclude_reason
-                    record['cve_id'] = cve_id
-                    record['cve_link'] = cve_link
-                    record['cve_desc'] = cve_desc
-                    record['cpe'] = cpe
-                    record['cvss_version'] = cvss_version
-                    record['cvss_vector_string'] = cvss_vector_string
-                    record['cvss_base_score'] = cvss_base_score
-                    record['cvss_base_severity'] = cvss_base_severity
-                    record['status'] = status
-                    record_list.append(record)
+                    record = report.create_vulnerable_record(vuln, cve_exclude_list, cpe, '', pkg_name, pkg_ver)
+                    pkg_records.append(record)
                     package_added = True
+
+            if args.name:
+                for keyword in keywords:
+                    vulns = nvd.check_keyword(keyword, args.local_db)
+                    for vuln in vulns:
+                        existing_record = report.find_record_by_cve(pkg_records, vuln['cve']['id'])
+                        if existing_record:
+                            # The same CVE was discovered using different keywords.
+                            existing_record['keyword'] += f', {keyword}'
+                            continue
+                        record = report.create_vulnerable_record(vuln, cve_exclude_list, '', keyword, pkg_name, pkg_ver)
+                        pkg_records.append(record)
+                        package_added = True
 
             if not package_added:
                 # No vulnerabilities found for given package
-                record = report.empty_record.copy()
-                record['pkg_name'] = pkg['PackageName'][0]
-                record['pkg_version'] = pkg['PackageVersion'][0] if 'PackageVersion' in pkg else ''
-                if not cpes:
-                    # no CPE record, the package was not checked against NVD
-                    record['vulnerable'] = 'SKIPPED'
-                else:
-                    # CPE record used to check package against NVD
-                    record['vulnerable'] = 'NO'
-                    record['cpe'] = ', '.join(cpes)
-                record_list.append(record)
+                record = report.create_non_vulnerable_record(cpes, keywords, pkg_name, pkg_ver)
+                pkg_records.append(record)
+
+            for record in pkg_records:
+                if record['vulnerable'] == 'YES':
+                    exit_code = 1
+
+            record_list += pkg_records
 
     except (RuntimeError, OSError) as e:
         progress.stop()
@@ -330,90 +324,77 @@ def cmd_manifest_check(args: Namespace) -> int:
         if args.local_db:
             log.eprint('Searching for possible CVEs in the local database')
             cpes: List[str] = []
+            keywords: List[str] = []
             for manifest in manifests:
-                if 'cpe' not in manifest:
-                    continue
-                cpes += manifest['cpe'] if isinstance(manifest['cpe'], list) else [manifest['cpe']]
-            nvd.cache_cves(cpes, args.name)
+                if 'cpe' in manifest:
+                    cpes += manifest['cpe']
+                    if args.name:
+                        keywords += [cpe.split(':')[4] for cpe in cpes]
+                if args.name:
+                    keywords += manifest.get('cve-keywords', [])
+            nvd.cache_cves(cpes, keywords)
 
         progress.start()
-        progress_task = progress.add_task('Checking manifest files for vulnerabilities')
-        progress.update(progress_task, advance=0, refresh=True, total=len(manifests))
-
+        progress_task = progress.add_task('Checking manifest files for vulnerabilities', total=len(manifests))
         for manifest in manifests:
+            pkg_records: List[Dict[str,str]] = []
+            pkg_name = manifest.get('name')
+            pkg_ver = manifest.get('version', '')
             package_added = False
+
             progress.update(progress_task, advance=1, refresh=True, description=manifest['_src'])
-            if 'cpe' not in manifest:
-                continue
 
-            cpes = manifest['cpe'] if isinstance(manifest['cpe'], list) else [manifest['cpe']]
-            # Add version to CPEs
-            version = manifest.get('version', '')
-            cpes = [cpe.format(version) for cpe in cpes]
-            name = manifest.get('name', manifest['cpe'][0].split(':')[4])
+            cpes = []
+            keywords = []
+            for cpe in manifest.get('cpe', []):
+                # Include the version in the CPE, as it might currently only have a placeholder.
+                cpe = cpe.format(pkg_ver)
+                cpes.append(cpe)
+                product = cpe.split(':')[4]
+                if args.name:
+                    # Include the product name from CPE in the keywords to ensure it is searched in the CVE description.
+                    keywords.append(product)
+                if not pkg_name:
+                    # If the manifest lacks a name, use the product part from the CPE.
+                    pkg_name = product
+
+            if not pkg_name:
+                # Without a package name or CPE, use the manifest path as the name.
+                pkg_name = manifest['_src']
+
             cve_exclude_list = {cve['cve']: cve['reason'] for cve in manifest.get('cve-exclude-list', [])}
+            if args.name:
+                keywords += manifest.get('cve-keywords', [])
             for cpe in cpes:
-                vulns = nvd.check(cpe, args.name, args.local_db)
-
+                vulns = nvd.check_cpe(cpe, args.local_db)
                 for vuln in vulns:
-                    cve_id = vuln['cve']['id']
-                    status = vuln['cve']['vulnStatus']
-                    cve_link = f'https://nvd.nist.gov/vuln/detail/{cve_id}'
-                    cve_desc = [desc['value'] for desc in vuln['cve']['descriptions'] if desc['lang'] == 'en'][0]
-                    vulnerable = ''
-                    exclude_reason = ''
-                    cvss_version = ''
-                    cvss_vector_string = ''
-                    cvss_base_score = ''
-                    cvss_base_severity = ''
-
-                    metrics = vuln['cve'].get('metrics')
-                    cvss = None
-                    if metrics:
-                        # get the first CVSS
-                        first_cvss = next(iter(metrics), None)
-                        cvss = metrics[first_cvss][0] if first_cvss else None
-
-                    if cvss:
-                        cvss_version = cvss['cvssData'].get('version', '')
-                        cvss_vector_string = cvss['cvssData'].get('vectorString', '')
-                        cvss_base_score = str(cvss['cvssData'].get('baseScore', ''))
-                        cvss_base_severity = cvss['cvssData'].get('baseSeverity', cvss.get('baseSeverity', ''))
-
-                    if cve_id in cve_exclude_list:
-                        exclude_reason = cve_exclude_list[cve_id]
-                        vulnerable = 'EXCLUDED'
-                    elif status in ['Received', 'Awaiting Analysis', 'Undergoing Analysis']:
-                        vulnerable = 'MAYBE'
-                    else:
-                        vulnerable = 'YES'
-                        exit_code = 1
-
-                    record = report.empty_record.copy()
-                    record['pkg_name'] = name
-                    record['pkg_version'] = version
-                    record['vulnerable'] = vulnerable
-                    record['exclude_reason'] = exclude_reason
-                    record['cve_id'] = cve_id
-                    record['cve_link'] = cve_link
-                    record['cve_desc'] = cve_desc
-                    record['cpe'] = cpe
-                    record['cvss_version'] = cvss_version
-                    record['cvss_vector_string'] = cvss_vector_string
-                    record['cvss_base_score'] = cvss_base_score
-                    record['cvss_base_severity'] = cvss_base_severity
-                    record['status'] = status
-                    record_list.append(record)
+                    record = report.create_vulnerable_record(vuln, cve_exclude_list, cpe, '', pkg_name, pkg_ver)
+                    pkg_records.append(record)
                     package_added = True
+
+            if args.name:
+                for keyword in keywords:
+                    vulns = nvd.check_keyword(keyword, args.local_db)
+                    for vuln in vulns:
+                        existing_record = report.find_record_by_cve(pkg_records, vuln['cve']['id'])
+                        if existing_record:
+                            # The same CVE was discovered using different keywords.
+                            existing_record['keyword'] += f', {keyword}'
+                            continue
+                        record = report.create_vulnerable_record(vuln, cve_exclude_list, '', keyword, pkg_name, pkg_ver)
+                        pkg_records.append(record)
+                        package_added = True
 
             if not package_added:
                 # No vulnerabilities found for given package
-                record = report.empty_record.copy()
-                record['pkg_name'] = name
-                record['pkg_version'] = version
-                record['vulnerable'] = 'NO'
-                record['cpe'] = ', '.join(cpes)
-                record_list.append(record)
+                record = report.create_non_vulnerable_record(cpes, keywords, pkg_name, pkg_ver)
+                pkg_records.append(record)
+
+            for record in pkg_records:
+                if record['vulnerable'] == 'YES':
+                    exit_code = 1
+
+            record_list += pkg_records
 
     except (RuntimeError, OSError) as e:
         progress.stop()
@@ -615,12 +596,7 @@ def main():
                               metavar='OUTPUT_FILE',
                               help=('Print output to the specified file instead of stdout.'))
 
-    check_parser.add_argument('-n', '--name',
-                              action='store_true',
-                              help=('Use the package name given in the CPE to perform a keyword search '
-                                    'in the NVD for CVEs that are pending analysis. This might result '
-                                    'in unrelated false reports, but it can also offer an early glimpse '
-                                    'of newly reported CVEs.'))
+    check_parser.add_argument(*NAME_ARG['args'], **NAME_ARG['kwargs'])
 
     check_parser.add_argument('--check-all-packages',
                               action='store_true',
@@ -713,12 +689,7 @@ def main():
                                        metavar='OUTPUT_FILE',
                                        help=('Print output to the specified file instead of stdout.'))
 
-    manifest_check_parser.add_argument('-n', '--name',
-                                       action='store_true',
-                                       help=('Use the package name given in the CPE to perform a keyword search '
-                                             'in the NVD for CVEs that are pending analysis. This might result '
-                                             'in unrelated false reports, but it can also offer an early glimpse '
-                                             'of newly reported CVEs.'))
+    manifest_check_parser.add_argument(*NAME_ARG['args'], **NAME_ARG['kwargs'])
 
     manifest_check_parser.add_argument('--local-db',
                                        action='store_true',

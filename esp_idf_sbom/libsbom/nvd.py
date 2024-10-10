@@ -127,8 +127,8 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]]={}) -> Dict[str, Any]:
 
 
 # https://nvd.nist.gov/developers/vulnerabilities
-def check(cpe: str, search_name: bool=False, localdb: bool=False) -> List[Dict[str, Any]]:
-    """Checks given CPE against NVD and returns its reponse."""
+def check_cpe(cpe: str, localdb: bool=False) -> List[Dict[str, Any]]:
+    """Check given CPE against NVD data."""
 
     # Check vulnerabilities that have already been processed in the NVD and have an assigned CPE.
     if localdb:
@@ -136,18 +136,22 @@ def check(cpe: str, search_name: bool=False, localdb: bool=False) -> List[Dict[s
     else:
         cpe_vulns = nvd_request(f'cpeName={cpe}')
 
-    if not search_name:
-        return cpe_vulns
+    return cpe_vulns
+
+
+def check_keyword(keyword: str, localdb: bool=False) -> List[Dict[str, Any]]:
+    """Check given keyword against CVE description."""
+
+    cpe_vulns: List[Dict[str, Any]] = []
 
     # Obtain the list of excluded CVEs to filter them out from the unanalyzed CVEs provided by NVD.
     excluded_cves = get_excluded_cves()
 
-    # Check for vulnerabilities using the package name from CPE and do keywordSearch.
-    pkg_name = cpe.split(':')[4]
     if localdb:
-        keyword_vulns = repo_keyword(pkg_name)
+        keyword_vulns = repo_keyword(keyword)
     else:
-        keyword_vulns = nvd_request(f'keywordSearch={pkg_name}')
+        keyword = urllib.parse.quote(keyword)
+        keyword_vulns = nvd_request(f'keywordSearch={keyword}&keywordExactMatch')
 
     for vuln in keyword_vulns:
         if vuln['cve']['vulnStatus'] in ['Received', 'Awaiting Analysis', 'Undergoing Analysis']:
@@ -184,25 +188,23 @@ def local_db_version() -> str:
 CVE_CACHE: List[Dict[str, Any]] = []
 
 
-def cache_cves(cpes: List[str], keyword: bool) -> None:
-    if not cpes:
-        return
-
+def cache_cves(cpes: List[str], keywords: List[str]) -> None:
     if not git.get_gitdir(local_db_path()):
         raise RuntimeError('Local NVD mirror repository not found. Please use the sync-db command.')
 
     global CVE_CACHE
     cpe_bases = [':'.join(cpe.split(':')[:5]) + ':' for cpe in cpes]
-    cpe_products = [cpe.split(':')[4] for cpe in cpes]
 
     repo = local_db_path()
 
-    cmd = ['git', '-C', repo, 'grep', '-l', '-i']
+    # -l - Show only file names
+    # -i - Ignore case differences between the patterns
+    # -F - Use fixed strings for patterns (don’t interpret pattern as a regex
+    cmd = ['git', '-C', repo, 'grep', '-l', '-i', '-F']
     for cpe_base in cpe_bases:
         cmd += ['-e', cpe_base]
-    if keyword:
-        for cpe_product in cpe_products:
-            cmd += ['-e', cpe_product]
+    for keyword in keywords:
+        cmd += ['-e', keyword]
     cmd += ['HEAD', '--', 'cve']
 
     rv, stdout, stderr = utils.run(cmd)
@@ -361,6 +363,9 @@ def repo_check(cpe: str) -> List[Dict[str, Any]]:
 def repo_keyword(keyword: str) -> List[Dict[str, Any]]:
     global CVE_CACHE
     res: List[Dict[str, Any]] = []
+
+    # Ignore all re special characters in keyword.
+    keyword = re.escape(keyword)
 
     for cve in CVE_CACHE:
         for desc in cve['cve']['descriptions']:

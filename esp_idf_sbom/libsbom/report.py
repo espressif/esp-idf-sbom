@@ -5,7 +5,7 @@ import datetime
 import json
 import sys
 from argparse import Namespace
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from rich.box import MARKDOWN
 from rich.table import Table
@@ -23,6 +23,7 @@ empty_record = {
     'cvss_version': '',
     'cvss_vector_string': '',
     'cpe': '',
+    'keyword': '',
     'cve_link': '',
     'cve_desc': '',
     'exclude_reason': '',
@@ -221,8 +222,8 @@ def show(records: List[Dict[str,str]],
         log.print(table, '\n')
 
     # Table of potential vulnerabilities identified through keyword search
-    table = Table(title='[yellow]Packages with Possible Vulnerabilities',
-                  caption='May contain false positives not related to the reported packages.')
+    table = Table(title='[yellow]Packages with Possible Vulnerabilities (Needs to be analyzed carefully)',
+                  caption='Could include false positives that are unrelated to the specified packages or their versions.')
     table.add_column('Package', vertical='middle', justify='center', overflow='fold')
     table.add_column('Version', vertical='middle', justify='center', overflow='fold')
     table.add_column('CVE ID', vertical='middle', justify='center', overflow='fold')
@@ -237,6 +238,7 @@ def show(records: List[Dict[str,str]],
             info_table.add_column('key', overflow='fold')
             info_table.add_column('value', overflow='fold')
             info_table.add_row('[yellow]Status', r['status'])
+            info_table.add_row('[yellow]Keyword', r['keyword'])
             info_table.add_row('[yellow]Link', r['cve_link'])
             info_table.add_row('[yellow]Desc.', r['cve_desc'])
 
@@ -295,21 +297,30 @@ def show(records: List[Dict[str,str]],
     table.add_column('Package', vertical='middle', justify='center', overflow='fold')
     table.add_column('Version', vertical='middle', justify='center', overflow='fold')
     table.add_column('CPE', vertical='middle', justify='center', overflow='fold')
+    if args.name:
+        table.add_column('Keyword', vertical='middle', justify='center', overflow='fold')
 
     for r in record_list:
         if r['vulnerable'] != 'NO':
             continue
-        table.add_row('[bright_blue]' + r['pkg_name'],
-                      r['pkg_version'],
-                      '[yellow]' + r['cpe'],
-                      end_section=True)
+        if args.name:
+            table.add_row('[bright_blue]' + r['pkg_name'],
+                          r['pkg_version'],
+                          '[yellow]' + r['cpe'],
+                          '[yellow]' + r['keyword'],
+                          end_section=True)
+        else:
+            table.add_row('[bright_blue]' + r['pkg_name'],
+                          r['pkg_version'],
+                          '[yellow]' + r['cpe'],
+                          end_section=True)
 
     if table.row_count:
         log.print(table, '\n')
 
     # Table with packages which were not scanned because of missing CPE
-    table = Table(title='[green]Packages without CPE Information',
-                  caption='Packages not checked against NVD.')
+    table = Table(title='[green]Packages without CPE and Keyword Information',
+                  caption='Packages were not checked against the NVD due to the absence of CPE or keywords.')
     table.add_column('Package', vertical='middle', justify='center', overflow='fold')
     table.add_column('Version', vertical='middle', justify='center', overflow='fold')
 
@@ -322,3 +333,99 @@ def show(records: List[Dict[str,str]],
 
     if table.row_count:
         log.print(table)
+
+
+def create_non_vulnerable_record(cpes: List[str],
+                                 keywords: List[str],
+                                 pkg_name: str,
+                                 pkg_ver: str) -> Dict[str, str]:
+    # Helper for creating a record of a non-vulnerable package.
+    record = empty_record.copy()
+
+    record['pkg_name'] = pkg_name
+    record['pkg_version'] = pkg_ver
+    if not cpes and not keywords:
+        # There is no CPE record or keyword available, so the package was
+        # not verified against the NVD.
+        record['vulnerable'] = 'SKIPPED'
+    else:
+        record['vulnerable'] = 'NO'
+        record['cpe'] = ', '.join(cpes)
+        record['keyword'] = ', '.join(keywords)
+
+    return record
+
+
+def create_vulnerable_record(vuln: Dict[str, Any],
+                             cve_exclude_list: Dict[str, Any],
+                             cpe: str,
+                             keyword: str,
+                             pkg_name: str,
+                             pkg_ver: str) -> Dict[str, str]:
+    # Helper for creating a record of a discovered vulnerability.
+    record = empty_record.copy()
+    if not vuln:
+        record['pkg_name'] = pkg_name
+        record['pkg_version'] = pkg_ver
+        record['vulnerable'] = 'NO'
+        record['cpe'] = cpe
+        return record
+
+    cve_id = vuln['cve']['id']
+    status = vuln['cve']['vulnStatus']
+    cve_link = f'https://nvd.nist.gov/vuln/detail/{cve_id}'
+    cve_desc = [desc['value'] for desc in vuln['cve']['descriptions'] if desc['lang'] == 'en'][0]
+    vulnerable = ''
+    exclude_reason = ''
+    cvss_version = ''
+    cvss_vector_string = ''
+    cvss_base_score = ''
+    cvss_base_severity = ''
+
+    metrics = vuln['cve'].get('metrics')
+    cvss = None
+    if metrics:
+        # get the first CVSS
+        first_cvss = next(iter(metrics), None)
+        cvss = metrics[first_cvss][0] if first_cvss else None
+
+    if cvss:
+        cvss_version = cvss['cvssData'].get('version', '')
+        cvss_vector_string = cvss['cvssData'].get('vectorString', '')
+        cvss_base_score = str(cvss['cvssData'].get('baseScore', ''))
+        cvss_base_severity = cvss['cvssData'].get('baseSeverity', cvss.get('baseSeverity', ''))
+
+    if cve_id in cve_exclude_list:
+        exclude_reason = cve_exclude_list[cve_id]
+        vulnerable = 'EXCLUDED'
+    elif status in ['Received', 'Awaiting Analysis', 'Undergoing Analysis']:
+        vulnerable = 'MAYBE'
+    else:
+        vulnerable = 'YES'
+
+    record['pkg_name'] = pkg_name
+    record['pkg_version'] = pkg_ver
+    record['vulnerable'] = vulnerable
+    record['exclude_reason'] = exclude_reason
+    record['cve_id'] = cve_id
+    record['cve_link'] = cve_link
+    record['cve_desc'] = cve_desc
+    record['cpe'] = cpe
+    record['keyword'] = keyword
+    record['cvss_version'] = cvss_version
+    record['cvss_vector_string'] = cvss_vector_string
+    record['cvss_base_score'] = cvss_base_score
+    record['cvss_base_severity'] = cvss_base_severity
+    record['status'] = status
+
+    return record
+
+
+def find_record_by_cve(records: List[Dict[str,str]], cve_id: str) -> Optional[Dict[str, str]]:
+    # Helper for verifying if a CVE is already recorded. This helps to ensure
+    # the CVE is reported only once, even if it is identified through various
+    # keywords.
+    for record in records:
+        if record['cve_id'] == cve_id:
+            return record
+    return None

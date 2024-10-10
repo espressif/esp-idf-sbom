@@ -110,6 +110,10 @@ def get_submodule_manifest(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if 'virtpackages' in module_sbom and type(module_sbom['virtpackages']) is not list:
         module_sbom['virtpackages'] = [module_sbom['virtpackages']]
 
+    # Convert cve-keywords into a list
+    if 'cve-keywords' in module_sbom and type(module_sbom['cve-keywords']) is not list:
+        module_sbom['cve-keywords'] = [module_sbom['cve-keywords']]
+
     return module_sbom
 
 
@@ -302,6 +306,7 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             schema.Optional('copyright'): list,
             schema.Optional('hash'): schema.And(str, check_hash),
             schema.Optional('cve-exclude-list'): cve_exclude_list_schema,
+            schema.Optional('cve-keywords'): list,
             schema.Optional('manifests'): manifests_schema,
             schema.Optional('virtpackages'): schema.And(list, check_virtpackages),
             schema.Optional('if'): schema.And(str, check_if),

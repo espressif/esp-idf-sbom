@@ -106,16 +106,32 @@ If *SBOM file* is not provided, the standard input stream is used.
 The default report format consists of multiple tables:
 
 1. Report summary
-2. Packages with identified vulnerabilities
-3. Packages with excluded vulnerabilities
-4. Packages with no identified vulnerabilities
-5. Packages without CPE information not applicable for vulnerability check
+2. Packages with Identified Vulnerabilities
+3. Packages with Possible Vulnerabilities
+4. Packages with Excluded Vulnerabilities
+5. Packages with No Identified Vulnerabilities
+6. Packages without CPE and Keyword Information
 
 The output format may be changed with the `--format` option, which supports exporting
 the report into **json**, **csv** or **markdown** format.
 
 If package is not vulnerable to a specific CVE, it can be added to the manifest **cve-exclude-list**
 list and checker will not report it as identified vulnerability, but as excluded vulnerability.
+
+When the `--extended-scan` option is applied with the check command, the
+checker uses the product part of the CPE from the SBOM file to search
+through descriptions of unanalyzed CVEs in NVD. This can be beneficial for
+getting early notifications about potential new CVEs that have not yet been
+analyzed by the NVD and do not have a CPE assigned. In addition to the CPE
+product name, all keywords specified in **cve-keywords** in the related
+manifest file, which are also included in the SBOM, are checked.  For instance,
+the CPE product part for mbedtls is **mbed_tls**, so this keyword will be
+searched when `--extended-scan` is used. If the mbedtls library manifest file
+contains **mbed tls** and **mbedtls** in **cve-keywords**, these will also be
+searched. Be aware that using the `--extended-scan` option may result in false
+positive reports that are unrelated to the scanned packages or their versions.
+These reports must be thoroughly analyzed and are included in a separate table
+titled `Packages with Possible Vulnerabilities` in the report.
 
 The vulnerability check typically uses the NVD REST API by default, provided by
 [https://nvd.nist.gov](https://nvd.nist.gov). However, an alternative source of
@@ -280,6 +296,16 @@ cve-exclude-list:
           reason: Description why this package is not vulnerable
 ```
 
+* **cve-keywords**:
+    When using the `--extended-scan` option to run the checker, look for these keywords
+    in the CVE descriptions. These keywords are also included in the generated
+    SBOM file.
+```
+      cve-keywords:
+        - mbedtls
+        - mbed tls
+```
+
 * **manifests**:
     List of manifest files which cannot be added directly into the **component** or **submodule**
     sub-directories to create **subpackage**. For example the following will create a new
@@ -360,6 +386,7 @@ Information from the `sbom.yml` manifest file are mapped to the following SPDX t
 | license         | PackageLicenseDeclared       |
 | copyright       | PackageCopyrightText         |
 | cve-exclude-list| PackageComment               |
+| cve-keywords    | PackageComment               |
 
 Even though the `sbom.yml` file is the primary source of information, the esp-idf-sbom tool
 is also looking at other places if it's not present. The `idf_component.yml` manifest file,
