@@ -1,3 +1,9 @@
+## v0.19.0 (2024-10-14)
+
+### New Features
+
+- enable keyword search in CVE description
+
 ## v0.18.0 (2024-09-10)
 
 ### New Features
