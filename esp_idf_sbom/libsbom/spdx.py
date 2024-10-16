@@ -914,7 +914,27 @@ class SPDXProject(SPDXPackage):
             tags |= package.tags
         return tags
 
+    def get_reachable_components(self, names: List[str]) -> Set[str]:
+        # Return a set of all components that can be reached directly or
+        # indirectly through requirements from the components in the names
+        # list, including the names themselves.
+        build_components = self.proj_desc['build_component_info']
+        reachable = set()
+        seen = set()
+        todo = set(names)
+        while todo:
+            name = todo.pop()
+            seen.add(name)
+            if not self._component_used(build_components[name]):
+                continue
+            reachable.add(name)
+            info = build_components[name]
+            reqs = set(info['reqs'] + info['priv_reqs'] + info['managed_reqs'] + info['managed_priv_reqs'])
+            todo |= reqs - seen
+        return reachable
+
     def add_relationships(self) -> None:
+
         if not self.manifest['cpe']:
             # CPE for whole espressif:esp-idf.
             ver = self.proj_desc['git_revision']
@@ -926,10 +946,18 @@ class SPDXProject(SPDXPackage):
         # Dependency on toolchain.
         self['Relationship'] += [f'{self["SPDXID"][0]} DEPENDS_ON {self.toolchain["SPDXID"][0]}']
 
-        # Dependencies on components. Only components, which are not required by other
-        # components are added as direct dependency for the project binary.
+        # 1. Gather all component requirements into a `requirements set`.
+        # 2. Gather components not present in the `requirements set` into the
+        #    `project requirements set`.
+        # 3. Create a `reachable set` by going through direct and indirect dependencies
+        #    reachable from the `project requirements set`.
+        # 4. For each component, verify if it is in the `reachable set`. If it is
+        #    not, add it to the `project requirements set` and include its direct
+        #    and indirect dependencies in the `reachable set`.
+
         build_components = self.proj_desc['build_component_info']
-        reqs = set()
+
+        reqs: Set[str] = set()
         for name, info in build_components.items():
             if not self._component_used(build_components[name]):
                 # Do not include requirements from a component that the project
@@ -942,15 +970,43 @@ class SPDXProject(SPDXPackage):
                 # If nvs_flash is not linked, newlib is not included in the SPDX
                 # project package relationships.
                 continue
-            tmp = info['reqs'] + info['priv_reqs'] + info['managed_reqs'] + info['managed_priv_reqs']
-            reqs |= set(tmp)
+            reqs |= set(info['reqs'] + info['priv_reqs'] + info['managed_reqs'] + info['managed_priv_reqs'])
 
+        # Only components, which are not required by other components are added as direct
+        # dependency for the project binary.
+        proj_reqs: List[str] = []
         for name, info in build_components.items():
             if name in reqs:
                 continue
             if not self._component_used(build_components[name]):
                 continue
-            self['Relationship'] += [f'{self["SPDXID"][0]} DEPENDS_ON {self.components[name]["SPDXID"][0]}']
+            proj_reqs.append(name)
+
+        # Get all used components reachable from the immediate project dependencies.
+        reachable = self.get_reachable_components(proj_reqs)
+
+        # Ensure that all components included in the project can be reached from the
+        # project's SPDX package dependency tree. It's possible for a component to be
+        # required by another component yet still not be reachable from the project
+        # package. This situation can occur if the project doesn't explicitly define
+        # its dependencies and instead depends on the build system's current behavior
+        # which includes all discovered components in the build. For instance, esp_wifi
+        # depends on wpa_supplicant and vice versa, but if the main component doesn't
+        # specify a dependency on, say, esp_wifi, neither wpa_supplicant nor esp_wifi
+        # will be included in the SPDX package dependencies.
+        for name, info in build_components.items():
+            if name in reachable:
+                continue
+            if not self._component_used(build_components[name]):
+                continue
+            # The component is not reachable, so include it as a direct dependency in the
+            # SPDX project package. Additionally, add all its direct and indirect
+            # dependencies into the set of reachable components.
+            proj_reqs.append(name)
+            reachable |= self.get_reachable_components([name])
+
+        for req in proj_reqs:
+            self['Relationship'] += [f'{self["SPDXID"][0]} DEPENDS_ON {self.components[req]["SPDXID"][0]}']
 
     def dump(self) -> str:
         out = super().dump()
