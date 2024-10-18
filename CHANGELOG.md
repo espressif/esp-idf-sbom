@@ -1,3 +1,9 @@
+## v0.19.1 (2024-10-18)
+
+### Bug Fixes
+
+- include all used components in the project's SPDX dependencies
+
 ## v0.19.0 (2024-10-14)
 
 ### New Features
