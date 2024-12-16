@@ -384,10 +384,12 @@ def sync() -> int:
     dst = local_db_path()
     if not git.get_gitdir(dst):
         log.eprint(f'Cloning NVD data from repository {NVD_MIRROR_URL} to {dst}. This may take some time.')
-        cmd = ['git', 'clone', '--mirror', '--depth', '1', NVD_MIRROR_URL, dst]
+        cmd = ['git', 'clone', '--bare', '--depth', '1', '--single-branch', '--branch',
+               'master', '--no-tags', NVD_MIRROR_URL, dst]
     else:
         log.eprint(f'Synchronizing NVD data from the remote repository {NVD_MIRROR_URL} to {dst}.')
-        cmd = ['git', '-C', dst, 'fetch']
+        cmd = ['git', '-C', dst, 'fetch', '--depth', '1', '--force', '--no-tags',
+               'origin', 'master:master']
 
     rv, _, _ = utils.run(cmd, stdout=False, stderr=False)
     return rv
