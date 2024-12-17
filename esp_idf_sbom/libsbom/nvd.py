@@ -192,6 +192,9 @@ def cache_cves(cpes: List[str], keywords: List[str]) -> None:
     if not git.get_gitdir(local_db_path()):
         raise RuntimeError('Local NVD mirror repository not found. Please use the sync-db command.')
 
+    if not cpes and not keywords:
+        return
+
     global CVE_CACHE
     cpe_bases = [':'.join(cpe.split(':')[:5]) + ':' for cpe in cpes]
 
