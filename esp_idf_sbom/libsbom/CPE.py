@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2024-2025 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 '''
 Implementation of NISTIR 7696, Common Platform Enumeration: Name Matching Specification Version 2.3
@@ -219,7 +219,7 @@ def compare(source: str, target: str) -> int:
 
     # 4 If all attribute relations are SUPERSET or EQUAL
     if AV_REL_SUBSET not in rel_set:
-        return AV_REL_SUBSET
+        return AV_REL_SUPERSET
 
     # SUBSET and SUPERSET
     # It appears that the documentation does not clarify what should be returned in this situation.
@@ -227,9 +227,13 @@ def compare(source: str, target: str) -> int:
 
 
 def match(source: str, target: str) -> bool:
-    # NISTIR7698: 7.3.2 Evaluating a fact-ref Element.
-    # A match SHALL occur only when the source name’s relation with the
-    # target name is determined to be either EQUAL or SUPERSET.
+    # NISTIR7696: 6.2 Name Comparison Relations
+    # Table 6-4: Required CPE Name Comparison Relations
+    # CPE implementers who wish to emulate the functionality of the CPE 2.2
+    # Matching algorithm should note that name comparison numbers 1 and 3 in
+    # Table 6-4 are equivalent to a final result of FALSE in CPE 2.2, while
+    # name comparison numbers 2 and 4 are equivalent to a CPE 2.2 result of
+    # TRUE.
 
     res = compare(source, target)
     if res == AV_REL_EQUAL or res == AV_REL_SUPERSET:
