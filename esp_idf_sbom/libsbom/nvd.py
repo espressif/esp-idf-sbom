@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2025 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -351,6 +351,78 @@ def is_configuration_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool
     return not res if negate else res
 
 
+def vercmp(ver1: str, ver2: str) -> int:
+    # -1 ver1 < ver2
+    #  0 ver1 == ver2
+    #  1 ver1 > ver2
+    v1_parts = [part for part in ver1.split('.')]
+    v2_parts = [part for part in ver2.split('.')]
+
+    # compare each part
+    for p1, p2 in zip(v1_parts, v2_parts):
+        try:
+            # try to compare parts as int
+            if int(p1) < int(p2):
+                return -1
+            elif int(p1) > int(p2):
+                return 1
+        except ValueError:
+            # fallback to string
+            if p1 < p2:
+                return -1
+            elif p1 > p2:
+                return 1
+
+    # if all compared parts are equal, compare lengths
+    if len(v1_parts) < len(v2_parts):
+        return -1
+    elif len(v1_parts) > len(v2_parts):
+        return 1
+    else:
+        return 0    # versions are equal
+
+
+def is_version_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool:
+    cpe_base = ':'.join(cpe.split(':')[:5])
+    cpe_ver = cpe.split(':')[5]
+
+    def ver_cmp() -> bool:
+        return True
+
+    for node in configuration['nodes']:
+        for cpe_match in node['cpeMatch']:
+            if not cpe_match['vulnerable']:
+                # skip, cpe_match not vulnerable
+                continue
+
+            if not cpe_match['criteria'].startswith(cpe_base):
+                # skip, not cpe we want to check
+                continue
+
+            versionStartExcluding = cpe_match.get('versionStartExcluding')
+            versionStartIncluding = cpe_match.get('versionStartIncluding')
+            versionEndExcluding = cpe_match.get('versionEndExcluding')
+            versionEndIncluding = cpe_match.get('versionEndIncluding')
+
+            if not any((versionStartExcluding, versionStartIncluding,
+                       versionEndExcluding, versionEndIncluding)):
+                # skip, no version information
+                continue
+
+            if versionStartExcluding and vercmp(cpe_ver, versionStartExcluding) <= 0:
+                continue
+            if versionStartIncluding and vercmp(cpe_ver, versionStartIncluding) < 0:
+                continue
+            if versionEndExcluding and vercmp(cpe_ver, versionEndExcluding) >= 0:
+                continue
+            if versionEndIncluding and vercmp(cpe_ver, versionEndIncluding) > 0:
+                continue
+
+            return True
+
+    return False
+
+
 def repo_check(cpe: str) -> List[Dict[str, Any]]:
     res: List[Dict[str, Any]] = []
 
@@ -358,6 +430,12 @@ def repo_check(cpe: str) -> List[Dict[str, Any]]:
     for cve in cves:
         for configuration in cve['cve']['configurations']:
             if is_configuration_vulnerable(cpe, configuration):
+                res.append(cve)
+                break
+            # No CPE match found for CVE using configuration evaluation and matchStrings.
+            # Try to compare the version in given CPE with version ranges in cpeMatch.
+            # This is a fallback approach in case the tested CPE is not listed in matchString.
+            if is_version_vulnerable(cpe, configuration):
                 res.append(cve)
                 break
     return res
