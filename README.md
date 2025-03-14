@@ -307,7 +307,7 @@ cve-exclude-list:
 ```
 
 * **manifests**:
-    List of manifest files which cannot be added directly into the **component** or **submodule**
+    List of manifests which cannot be added directly into the **component** or **submodule**
     sub-directories to create **subpackage**. For example the following will create a new
     SPDX package for the `subpackage` directory with information from the `subpackage.yml` manifest file.
     This manifest file is treated as it would be actually stored in the `subpackage` directoery.
@@ -319,6 +319,22 @@ cve-exclude-list:
       description: Blink application example
       manifests:
         - path: subpackage.yml
+          dest: subpackage
+```
+
+    Alternatively, the content of `subpackage.yml` can be directly included as a **manifest** dictionary.
+
+    * manifest: a dictionary that holds information about the subpackage manifest
+    * dest: destination directory for manifest, relative to sbom.yml
+```
+      version: 0.1.0
+      description: Blink application example
+      manifests:
+        - manifest:
+            name: 'sub-package'
+            version: '1.2.3'
+            supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+            description: 'Some useful description'
           dest: subpackage
 ```
 

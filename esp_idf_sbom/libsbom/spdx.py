@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2025 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -266,8 +266,8 @@ class SPDXObject:
     # Global dictionary with manifest files referenced in sbom.yml or idf_component.yml
     # manifest files by the "manifests" key. Key is fullpath of destination directory,
     # where the manifest file would be stored, but for some reason it's not possible.
-    # Value is full path to the referenced manifest file.
-    REFERENCED_MANIFESTS: Dict[str, str] = {}
+    # Value is full path to the referenced manifest file or embedded manifest dictionary.
+    REFERENCED_MANIFESTS: Dict[str, Any] = {}
 
     def __init__(self, args: Namespace, proj_desc: Dict[str, Any]) -> None:
         self.args = args
@@ -372,13 +372,23 @@ class SPDXObject:
         else:
             return ''
 
-    def update_manifest(self, dst: Dict[str,Any], src: Dict[str,Any]) -> None:
+    def update_manifest(self, dst: Dict[str,Any], src: Dict[str,Any],
+                        embedded_path: Optional[str] = None) -> None:
         """Update manifest dict with new values from src."""
         for key, val in src.items():
             if key not in dst:
                 continue
             if not dst[key]:
                 dst[key] = val
+
+        if not embedded_path:
+            return
+
+        # For embedded manifests, maintain a record of their origin in the
+        # private _embedded_path key. This is used during manifest validation
+        # to identify its exact source.
+        if 'manifests' in src:
+            dst['_embeded_path'] = embedded_path
 
     def get_manifest(self, directory: str) -> Dict[str,Any]:
         """Return manifest information found in given directory."""
@@ -387,16 +397,22 @@ class SPDXObject:
         manifest = self.EMPTY_MANIFEST.copy()
 
         if directory in self.REFERENCED_MANIFESTS:
-            sbom_path = self.REFERENCED_MANIFESTS[directory]
-            sbom_yml = mft.load(sbom_path)
+            sbom_src = self.REFERENCED_MANIFESTS[directory]
+            if isinstance(sbom_src, str):
+                sbom_yml = mft.load(sbom_src)
+                sbom_path = sbom_src
+            else:
+                sbom_yml = sbom_src
+                sbom_path = sbom_src['_embeded_path']
+
             mft.validate(sbom_yml, sbom_path, directory)
-            self.update_manifest(manifest, sbom_yml)
+            self.update_manifest(manifest, sbom_yml, sbom_path)
 
         # Process sbom.yml manifest
         sbom_path = utils.pjoin(directory, 'sbom.yml')
         sbom_yml = mft.load(sbom_path)
         mft.validate(sbom_yml, sbom_path, directory)
-        self.update_manifest(manifest, sbom_yml)
+        self.update_manifest(manifest, sbom_yml, sbom_path)
 
         # Process idf_component.yml manifest
         sbom_path = utils.pjoin(directory, 'idf_component.yml')
@@ -406,10 +422,10 @@ class SPDXObject:
         idf_component_sbom = idf_component_yml.get('sbom', dict())
         mft.fix(idf_component_sbom)
         mft.validate(idf_component_sbom, sbom_path, directory)
-        self.update_manifest(manifest, idf_component_sbom)
+        self.update_manifest(manifest, idf_component_sbom, sbom_path)
 
         # try to fill missing info dirrectly from idf_component.yml
-        self.update_manifest(manifest, idf_component_yml)
+        self.update_manifest(manifest, idf_component_yml, sbom_path)
 
         if not manifest['supplier']:
             # Supplier not explicitly provided, use maintainers if present.
@@ -653,16 +669,33 @@ class SPDXPackage(SPDXObject):
         subpackages: List['SPDXPackage'] = []
 
         # Add referenced manifests into the global list
-        for referenced_manifest in self.manifest['manifests']:
+        for cnt, referenced_manifest in enumerate(self.manifest['manifests']):
             # get full paths to the referenced manifest file and its destination directory
-            path = utils.pjoin(self.dir, referenced_manifest['path'])
             dest = utils.pjoin(self.dir, referenced_manifest['dest'])
+            if 'path' in referenced_manifest:
+                # Manifest referenced by file.
+                src = utils.pjoin(self.dir, referenced_manifest['path'])
+                path = src
+            else:
+                # Manifest embedded.
+                src = referenced_manifest['manifest']
+                assert isinstance(src, dict)
+                # Get information where exactly this embedded manifest is coming from.
+                # See get_manifest and update_manifest functions.
+                path = self.manifest['_embeded_path']
+                path = f'{path} in embedded manifest {cnt}'
+                src['_embeded_path'] = path
+
             if dest in self.REFERENCED_MANIFESTS:
-                existing_path = self.REFERENCED_MANIFESTS[dest]
+                existing_src = self.REFERENCED_MANIFESTS[dest]
+                if isinstance(existing_src, str):
+                    existing_path = existing_src
+                else:
+                    existing_path = existing_src['_embeded_path']
                 log.die((f'Destination "{dest}" for referenced manifest "{path}" already has manifest '
                          f'file "{existing_path}". Two manifest files are referencing same destination.'))
 
-            self.REFERENCED_MANIFESTS[dest] = path
+            self.REFERENCED_MANIFESTS[dest] = src
 
         if self.args.rem_submodules and self.args.rem_subpackages:
             return subpackages

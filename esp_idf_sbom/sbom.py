@@ -10,11 +10,12 @@ import sys
 from argparse import Namespace
 from typing import Any, Dict, List
 
+import yaml
 from rich.progress import (BarColumn, MofNCompleteColumn, Progress, TextColumn,
                            TimeElapsedColumn)
 from rich.table import Table
 
-from esp_idf_sbom.libsbom import git, log, mft, nvd, report, spdx
+from esp_idf_sbom.libsbom import git, log, mft, nvd, report, spdx, utils
 
 NAME_ARG = {
     'args': ['--extended-scan', '-n', '--name'],
@@ -292,6 +293,9 @@ def cmd_manifest_validate(args: Namespace) -> int:
                 log.err(str(e))
                 exit_code = 1
 
+    except (RuntimeError, OSError) as e:
+        progress.stop()
+        log.die(str(e))
     except KeyboardInterrupt:
         progress.stop()
         log.die('Process terminated')
@@ -480,6 +484,43 @@ def cmd_manifest_license(args: Namespace) -> int:
 
     except KeyboardInterrupt:
         progress.stop()
+        log.die('Process terminated')
+
+    return 0
+
+
+def cmd_manifest_aggregate(args: Namespace) -> int:
+    # Locate all manifest files in the specified path and create a single SBOM
+    # manifest file with all manifests expanded.
+    try:
+        aggregated: Dict = {'manifests': []}
+        args.aggregate_path = utils.presolve(args.aggregate_path)
+        manifests = mft.get_manifests([args.aggregate_path])
+        for manifest in manifests:
+            dst = manifest['_dst']
+            dst = utils.prelpath(dst, args.aggregate_path)
+            # Remove internal manifest entries which are added by the get_manifests function.
+            manifest.pop('_dst')
+            manifest.pop('_src')
+            # Remove the referenced manifests, as they will be provided as standalone
+            # expanded manifests by the get_manifests function.
+            manifest.pop('manifests', None)
+            if not manifest:
+                # There is nothing left in the manifest file, because it was just a placeholder
+                # for referenced manifests.
+                continue
+            aggregated['manifests'].append({'manifest': manifest, 'dest': dst})
+
+        if args.output_file:
+            with open(args.output_file, 'w') as f:
+                yaml.dump(aggregated, f)
+
+        else:
+            log.print(yaml.dump(aggregated))
+
+    except (RuntimeError, OSError) as e:
+        log.die(str(e))
+    except KeyboardInterrupt:
         log.die('Process terminated')
 
     return 0
@@ -733,6 +774,21 @@ def main():
                                          default=bool(os.environ.get('SBOM_LICENSE_UNIFY_COPYRIGHTS')),
                                          help=('Unify copyright years. If the same copyright is used at different '
                                                'places with different years or year ranges, this option will unify them.'))
+
+    manifest_aggregate_parser = manifest_subparsers.add_parser(
+        'aggregate',
+        help=(('Combine all manifest files located in AGGREGATE_PATH into a single SBOM '
+               'manifest file by using the referenced manifests'))
+    )
+    manifest_aggregate_parser.set_defaults(func=cmd_manifest_aggregate)
+    manifest_aggregate_parser.add_argument('aggregate_path',
+                                           metavar='AGGREGATE_PATH',
+                                           default=[os.path.curdir],
+                                           help=('Manifest file (sbom.yml, idf_manifest.yml or .gitmodules) or '
+                                                 'directory, which will be searched for manifest files.'))
+    manifest_aggregate_parser.add_argument('-o', '--output-file',
+                                           metavar='OUTPUT_FILE',
+                                           help=('Print output to the specified file instead of stdout.'))
 
     ofile = sys.stdout
     try:
