@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2025 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 import os
@@ -143,6 +143,44 @@ def test_referenced_manifests(hello_world_build: Path) -> None:
     manifest.unlink()
     subpackage_manifest.unlink()
     subsubpackage_manifest.unlink()
+
+
+def test_embedded_manifests(hello_world_build: Path) -> None:
+    """ This is similar test as test_referenced_manifests, but this time
+    embedded manifests are used to create subpackages. Meaning the
+    sbom.yml manifest is created for the main component only and it contains
+    embedded manifests for subpackage and subsubpackage.
+    main
+    ├── sbom.yml
+    └── subpackage
+        └── subsubpackage
+    """
+
+    manifest = hello_world_build / 'main' / 'sbom.yml'
+
+    content = f'''
+              manifests:
+                - manifest:
+                    name: TEST_SUBPACKAGE
+                  dest: subpackage
+                - manifest:
+                    name: TEST_SUBSUBPACKAGE
+                  dest: subpackage/subsubpackage
+              '''
+    manifest.write_text(dedent(content))
+
+    subpackage_path = hello_world_build / 'main' / 'subpackage'
+    (subpackage_path / 'subsubpackage').mkdir(parents=True)
+
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'create',  proj_desc_path],
+            check=True, capture_output=True, text=True)
+
+    assert 'TEST_SUBPACKAGE' in p.stdout
+    assert 'TEST_SUBSUBPACKAGE' in p.stdout
+
+    shutil.rmtree(subpackage_path)
+    manifest.unlink()
 
 
 def test_sbom_manifest_from_idf_component(hello_world_build: Path) -> None:

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2025 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 import os
@@ -42,7 +42,7 @@ def load(path: str) -> Dict[str,Any]:
         with open(path, 'r') as f:
             manifest = yaml.safe_load(f.read()) or {}
     except (OSError, yaml.parser.ParserError, yaml.scanner.ScannerError) as e:
-        log.die(f'Cannot parse manifest file "{path}": {e}')
+        raise RuntimeError(f'Cannot parse manifest file "{path}": {e}')
 
     fix(manifest)
 
@@ -149,7 +149,7 @@ def get_files(sources: List[str]) -> Dict[str, Set[str]]:
                         continue
                     add_file(os.path.join(root, file))
         else:
-            log.die(f'"{source}" is not file nor directory')
+            raise RuntimeError(f'"{source}" is not file nor directory')
 
     return manifest_files
 
@@ -164,19 +164,27 @@ def get_manifests(sources: List[str]) -> List[Dict[str, Any]]:
                       and for which directory it's intended.
     """
     manifest_list: List[Dict[str, Any]] = []
+    manifest_sources: List = []
     manifest_source_files = get_files(sources)
 
-    manifest_files = [(s, os.path.dirname(s)) for s in manifest_source_files['sbom.yml'] |
-                      manifest_source_files['idf_component.yml']]
-    while manifest_files:
-        manifest_path, manifest_dir = manifest_files.pop()
-        manifest_file = os.path.basename(manifest_path)
-        manifest = load(manifest_path)
-        if manifest_file == 'idf_component.yml':
-            # extract the sbom part from idf_component manifest
-            manifest = manifest.get('sbom', dict())
-        if not manifest:
-            continue
+    manifest_sources = [(s, os.path.dirname(s)) for s in manifest_source_files['sbom.yml'] |
+                        manifest_source_files['idf_component.yml']]
+    while manifest_sources:
+        manifest_source, manifest_dir = manifest_sources.pop(0)
+        if isinstance(manifest_source, str):
+            # Manifest source is in a file.
+            manifest_path = manifest_source
+            manifest_file = os.path.basename(manifest_path)
+            manifest = load(manifest_path)
+            if manifest_file == 'idf_component.yml':
+                # extract the sbom part from idf_component manifest
+                manifest = manifest.get('sbom', dict())
+            if not manifest:
+                continue
+        else:
+            # Manifest source is embedded dictionary.
+            manifest_path = manifest_source[0]
+            manifest = manifest_source[1]
 
         manifest['_src'] = manifest_path
         manifest['_dst'] = manifest_dir
@@ -184,9 +192,21 @@ def get_manifests(sources: List[str]) -> List[Dict[str, Any]]:
 
         # Add referenced manifests to list for processing
         referenced_manifests = manifest.get('manifests', [])
-        for referenced_manifest in referenced_manifests:
-            manifest_files.append((utils.pjoin(manifest_dir, referenced_manifest['path']),
-                                   utils.pjoin(manifest_dir, referenced_manifest['dest'])))
+        for cnt, referenced_manifest in enumerate(referenced_manifests):
+            if not referenced_manifest.get('dest'):
+                raise RuntimeError(f'Referenced manifest {cnt} in "{manifest_path}" is missing "dest" entry')
+
+            if referenced_manifest.get('path'):
+                # Referenced manifest is in file.
+                manifest_sources.append((utils.pjoin(manifest_dir, referenced_manifest['path']),
+                                         utils.pjoin(manifest_dir, referenced_manifest['dest'])))
+            elif referenced_manifest.get('manifest'):
+                # Referenced manifest is embedded.
+                manifest_sources.append(((f'{manifest_path} in embedded manifest {cnt}', referenced_manifest['manifest']),
+                                         utils.pjoin(manifest_dir, referenced_manifest['dest'])))
+            else:
+                raise RuntimeError((f'Referenced manifest {cnt} in "{manifest_path}" is '
+                                    f'missing "path" or "manifest" entries'))
 
     # Handle all .gitmodules files
     for submodule_file in manifest_source_files['.gitmodules']:
@@ -235,6 +255,15 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             licensing.parse(lic, validate=True)
         except ExpressionError as e:
             raise schema.SchemaError((f'License expression "{lic}" is not valid: {e}'))
+        return True
+
+    def check_manifest(data: dict) -> bool:
+        if 'path' in data and 'manifest' in data:
+            raise schema.SchemaError((f'Both "path" and "manifest" keys specified for "manifest" entry'))
+
+        if 'path' not in data and 'manifest' not in data:
+            raise schema.SchemaError((f'Missing "path" or "manifest" key for "manifests" entry'))
+
         return True
 
     def check_manifest_path(path:str) -> bool:
@@ -286,11 +315,17 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             'reason': str,
         }], ignore_extra_keys=True)
 
-    manifests_schema = schema.Schema(
-        [{
-            'path': schema.And(str, check_manifest_path),
+    manifest_entry_schema = schema.Schema(schema.And(
+        {
+            schema.Optional('path'): schema.And(str, check_manifest_path),
+            schema.Optional('manifest'): dict,
             'dest': schema.And(str, check_manifest_destination),
-        }], ignore_extra_keys=True)
+        },
+        check_manifest,
+        ignore_extra_keys=True))
+
+    manifests_schema = schema.Schema(
+        [manifest_entry_schema], ignore_extra_keys=True)
 
     sbom_schema = schema.Schema(
         {
