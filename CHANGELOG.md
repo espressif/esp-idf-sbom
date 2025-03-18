@@ -1,3 +1,16 @@
+## v0.20.0 (2025-03-18)
+
+### New Features
+
+- add support for embedded manifests
+
+### Bug Fixes
+
+- use version comparison as a fallback to CPE match strings
+- evaluate CPE attribute relations correctly
+- avoid calling git-grep if neither cpe nor keyword is present
+- clone and fetch only the master branch
+
 ## v0.19.1 (2024-10-18)
 
 ### Bug Fixes
