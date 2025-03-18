@@ -1,3 +1,9 @@
+## v0.20.1 (2025-03-18)
+
+### Bug Fixes
+
+- bump python to 3.13 in release_pypi.yml
+
 ## v0.20.0 (2025-03-18)
 
 ### New Features
