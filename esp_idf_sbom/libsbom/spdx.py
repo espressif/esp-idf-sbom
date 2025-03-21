@@ -562,9 +562,6 @@ class SPDXPackage(SPDXObject):
             self.include = False
             return
 
-        # CPEs may contain version placeholder.
-        self.manifest['cpe'] = [cpe.format(self.manifest['version']) for cpe in self.manifest['cpe']]
-
         if not self.manifest['version']:
             self.manifest['version'] = self.guess_version(self.dir, self.name)
 
