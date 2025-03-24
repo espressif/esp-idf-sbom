@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
-import re
 import shlex
 from typing import Any, Dict, List, Set
 
@@ -10,7 +9,7 @@ import schema
 import yaml
 from license_expression import ExpressionError, get_spdx_licensing
 
-from esp_idf_sbom.libsbom import expr, git, log, utils
+from esp_idf_sbom.libsbom import CPE, expr, git, log, utils
 
 licensing = get_spdx_licensing()
 
@@ -25,6 +24,20 @@ def fix(manifest: Dict[str, Any]) -> None:
     # Convert copyrights into a list
     if 'copyright' in manifest and type(manifest['copyright']) is not list:
         manifest['copyright'] = [manifest['copyright']]
+
+    # Convert virtpackages into a list
+    if 'virtpackages' in manifest and type(manifest['virtpackages']) is not list:
+        manifest['virtpackages'] = [manifest['virtpackages']]
+
+    # Convert cve-keywords into a list
+    if 'cve-keywords' in manifest and type(manifest['cve-keywords']) is not list:
+        manifest['cve-keywords'] = [manifest['cve-keywords']]
+
+    if 'cpe' in manifest:
+        # Expand cpes with version value
+        ver = manifest.get('version', '')
+        cpes_expanded = [cpe.format(ver) for cpe in manifest['cpe']]
+        manifest['cpe'] = cpes_expanded
 
 
 def load(path: str) -> Dict[str,Any]:
@@ -99,21 +112,7 @@ def get_submodule_manifest(cfg: Dict[str, Any]) -> Dict[str, Any]:
             manifests_paths_list.append({'path': path, 'dest': directory})
         module_sbom['manifests'] = manifests_paths_list
 
-    # Convert cpe into a list
-    if 'cpe' in module_sbom and type(module_sbom['cpe']) is not list:
-        module_sbom['cpe'] = [module_sbom['cpe']]
-
-    if 'copyright' in module_sbom and type(module_sbom['copyright']) is not list:
-        module_sbom['copyright'] = [module_sbom['copyright']]
-
-    # Convert virtpackages into a list
-    if 'virtpackages' in module_sbom and type(module_sbom['virtpackages']) is not list:
-        module_sbom['virtpackages'] = [module_sbom['virtpackages']]
-
-    # Convert cve-keywords into a list
-    if 'cve-keywords' in module_sbom and type(module_sbom['cve-keywords']) is not list:
-        module_sbom['cve-keywords'] = [module_sbom['cve-keywords']]
-
+    fix(module_sbom)
     return module_sbom
 
 
@@ -245,9 +244,8 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
 
     def check_cpes(cpes: List[str]) -> bool:
         for cpe in cpes:
-            # Note: WFN, well-formed CPE name, attributes rules are stricter
-            if not re.match(r'^cpe:2\.3:[aho](?::\S+){10}', cpe):
-                raise schema.SchemaError((f'Value "{cpe}" does not seem to be well-formed CPE name (WFN)'))
+            if not CPE.is_cpe_valid(cpe):
+                raise schema.SchemaError((f'Value "{cpe}" does not seem to be well-formed CPE string binding'))
         return True
 
     def check_license(lic: str) -> bool:

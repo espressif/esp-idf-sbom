@@ -134,6 +134,7 @@ def check_cpe(cpe: str, localdb: bool=False) -> List[Dict[str, Any]]:
     if localdb:
         cpe_vulns = repo_check(cpe)
     else:
+        cpe = urllib.parse.quote(cpe)
         cpe_vulns = nvd_request(f'cpeName={cpe}')
 
     return cpe_vulns
