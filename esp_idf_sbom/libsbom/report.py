@@ -13,6 +13,7 @@ from rich.table import Table
 from esp_idf_sbom import __version__
 from esp_idf_sbom.libsbom import log, nvd, utils
 
+REPORT_VERSION = 1
 empty_record = {
     'vulnerable': '',
     'pkg_name': '',
@@ -53,6 +54,7 @@ def show(records: List[Dict[str,str]],
 
     # Get summary
     summary: Dict[str, Any] = {
+        'version': REPORT_VERSION,
         'date': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
         'database': database,
         'tool': {

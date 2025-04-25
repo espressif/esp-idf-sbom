@@ -56,6 +56,7 @@ setup(
             'pytest',
             'commitizen',
             'spdx-tools>=v0.8.0rc1',
+            'jsonschema',
         ],
     },
     classifiers=[

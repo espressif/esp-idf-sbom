@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2023-2025 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import os
 import re
 import shutil
@@ -12,6 +13,7 @@ from tempfile import TemporaryDirectory
 from textwrap import dedent
 
 import pytest
+from jsonschema import validate
 
 IDF_PY_PATH = Path(os.environ['IDF_PATH']) / 'tools' / 'idf.py'
 
@@ -450,3 +452,24 @@ def test_local_db() -> None:
     assert re.search(r'YES.+CVE-2021-31572', p.stdout) is not None
 
     manifest.unlink()
+
+
+def test_validate_report_json(hello_world_build: Path) -> None:
+    """Generate SPDX SBOM, scan it for vulnerabilities, generate report in JSON format and validate it with JSON schema."""
+    tmpdir = TemporaryDirectory()
+    tmpdir_path = Path(tmpdir.name)
+    sbom_path = tmpdir_path / 'sbom.spdx'
+    report_path = tmpdir_path / 'report.json'
+    schema_path = Path(__file__).resolve().parent.parent / 'report_schema.json'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+
+    run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--output', sbom_path, proj_desc_path], check=True)
+
+    run([sys.executable, '-m', 'esp_idf_sbom', 'check', '--local-db',
+         '--format', 'json', '--output', report_path, sbom_path], check=True)
+
+    with open(report_path, 'r') as report_file, open(schema_path, 'r') as schema_file:
+        json_data = json.load(report_file)
+        schema_data = json.load(schema_file)
+
+        validate(instance=json_data, schema=schema_data)

@@ -1,0 +1,241 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://github.com/espressif/esp-idf-sbom/blob/master/report_schema.json",
+    "title": "Vulnerability report",
+    "description": "JSON format report schema for check command",
+    "type": "object",
+    "properties": {
+        "version": {
+            "type": "integer",
+            "description": "Report format version."
+        },
+        "date": {
+            "type": "string",
+            "description": "Date the report was created."
+        },
+        "database": {
+            "type": "string",
+            "description": "Database source and version used for scanning."
+        },
+        "tool": {
+            "type": "object",
+            "description": "Information about tool used for scanning.",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Tool name."
+                },
+                "version": {
+                    "type": "string",
+                    "description": "Tool version."
+                },
+                "cmdl": {
+                    "type": "string",
+                    "description": "Command line including all the arguments used to invoke the tool."
+                }
+            },
+            "required": [
+                "cmdl",
+                "name",
+                "version"
+            ],
+            "additionalProperties": false
+        },
+        "project": {
+            "type": "object",
+            "description": "Details of project for which this report is created.",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Project name."
+                },
+                "version": {
+                    "type": "string",
+                    "description": "Project version."
+                }
+            },
+            "required": [
+                "name",
+                "version"
+            ],
+            "additionalProperties": false
+        },
+        "cves_summary": {
+            "type": "object",
+            "description": "Overview of identified vulnerabilities.",
+            "properties": {
+                "critical": {
+                    "description": "Summary of identified critical vulnerabilities.",
+                    "$ref": "#/$defs/cves_type_summary"
+                },
+                "high": {
+                    "description": "Summary of identified high vulnerabilities.",
+                    "$ref": "#/$defs/cves_type_summary"
+                },
+                "medium": {
+                    "description": "Summary of identified medium vulnerabilities.",
+                    "$ref": "#/$defs/cves_type_summary"
+                },
+                "low": {
+                    "description": "Summary of identified low vulnerabilities.",
+                    "$ref": "#/$defs/cves_type_summary"
+                },
+                "unknown": {
+                    "description": "Summary of identified unknown vulnerabilities.",
+                    "$ref": "#/$defs/cves_type_summary"
+                },
+                "total_cves_count": {
+                    "description": "Total cound of identified vulnerabilities.",
+                    "type": "integer"
+                },
+                "packages_count": {
+                    "description": "Number of packages with identified vulnerabilities.",
+                    "type": "integer"
+                },
+                "all_cves": {
+                    "description": "List of CVEs for all identified vulnerabilities.",
+                    "$ref": "#/$defs/array_of_strings"
+                },
+                "all_packages": {
+                    "description": "List of all packages with identified vulnerabilities.",
+                    "$ref": "#/$defs/array_of_strings"
+                }
+            },
+            "required": [
+                "all_cves",
+                "all_packages",
+                "critical",
+                "high",
+                "low",
+                "medium",
+                "packages_count",
+                "total_cves_count",
+                "unknown"
+            ],
+            "additionalProperties": false
+        },
+        "records": {
+            "type": "array",
+            "description": "Comprehensive list of identified vulnerabilities and packages.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "vulnerable": {
+                        "type": "string",
+                        "description": "Vulnerability status for given package. YES - vulnerable, NO - not vulnerable, MAYBE - vulnerability found based on keyword search, EXCLUDED - vulnerability found, but is applicable, SKIPPED - package was not scanned for vulnerabilities."
+                    },
+                    "pkg_name": {
+                        "type": "string",
+                        "description": "Package name."
+                    },
+                    "pkg_version": {
+                        "type": "string",
+                        "description": "Package version."
+                    },
+                    "cve_id": {
+                        "type": "string",
+                        "description": "CVE ID of indentified vulnerability if any."
+                    },
+                    "cvss_base_score": {
+                        "type": "string",
+                        "description": "CVSS base score, empty if no vulnerability is identified for given package."
+                    },
+                    "cvss_base_severity": {
+                        "type": "string",
+                        "description": "CVSS base severity, empty if no vulnerability is identified for given package."
+                    },
+                    "cvss_version": {
+                        "type": "string",
+                        "description": "CVSS version, empty if no vulnerability is identified for given package."
+                    },
+                    "cvss_vector_string": {
+                        "type": "string",
+                        "description": "CVSS vector string, empty if no vulnerability is identified for given package."
+                    },
+                    "cpe": {
+                        "type": "string",
+                        "description": "CPE used for scanning, empty if not available."
+                    },
+                    "keyword": {
+                        "type": "string",
+                        "description": "Keyword used for scanning, empty if not available."
+                    },
+                    "cve_link": {
+                        "type": "string",
+                        "description": "NVD CVE URL, empty if no vulnerability is identified for given package."
+                    },
+                    "cve_desc": {
+                        "type": "string",
+                        "description": "CVE description, empty if no vulnerability is identified for given package."
+                    },
+                    "exclude_reason": {
+                        "type": "string",
+                        "description": "Explanation why package is not affected, empty if no vulnerability is identified for given package."
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "NVD vulnerability status, empty if no vulnerability is identified for given package."
+                    }
+                },
+                "required": [
+                    "cpe",
+                    "cve_desc",
+                    "cve_id",
+                    "cve_link",
+                    "cvss_base_score",
+                    "cvss_base_severity",
+                    "cvss_vector_string",
+                    "cvss_version",
+                    "exclude_reason",
+                    "keyword",
+                    "pkg_name",
+                    "pkg_version",
+                    "status",
+                    "vulnerable"
+                ],
+                "additionalProperties": false
+            }
+        }
+    },
+    "required": [
+        "cves_summary",
+        "database",
+        "date",
+        "project",
+        "records",
+        "tool"
+    ],
+    "additionalProperties": false,
+    "$defs": {
+        "array_of_strings": {
+            "type": "array",
+            "description": "Array of strings.",
+            "items": {
+                "type": "string"
+            }
+        },
+        "cves_type_summary": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "description": "Total number of CVEs with the given severity."
+                },
+                "cves": {
+                    "$ref": "#/$defs/array_of_strings",
+                    "description": "List of CVEs with the given severity."
+                },
+                "packages": {
+                    "$ref": "#/$defs/array_of_strings",
+                    "description": "List of packages affected by CVEs with the given severity."
+                }
+            },
+            "required": [
+                "count",
+                "cves",
+                "packages"
+            ],
+            "additionalProperties": false
+        }
+    }
+}
