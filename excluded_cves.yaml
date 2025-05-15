@@ -24,3 +24,5 @@ CVE-2025-23085: Related to Node.js
 CVE-2025-25293: Related to ruby-saml
 CVE-2025-30194: Related to DNSdist
 CVE-2023-53086: Related to Linux kernel
+CVE-2025-4638: Related to zlib source inside PointCloudLibrary (PCL). Already fixed in zlib
+CVE-2025-4640: Related to zlib source inside PointCloudLibrary (PCL). Already fixed in zlib
