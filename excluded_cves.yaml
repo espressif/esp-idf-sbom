@@ -28,3 +28,4 @@ CVE-2025-4638: Related to zlib source inside PointCloudLibrary (PCL). Already fi
 CVE-2025-4640: Related to zlib source inside PointCloudLibrary (PCL). Already fixed in zlib
 CVE-2022-50164: Related to Linux kernel
 CVE-2022-50178: Related to Linux kernel
+CVE-2025-38033: Related to Linux kernel
