@@ -29,3 +29,5 @@ CVE-2025-4640: Related to zlib source inside PointCloudLibrary (PCL). Already fi
 CVE-2022-50164: Related to Linux kernel
 CVE-2022-50178: Related to Linux kernel
 CVE-2025-38033: Related to Linux kernel
+CVE-2025-5087: Related to Kaleris NAVIS N4 ULC
+CVE-2025-52937: Related to zlib source inside PointCloudLibrary (PCL). Already fixed in zlib
