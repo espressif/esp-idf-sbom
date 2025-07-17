@@ -387,9 +387,6 @@ def is_version_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool:
     cpe_base = ':'.join(cpe.split(':')[:5])
     cpe_ver = cpe.split(':')[5]
 
-    def ver_cmp() -> bool:
-        return True
-
     for node in configuration['nodes']:
         for cpe_match in node['cpeMatch']:
             if not cpe_match['vulnerable']:
@@ -407,6 +404,13 @@ def is_version_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool:
 
             if not any((versionStartExcluding, versionStartIncluding,
                        versionEndExcluding, versionEndIncluding)):
+                # If there is no version range information available, compare
+                # the version from the CPE with the version from cpeMatch
+                # criteria.
+                criteria_ver = cpe_match['criteria'].split(':')[5]
+                if criteria_ver == cpe_ver:
+                    return True
+
                 # skip, no version information
                 continue
 
