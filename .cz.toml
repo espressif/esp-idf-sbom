@@ -1,5 +1,5 @@
 [tool.commitizen]
-version = "0.20.1"
+version = "0.21.0"
 update_changelog_on_bump = true
 tag_format = "v$version"
 changelog_start_rev = "v0.13.0"
