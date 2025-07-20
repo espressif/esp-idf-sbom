@@ -1,0 +1,114 @@
+manifests:
+- dest: .
+  manifest:
+    cpe:
+    - cpe:2.3:a:espressif:esp-idf:5.0.2:*:*:*:*:*:*:*
+    description: Espressif IoT Development Framework
+    name: esp-idf
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: 5.0.2
+- dest: components/mbedtls/mbedtls
+  manifest:
+    cpe:
+    - cpe:2.3:a:arm:mbed_tls:3.3.0:*:*:*:*:*:*:*
+    description: An open source, portable, easy to use, readable and flexible SSL
+      library.
+    originator: 'Organization: Trusted Firmware <mbed-tls-security@lists.trustedfirmware.org>'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: 3.3.0
+- dest: components/bootloader/subproject/components/micro-ecc/micro-ecc
+  manifest:
+    cpe:
+    - cpe:2.3:a:micro-ecc_project:micro-ecc:1.0:*:*:*:*:*:*:*
+    description: A small and fast ECDH and ECDSA implementation for 8-bit, 32-bit,
+      and 64-bit processors
+    hash: d037ec89546fad14b5c4d5456c2e23a71e554966
+    supplier: 'Person: Ken MacKay'
+    url: https://github.com/kmackay/micro-ecc
+    version: '1.0'
+- dest: components/json/cJSON
+  manifest:
+    cpe:
+    - cpe:2.3:a:cjson_project:cjson:1.7.15:*:*:*:*:*:*:*
+    description: Ultralightweight JSON parser in ANSI C
+    hash: cb8693b058ba302f4829ec6d03f609ac6f848546
+    supplier: 'Person: Dave Gamble'
+    url: https://github.com/DaveGamble/cJSON
+    version: 1.7.15
+- dest: components/protobuf-c/protobuf-c
+  manifest:
+    cpe:
+    - cpe:2.3:a:protobuf-c_project:protobuf-c:1.4.0:*:*:*:*:*:*:*
+    description: Protocol Buffers implementation in C
+    hash: abc67a11c6db271bedbb9f58be85d6f4e2ea8389
+    supplier: 'Organization: protobuf-c community <https://groups.google.com/g/protobuf-c>'
+    url: https://github.com/protobuf-c/protobuf-c
+    version: 1.4.0
+- dest: components/app_trace/sys_view/SEGGER
+  manifest:
+    cpe:
+    - cpe:2.3:a:segger:systemview:2.42:*:*:*:*:*:*:*
+    description: Real-time recording and visualization tool for embedded systems.
+    name: SystemView
+    originator: 'Organization: SEGGER Microcontroller GmbH'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: '2.42'
+- dest: components/wpa_supplicant
+  manifest:
+    cpe:
+    - cpe:2.3:a:w1.fi:wpa_supplicant:2.10:*:*:*:*:*:*:*
+    description: Espressif fork of wpa_supplicant - an open-source WPA/WPA2/WPA3/IEEE
+      802.1X Supplicant.
+    name: wpa_supplicant
+    originator: 'Person: Jouni Malinen'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: '2.10'
+- dest: components/openthread/openthread
+  manifest:
+    cpe:
+    - cpe:2.3:o:google:openthread:2022-10-27:*:*:*:*:*:*:*
+    description: OpenThread released by Google is an open-source implementation of
+      the Thread networking
+    hash: 005c5cefc22aaf0396e4327ee7f2e0ad32a7733b
+    name: openthread
+    originator: 'Organization: Google LLC'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    url: https://github.com/espressif/openthread
+    version: '2022-10-27'
+- dest: components/newlib
+  manifest:
+    cpe:
+    - cpe:2.3:a:newlib_project:newlib:4.1.0:*:*:*:*:*:*:*
+    description: An open-source C standard library implementation with additional
+      features and patches from Espressif.
+    name: newlib
+    originator: 'Organization: Red Hat Incorporated'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: 4.1.0
+- dest: components/lwip/lwip
+  manifest:
+    cpe:
+    - cpe:2.3:a:lwip_project:lwip:2.1.3:*:*:*:*:*:*:*
+    description: A Lightweight TCP/IP stack with additional features and patches from
+      Espressif.
+    name: lwip
+    originator: 'Organization: non-GNU software and documentation, lwIP Project <lwip-members@nongnu.org>'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: 2.1.3
+- dest: components/freertos/FreeRTOS-Kernel
+  manifest:
+    cpe:
+    - cpe:2.3:o:amazon:freertos:10.4.3:*:*:*:*:*:*:*
+    cve-exclude-list:
+    - cve: CVE-2024-28115
+      reason: Affects only ARMv7-M MPU ports, and ARMv8-M ports with Memory Protected
+        Unit (MPU) support enabled
+    - cve: CVE-2021-43997
+      reason: This vulnerability only affects ARMv7-M and ARMv8-M ports of FreeRTOS
+        and hence does not affect Espressif SoCs which are not based on these architectures.
+    description: An open-source, real-time operating system (RTOS) with additional
+      features and patches from Espressif.
+    name: freertos
+    originator: 'Organization: Amazon Web Services'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: 10.4.3
