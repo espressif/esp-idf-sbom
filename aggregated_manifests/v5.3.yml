@@ -1,0 +1,178 @@
+manifests:
+- dest: .
+  manifest:
+    cpe:
+    - cpe:2.3:a:espressif:esp-idf:5.3.0:*:*:*:*:*:*:*
+    description: Espressif IoT Development Framework
+    name: esp-idf
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: 5.3.0
+- dest: components/openthread
+  manifest:
+    description: Espressif fork of OpenThread project, used to maintain ESP-specific
+      patches and release branches
+    name: openthread component
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: '2023-07-06'
+- dest: components/fatfs
+  manifest:
+    description: Generic FAT Filesystem Module for embedded systems.
+    name: FatFs
+    originator: 'Person: ChaN'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: R0.15
+- dest: components/newlib
+  manifest:
+    cpe:
+    - cpe:2.3:a:newlib_project:newlib:4.3.0:*:*:*:*:*:*:*
+    cve-exclude-list:
+    - cve: CVE-2024-30949
+      reason: A vulnerability was discovered in the gettimeofday system call implementation
+        within the RISC-V libgloss component of Newlib. ESP-IDF does not link against
+        libgloss for RISC-V, hence the issue is not directly applicable. Still, the
+        relevant fix has been patched through https://github.com/espressif/newlib-esp32/commit/047ba47013c2656a1e7838dc86cbc75aeeaa67a7
+    description: An open-source C standard library implementation with additional
+      features and patches from Espressif.
+    name: newlib
+    originator: 'Organization: Red Hat Incorporated'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: 4.3.0
+- dest: components/freertos/FreeRTOS-Kernel
+  manifest:
+    cpe:
+    - cpe:2.3:o:amazon:freertos:10.5.1:*:*:*:*:*:*:*
+    cve-exclude-list:
+    - cve: CVE-2024-28115
+      reason: Affects only ARMv7-M MPU ports, and ARMv8-M ports with Memory Protected
+        Unit (MPU) support enabled
+    description: An open-source, real-time operating system (RTOS) with additional
+      features and patches from Espressif.
+    name: freertos
+    originator: 'Organization: Amazon Web Services'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: 10.5.1
+- dest: components/lwip/lwip
+  manifest:
+    cpe:
+    - cpe:2.3:a:lwip_project:lwip:2.1.3:*:*:*:*:*:*:*
+    description: A Lightweight TCP/IP stack with additional features and patches from
+      Espressif.
+    name: lwip
+    originator: 'Organization: non-GNU software and documentation, lwIP Project <lwip-members@nongnu.org>'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: 2.1.3
+- dest: components/http_parser
+  manifest:
+    description: HTTP request/response parser for c.
+    name: HTTP Parser
+    originator: 'Organization: NGINX, Joyent, Inc. and other Node contributors'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: 2.7.0
+- dest: components/bt/host/nimble/nimble
+  manifest:
+    description: An open-source Bluetooth 5.1 stack with additional features and patches
+      from Espressif.
+    name: Apache Mynewt Nimble
+    originator: 'Organization: The Apache Software Foundation'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: 1.5.0
+- dest: components/console/argtable3
+  manifest:
+    description: An open source ANSI C library that parses GNU-style command-line
+      options.
+    name: argtable3
+    originator: 'Organization: Argtable.org and individual contributors'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: 3.2.2
+- dest: components/mbedtls/mbedtls
+  manifest:
+    cpe:
+    - cpe:2.3:a:arm:mbed_tls:3.6.0:*:*:*:*:*:*:*
+    description: An open source, portable, easy to use, readable and flexible SSL
+      library with additional features and patches from Espressif.
+    originator: 'Organization: Trusted Firmware <mbed-tls-security@lists.trustedfirmware.org>'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: 3.6.0
+- dest: components/openthread/openthread
+  manifest:
+    cpe:
+    - cpe:2.3:o:google:openthread:2023-07-06:*:*:*:*:*:*:*
+    description: OpenThread released by Google is an open-source implementation of
+      the Thread networking
+    hash: be7d36e4ff9cf7df6dfce54e58a31163c87b93f7
+    name: openthread
+    originator: 'Organization: Google LLC'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    url: https://github.com/espressif/openthread
+    version: '2023-07-06'
+- dest: components/bootloader/subproject/components/micro-ecc/micro-ecc
+  manifest:
+    cpe:
+    - cpe:2.3:a:micro-ecc_project:micro-ecc:1.1:*:*:*:*:*:*:*
+    description: A small and fast ECDH and ECDSA implementation for 8-bit, 32-bit,
+      and 64-bit processors
+    hash: 24c60e243580c7868f4334a1ba3123481fe1aa48
+    supplier: 'Person: Ken MacKay'
+    url: https://github.com/kmackay/micro-ecc
+    version: '1.1'
+- dest: components/spiffs/spiffs
+  manifest:
+    description: Wear-leveled SPI flash file system for embedded devices
+    hash: 0dbb3f71c5f6fae3747a9d935372773762baf852
+    supplier: 'Person: Peter Andersson'
+    url: https://github.com/pellepl/spiffs
+    version: 0.2-255-g0dbb3f71c5f6
+- dest: components/json/cJSON
+  manifest:
+    cpe:
+    - cpe:2.3:a:cjson_project:cjson:1.7.18:*:*:*:*:*:*:*
+    description: Ultralightweight JSON parser in ANSI C
+    hash: acc76239bee01d8e9c858ae2cab296704e52d916
+    supplier: 'Person: Dave Gamble'
+    url: https://github.com/DaveGamble/cJSON
+    version: 1.7.18
+- dest: components/protobuf-c/protobuf-c
+  manifest:
+    cpe:
+    - cpe:2.3:a:protobuf-c_project:protobuf-c:1.4.1:*:*:*:*:*:*:*
+    description: Protocol Buffers implementation in C
+    hash: abc67a11c6db271bedbb9f58be85d6f4e2ea8389
+    supplier: 'Organization: protobuf-c community <https://groups.google.com/g/protobuf-c>'
+    url: https://github.com/protobuf-c/protobuf-c
+    version: 1.4.1
+- dest: components/unity/unity
+  manifest:
+    description: Simple Unit Testing for C
+    hash: bf560290f6020737eafaa8b5cbd2177c3956c03f
+    supplier: 'Organization: ThrowTheSwitch community <http://www.throwtheswitch.org>'
+    url: https://github.com/ThrowTheSwitch/Unity
+    version: v2.6.0-RC1
+- dest: components/cmock/CMock
+  manifest:
+    description: CMock - Mock/stub generator for C
+    hash: eeecc49ce8af123cf8ad40efdb9673e37b56230f
+    supplier: 'Organization: ThrowTheSwitch community <http://www.throwtheswitch.org>'
+    url: https://github.com/ThrowTheSwitch/CMock
+    version: v2.5.2-2-geeecc49ce8af
+- dest: components/app_trace/sys_view/SEGGER
+  manifest:
+    cpe:
+    - cpe:2.3:a:segger:systemview:3.42:*:*:*:*:*:*:*
+    description: Real-time recording and visualization tool for embedded systems.
+    name: SystemView
+    originator: 'Organization: SEGGER Microcontroller GmbH'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: '3.42'
+- dest: components/wpa_supplicant
+  manifest:
+    cpe:
+    - cpe:2.3:a:w1.fi:wpa_supplicant:2.10:*:*:*:*:*:*:*
+    cve-exclude-list:
+    - cve: CVE-2023-52160
+      reason: The relevant fix has been patched with https://github.com/espressif/esp-idf/commit/59a62f2af65945f92d475089f9ce66fce56cc737
+    description: Espressif fork of wpa_supplicant - an open-source WPA/WPA2/WPA3/IEEE
+      802.1X Supplicant.
+    name: wpa_supplicant
+    originator: 'Person: Jouni Malinen'
+    supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+    version: '2.10'
