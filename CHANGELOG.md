@@ -1,3 +1,15 @@
+## v0.21.0 (2025-07-19)
+
+### New Features
+
+- add a JSON schema for a vulnerability report in JSON format
+
+### Bug Fixes
+
+- handle version comparison when version ranges are not available
+- use stricter validation of CPE string binding
+- url encode cpe value before querying NVD REST API
+
 ## v0.20.1 (2025-03-18)
 
 ### Bug Fixes
