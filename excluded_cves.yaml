@@ -33,3 +33,4 @@ CVE-2025-5087: Related to Kaleris NAVIS N4 ULC
 CVE-2025-52937: Related to zlib source inside PointCloudLibrary (PCL). Already fixed in zlib
 CVE-2025-38226: Related to Linux kernel
 CVE-2025-2329: Related to Silicon Labs OpenThread RCP capable ICs and modules.
+CVE-2025-38528: Related to Linux kernel
