@@ -37,3 +37,6 @@ CVE-2025-38528: Related to Linux kernel
 CVE-2025-38606: Related to Linux kernel
 CVE-2025-30187: Related to DNSdist
 CVE-2025-35027: Related to Unitree
+CVE-2025-11616: Related to FreeRTOS-Plus-TCP
+CVE-2025-11617: Related to FreeRTOS-Plus-TCP
+CVE-2025-11618: Related to FreeRTOS-Plus-TCP
