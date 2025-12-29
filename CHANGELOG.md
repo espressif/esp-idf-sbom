@@ -1,3 +1,10 @@
+## v0.21.1 (2025-12-29)
+
+### Bug Fixes
+
+- add NONE to severity color map
+- exclude DuckDB related CVE
+
 ## v0.21.0 (2025-07-19)
 
 ### New Features
