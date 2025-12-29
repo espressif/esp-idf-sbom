@@ -137,6 +137,7 @@ def show(records: List[Dict[str,str]],
         'HIGH': '[dark_orange]',
         'MEDIUM': '[yellow]',
         'LOW': '[green]',
+        'NONE': '',
         '': ''
     }
 
