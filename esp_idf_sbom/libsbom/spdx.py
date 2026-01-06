@@ -973,8 +973,9 @@ class SPDXProject(SPDXPackage):
             cpe = f'cpe:2.3:a:espressif:esp-idf:{ver}:*:*:*:*:*:*:*'
             self['ExternalRef'] += [f'SECURITY cpe23Type {cpe}']
 
-        # Dependency on toolchain.
-        self['Relationship'] += [f'{self["SPDXID"][0]} DEPENDS_ON {self.toolchain["SPDXID"][0]}']
+        # Dependency on toolchain if toolchain info is available
+        if self.toolchain.info:
+            self['Relationship'] += [f'{self["SPDXID"][0]} DEPENDS_ON {self.toolchain["SPDXID"][0]}']
 
         # 1. Gather all component requirements into a `requirements set`.
         # 2. Gather components not present in the `requirements set` into the
@@ -1041,9 +1042,10 @@ class SPDXProject(SPDXPackage):
     def dump(self) -> str:
         out = super().dump()
 
-        out += '\n'
-        out += f'[blue]# {self.toolchain.name} toolchain[/blue]\n'
-        out += self.toolchain.dump()
+        if self.toolchain.info:
+            out += '\n'
+            out += f'[blue]# {self.toolchain.name} toolchain[/blue]\n'
+            out += self.toolchain.dump()
 
         for comp_name, comp in self.components.items():
             out += '\n'
@@ -1058,16 +1060,22 @@ class SPDXToolchain(SPDXPackage):
     def __init__(self, args: Namespace, proj_desc: Dict[str, Any]):
         self.proj_desc = proj_desc
         self.info = self._get_toolchain_info()
-        name = self.info['name']
-        super().__init__(args, proj_desc, self.info['path'], name, 'toolchain')
+        if self.info:
+            name = self.info['name']
+            super().__init__(args, proj_desc, self.info['path'], name, 'toolchain')
+        else:
+            log.warn(('The toolchain cannot be identified and will not be included '
+                      'in the generated SBOM. This is most likely due to the toolchain '
+                      'not being installed with the ESP-IDF.'))
 
     def get_manifest(self, path: str) -> Dict[str, Any]:
         # create manifest based on info from toolchain
         manifest = self.EMPTY_MANIFEST.copy()
-        manifest['description'] = self.info['description']
-        manifest['url'] = self.info['url']
-        manifest['version'] = self.info['version']
-        manifest['supplier'] = self.ESPRESSIF_SUPPLIER
+        if self.info:  # make mypy happy, because this method will not be called if self.info in None
+            manifest['description'] = self.info['description']
+            manifest['url'] = self.info['url']
+            manifest['version'] = self.info['version']
+            manifest['supplier'] = self.ESPRESSIF_SUPPLIER
         return manifest
 
     def include_package(self):
@@ -1085,21 +1093,27 @@ class SPDXToolchain(SPDXPackage):
         from idf_tools import CURRENT_PLATFORM
         return str(CURRENT_PLATFORM)
 
-    def _get_toolchain_info(self) -> Dict[str, str]:
+    def _get_toolchain_info(self) -> Optional[Dict[str, str]]:
         # Get toolchain info from idf tools.json file.
         info: Dict[str,str] = {}
 
         # Get toolchain name and version from the full c_compiler path.
         compiler_path_components = utils.psplit(self.proj_desc['c_compiler'])
-        name = compiler_path_components[-5]
-        version = compiler_path_components[-4]
+        try:
+            name = compiler_path_components[-5]
+            version = compiler_path_components[-4]
+        except IndexError:
+            compiler_path = self.proj_desc['c_compiler']
+            log.warn(f'cannot identify toolchain from compiler path "{compiler_path}"')
+            return None
         platform = self._get_current_platform()
         tools_fn = utils.pjoin(self.proj_desc['idf_path'], 'tools', 'tools.json')
         try:
             with open(tools_fn, 'r') as f:
                 tools = json.load(f)
         except (OSError, ValueError) as e:
-            log.die(f'cannot read idf tools description file: {e}')
+            log.warn(f'cannot read idf tools description file: {e}')
+            return None
 
         log.debug(f'toolchain: tools.json:')
         log.debug(json.dumps(tools, indent=4))
@@ -1107,16 +1121,19 @@ class SPDXToolchain(SPDXPackage):
         # Get toolchain info based on name found in compiler's path.
         tool_info = next((t for t in tools['tools'] if t['name'] == name), None)
         if not tool_info:
-            log.die(f'cannot find "{name}" tool in "{tools_fn}"')
+            log.warn(f'cannot find "{name}" tool in "{tools_fn}"')
+            return None
 
         # Get tool version based on version found in compiler's path.
         tool_version = next((v for v in tool_info['versions'] if v['name'] == version), None)  # type: ignore
         if not tool_version:
-            log.die(f'cannot find "{version}" for "{name}" tool in "{tools_fn}"')
+            log.warn(f'cannot find "{version}" for "{name}" tool in "{tools_fn}"')
+            return None
 
         if platform not in tool_version:  # type: ignore
-            log.die((f'cannot find "{platform}" platform for "{version}" '
+            log.warn((f'cannot find "{platform}" platform for "{version}" '
                      f'for "{name}" tool in "{tools_fn}"'))
+            return None
 
         info['name'] = name
         info['path'] = utils.pjoin('/',*compiler_path_components[:-4])
