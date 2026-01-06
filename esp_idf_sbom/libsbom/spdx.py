@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023-2025 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -821,6 +821,7 @@ class SPDXProject(SPDXPackage):
         with open(map_file, 'r') as f:
             lines = f.read().splitlines()
 
+        build_components = self.proj_desc['build_component_info']
         libs = set()
         for line in lines[2:]:
             if not line:
@@ -829,7 +830,15 @@ class SPDXProject(SPDXPackage):
                 continue
             lib = line.split('(',1)[0]
             if not os.path.isabs(lib):
-                lib = utils.pjoin(self.proj_desc['build_dir'], lib)
+                # The archive path in the map file is relative. First, check if
+                # any of the build components end with the relative path. If
+                # not, simply join it with the build directory.
+                for name, info in build_components.items():
+                    if info['file'].endswith(lib):
+                        lib = info['file']
+                        break
+                else:
+                    lib = utils.pjoin(self.proj_desc['build_dir'], lib)
             libs.add(lib)
 
         return list(libs)
