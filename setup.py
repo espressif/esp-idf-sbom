@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 import os.path
@@ -78,6 +78,9 @@ setup(
     entry_points={
         'console_scripts': [
             'esp-idf-sbom = esp_idf_sbom.sbom:main',
-        ]
+        ],
+        'idf_extension': [
+            'esp_idf_sbom_ext = esp_idf_sbom.idf_ext:action_extensions',
+        ],
     }
 )
