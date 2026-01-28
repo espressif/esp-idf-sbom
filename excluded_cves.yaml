@@ -45,3 +45,6 @@ CVE-2025-64429: Related to DuckDB (SQL database management system)
 CVE-2023-53742: Related to Linux kernel
 CVE-2025-40321: Related to Linux kernel
 CVE-2025-14847: Related to MongoDB
+CVE-2025-66199: Related to OpenSSL
+CVE-2026-24813: Related to cJSON in SKRoot-linuxKernelRoot. Already fixed in cJSON
+CVE-2026-24810: Related to cJSON in RethinkDB. Already fixed in cJSON
