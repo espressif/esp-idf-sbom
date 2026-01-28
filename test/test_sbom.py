@@ -473,3 +473,94 @@ def test_validate_report_json(hello_world_build: Path) -> None:
         schema_data = json.load(schema_file)
 
         validate(instance=json_data, schema=schema_data)
+
+
+def test_none_severity_handling() -> None:
+    """Test that CVEs with 'NONE' severity are handled correctly without KeyError."""
+    import io
+    from argparse import Namespace
+
+    from esp_idf_sbom.libsbom import log, report
+
+    # Create test records with different severity levels including NONE
+    test_records = [
+        {
+            'vulnerable': 'YES',
+            'pkg_name': 'test_package_1',
+            'pkg_version': '1.0.0',
+            'cve_id': 'CVE-2023-00001',
+            'cvss_base_score': '0.0',
+            'cvss_base_severity': 'NONE',
+            'cvss_version': '3.1',
+            'cvss_vector_string': 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N',
+            'cpe': 'cpe:2.3:a:test:test_package_1:1.0.0:*:*:*:*:*:*:*',
+            'keyword': '',
+            'cve_link': 'https://nvd.nist.gov/vuln/detail/CVE-2023-00001',
+            'cve_desc': 'Test CVE with NONE severity',
+            'exclude_reason': '',
+            'status': '',
+        },
+        {
+            'vulnerable': 'YES',
+            'pkg_name': 'test_package_2',
+            'pkg_version': '2.0.0',
+            'cve_id': 'CVE-2023-00002',
+            'cvss_base_score': '7.5',
+            'cvss_base_severity': 'HIGH',
+            'cvss_version': '3.1',
+            'cvss_vector_string': 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N',
+            'cpe': 'cpe:2.3:a:test:test_package_2:2.0.0:*:*:*:*:*:*:*',
+            'keyword': '',
+            'cve_link': 'https://nvd.nist.gov/vuln/detail/CVE-2023-00002',
+            'cve_desc': 'Test CVE with HIGH severity',
+            'exclude_reason': '',
+            'status': '',
+        },
+        {
+            'vulnerable': 'NO',
+            'pkg_name': 'test_package_3',
+            'pkg_version': '3.0.0',
+            'cve_id': '',
+            'cvss_base_score': '',
+            'cvss_base_severity': '',
+            'cvss_version': '',
+            'cvss_vector_string': '',
+            'cpe': 'cpe:2.3:a:test:test_package_3:3.0.0:*:*:*:*:*:*:*',
+            'keyword': '',
+            'cve_link': '',
+            'cve_desc': '',
+            'exclude_reason': '',
+            'status': '',
+        },
+    ]
+
+    # Capture the JSON output
+    stdout = io.StringIO()
+    log.set_console(stdout)
+
+    # Create test args for JSON output
+    args = Namespace(format='json', local_db=False)
+
+    try:
+        report.show(test_records, args, 'test_project', '1.0.0')
+        output = stdout.getvalue()
+    except KeyError as e:
+        pytest.fail(f'KeyError raised when handling NONE severity: {e}')
+
+    # Parse and validate the JSON output
+    result = json.loads(output)
+
+    # Verify 'none' severity data is present and correct
+    assert 'none' in result['cves_summary'], "'none' key missing from cves_summary"
+    assert result['cves_summary']['none']['count'] == 1, \
+        f"Expected 1 NONE CVE, got {result['cves_summary']['none']['count']}"
+    assert 'CVE-2023-00001' in result['cves_summary']['none']['cves'], \
+        "CVE-2023-00001 not found in 'none' severity CVEs"
+    assert 'test_package_1' in result['cves_summary']['none']['packages'], \
+        "test_package_1 not found in 'none' severity packages"
+
+    # Verify HIGH severity CVE is also correctly processed
+    assert result['cves_summary']['high']['count'] == 1, \
+        f"Expected 1 HIGH CVE, got {result['cves_summary']['high']['count']}"
+    assert 'CVE-2023-00002' in result['cves_summary']['high']['cves'], \
+        "CVE-2023-00002 not found in 'high' severity CVEs"

@@ -80,6 +80,10 @@
                     "description": "Summary of identified low vulnerabilities.",
                     "$ref": "#/$defs/cves_type_summary"
                 },
+                "none": {
+                    "description": "Summary of vulnerabilities with NONE severity.",
+                    "$ref": "#/$defs/cves_type_summary"
+                },
                 "unknown": {
                     "description": "Summary of identified unknown vulnerabilities.",
                     "$ref": "#/$defs/cves_type_summary"
@@ -108,6 +112,7 @@
                 "high",
                 "low",
                 "medium",
+                "none",
                 "packages_count",
                 "total_cves_count",
                 "unknown"

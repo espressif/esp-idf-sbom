@@ -87,6 +87,11 @@ def show(records: List[Dict[str,str]],
                 'cves': [],
                 'packages': [],
             },
+            'none': {
+                'count': 0,
+                'cves': [],
+                'packages': [],
+            },
             'unknown': {
                 'count': 0,
                 'cves': [],
@@ -172,6 +177,11 @@ def show(records: List[Dict[str,str]],
     table.add_row('[green]LOW CVEs found:', ', '.join(severity_dict['cves']))
     table.add_row('[green]Packages affect by LOW CVEs:', ', '.join(severity_dict['packages']))
     table.add_row('[green]Number of LOW CVEs:', str(severity_dict['count']), end_section=True)
+
+    severity_dict = summary['cves_summary']['none']
+    table.add_row('NONE CVEs found:', ', '.join(severity_dict['cves']))
+    table.add_row('Packages affect by NONE CVEs:', ', '.join(severity_dict['packages']))
+    table.add_row('Number of NONE CVEs:', str(severity_dict['count']), end_section=True)
 
     severity_dict = summary['cves_summary']['unknown']
     table.add_row('UNKNOWN CVEs found:', ', '.join(severity_dict['cves']))
