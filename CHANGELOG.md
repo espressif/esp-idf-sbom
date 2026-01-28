@@ -1,3 +1,15 @@
+## v1.0.0 (2026-01-28)
+
+### New Features
+
+- add extension for idf.py
+
+### Bug Fixes
+
+- recognize NONE as baseSeverity value in CVSS
+- harden linked components identification
+- ignore the toolchain package if it cannot be identified
+
 ## v0.21.1 (2025-12-29)
 
 ### Bug Fixes
