@@ -14,11 +14,12 @@ repos:
         args: ['-f=lf']
       - id: double-quote-string-fixer
 
-  - repo: https://github.com/pycqa/flake8
-    rev: 5.0.4
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
     hooks:
-      - id: flake8
-        args: ['--config=.flake8']
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
 
   - repo: https://github.com/pycqa/isort
     rev: 5.11.5

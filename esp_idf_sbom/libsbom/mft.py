@@ -257,10 +257,10 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
 
     def check_manifest(data: dict) -> bool:
         if 'path' in data and 'manifest' in data:
-            raise schema.SchemaError((f'Both "path" and "manifest" keys specified for "manifest" entry'))
+            raise schema.SchemaError(('Both "path" and "manifest" keys specified for "manifest" entry'))
 
         if 'path' not in data and 'manifest' not in data:
-            raise schema.SchemaError((f'Missing "path" or "manifest" key for "manifests" entry'))
+            raise schema.SchemaError(('Missing "path" or "manifest" key for "manifests" entry'))
 
         return True
 

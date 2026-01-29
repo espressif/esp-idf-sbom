@@ -27,6 +27,9 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: POSIX",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: MacOS :: MacOS X",
@@ -103,3 +106,23 @@ warn_return_any = true
 warn_no_return = true
 ignore_missing_imports = true
 disallow_incomplete_defs = false
+
+[tool.ruff]
+line-length = 160
+target-version = "py37"
+
+[tool.ruff.lint]
+# Enable pyflakes (F) and pycodestyle (E, W) rules
+# This matches the flake8 configuration
+select = [
+    "F",    # Pyflakes
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+]
+
+# Ignore specific rules that were ignored in flake8
+ignore = [
+    "E221",  # multiple spaces before operator
+    "E231",  # missing whitespace after ',', ';', or ':'
+    "E241",  # multiple spaces after ','
+]

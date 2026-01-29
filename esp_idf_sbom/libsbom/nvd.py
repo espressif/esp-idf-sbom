@@ -63,7 +63,7 @@ def nvd_request(params: str) -> List[Dict[str, Any]]:
                 if not WARNED:
                     log.warn(HINT)
                     WARNED = True
-                log.warn(f'Sleeping for 30 seconds...')
+                log.warn('Sleeping for 30 seconds...')
                 time.sleep(30)
                 continue
             elif e.code == 503 and unavailable_cnt < 3:
@@ -120,7 +120,7 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]]={}) -> Dict[str, Any]:
             log.warn(f'Cannot load list of excluded CVEs: {e}')
             break
     else:
-        log.warn(f'Failed to download list of excluded CVEs')
+        log.warn('Failed to download list of excluded CVEs')
 
     cache['cves'] = cves
     return cves

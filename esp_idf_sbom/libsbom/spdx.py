@@ -851,7 +851,7 @@ class SPDXProject(SPDXPackage):
         for name, info in components.items():
             if info['type'] == 'CONFIG_ONLY':
                 continue
-            if not info['file'] in self.linked_libs:
+            if info['file'] not in self.linked_libs:
                 remove.append(name)
 
         return self._remove_components(remove, components)
@@ -1123,7 +1123,7 @@ class SPDXToolchain(SPDXPackage):
             log.warn(f'cannot read idf tools description file: {e}')
             return None
 
-        log.debug(f'toolchain: tools.json:')
+        log.debug('toolchain: tools.json:')
         log.debug(json.dumps(tools, indent=4))
 
         # Get toolchain info based on name found in compiler's path.
