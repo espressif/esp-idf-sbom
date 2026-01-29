@@ -11,8 +11,7 @@ from argparse import Namespace
 from typing import Any, Dict, List
 
 import yaml
-from rich.progress import (BarColumn, MofNCompleteColumn, Progress, TextColumn,
-                           TimeElapsedColumn)
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from esp_idf_sbom.libsbom import git, log, mft, nvd, report, spdx, utils

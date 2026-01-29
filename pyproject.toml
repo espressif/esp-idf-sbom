@@ -100,12 +100,13 @@ line-length = 160
 target-version = "py37"
 
 [tool.ruff.lint]
-# Enable pyflakes (F) and pycodestyle (E, W) rules
-# This matches the flake8 configuration
+# Enable pyflakes (F), pycodestyle (E, W), and isort (I) rules
+# This matches the flake8 and isort configuration
 select = [
     "F",    # Pyflakes
     "E",    # pycodestyle errors
     "W",    # pycodestyle warnings
+    "I",    # isort
 ]
 
 # Ignore specific rules that were ignored in flake8
