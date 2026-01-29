@@ -11,8 +11,7 @@ from argparse import Namespace
 from typing import Any, Dict, List
 
 import yaml
-from rich.progress import (BarColumn, MofNCompleteColumn, Progress, TextColumn,
-                           TimeElapsedColumn)
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from esp_idf_sbom.libsbom import git, log, mft, nvd, report, spdx, utils
@@ -47,7 +46,7 @@ def cmd_check(args: Namespace) -> int:
         buf = sys.stdin.read()
     else:
         try:
-            with open(args.input_file, 'r') as f:
+            with open(args.input_file) as f:
                 buf = f.read()
         except OSError as e:
             sys.exit(f'cannot read SBOM file: {e}')
@@ -777,8 +776,8 @@ def main():
 
     manifest_aggregate_parser = manifest_subparsers.add_parser(
         'aggregate',
-        help=(('Combine all manifest files located in AGGREGATE_PATH into a single SBOM '
-               'manifest file by using the referenced manifests'))
+        help=('Combine all manifest files located in AGGREGATE_PATH into a single SBOM '
+               'manifest file by using the referenced manifests')
     )
     manifest_aggregate_parser.set_defaults(func=cmd_manifest_aggregate)
     manifest_aggregate_parser.add_argument('aggregate_path',

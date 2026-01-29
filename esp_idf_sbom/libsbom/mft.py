@@ -52,7 +52,7 @@ def load(path: str) -> Dict[str,Any]:
         return manifest
 
     try:
-        with open(path, 'r') as f:
+        with open(path) as f:
             manifest = yaml.safe_load(f.read()) or {}
     except (OSError, yaml.parser.ParserError, yaml.scanner.ScannerError) as e:
         raise RuntimeError(f'Cannot parse manifest file "{path}": {e}')
@@ -204,8 +204,8 @@ def get_manifests(sources: List[str]) -> List[Dict[str, Any]]:
                 manifest_sources.append(((f'{manifest_path} in embedded manifest {cnt}', referenced_manifest['manifest']),
                                          utils.pjoin(manifest_dir, referenced_manifest['dest'])))
             else:
-                raise RuntimeError((f'Referenced manifest {cnt} in "{manifest_path}" is '
-                                    f'missing "path" or "manifest" entries'))
+                raise RuntimeError(f'Referenced manifest {cnt} in "{manifest_path}" is '
+                                    f'missing "path" or "manifest" entries')
 
     # Handle all .gitmodules files
     for submodule_file in manifest_source_files['.gitmodules']:
@@ -235,32 +235,32 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
     def check_person_organization(s: str) -> bool:
         if s.startswith('Person: ') or s.startswith('Organization: '):
             return True
-        raise schema.SchemaError((f'Value "{s}" must have "Person: " or "Organization: " prefix.'))
+        raise schema.SchemaError(f'Value "{s}" must have "Person: " or "Organization: " prefix.')
 
     def check_url(url: str) -> bool:
         if utils.is_remote_url(url):
             return True
-        raise schema.SchemaError((f'Value {url} must have "git", "http" or "https" scheme and domain.'))
+        raise schema.SchemaError(f'Value {url} must have "git", "http" or "https" scheme and domain.')
 
     def check_cpes(cpes: List[str]) -> bool:
         for cpe in cpes:
             if not CPE.is_cpe_valid(cpe):
-                raise schema.SchemaError((f'Value "{cpe}" does not seem to be well-formed CPE string binding'))
+                raise schema.SchemaError(f'Value "{cpe}" does not seem to be well-formed CPE string binding')
         return True
 
     def check_license(lic: str) -> bool:
         try:
             licensing.parse(lic, validate=True)
         except ExpressionError as e:
-            raise schema.SchemaError((f'License expression "{lic}" is not valid: {e}'))
+            raise schema.SchemaError(f'License expression "{lic}" is not valid: {e}')
         return True
 
     def check_manifest(data: dict) -> bool:
         if 'path' in data and 'manifest' in data:
-            raise schema.SchemaError((f'Both "path" and "manifest" keys specified for "manifest" entry'))
+            raise schema.SchemaError('Both "path" and "manifest" keys specified for "manifest" entry')
 
         if 'path' not in data and 'manifest' not in data:
-            raise schema.SchemaError((f'Missing "path" or "manifest" key for "manifests" entry'))
+            raise schema.SchemaError('Missing "path" or "manifest" key for "manifests" entry')
 
         return True
 
@@ -268,13 +268,13 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
         fullpath = utils.pjoin(directory, path)
         if os.path.isfile(fullpath):
             return True
-        raise schema.SchemaError((f'Referenced manifest file "{fullpath}" does not exist or is not a file'))
+        raise schema.SchemaError(f'Referenced manifest file "{fullpath}" does not exist or is not a file')
 
     def check_manifest_destination(dest:str) -> bool:
         fullpath = utils.pjoin(directory, dest)
         if os.path.isdir(fullpath):
             return True
-        raise schema.SchemaError((f'Destination manifest directory "{fullpath}" does not exist or is not a directory'))
+        raise schema.SchemaError(f'Destination manifest directory "{fullpath}" does not exist or is not a directory')
 
     def check_hash(sha:str) -> bool:
         git_sha = git.get_tree_sha(directory)
@@ -304,7 +304,7 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
         try:
             expr.evaluate(expression)
         except RuntimeError as e:
-            raise schema.SchemaError((f'Expression "{expression}" is not valid: {e}'))
+            raise schema.SchemaError(f'Expression "{expression}" is not valid: {e}')
         return True
 
     cve_exclude_list_schema = schema.Schema(

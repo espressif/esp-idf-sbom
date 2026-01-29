@@ -15,7 +15,7 @@ def get_proj_desc(proj_desc_path: Path) -> dict:
     proj_desc: dict
 
     try:
-        with open(proj_desc_path, 'r') as f:
+        with open(proj_desc_path) as f:
             proj_desc = json.load(f)
     except (OSError, ValueError) as e:
         raise FatalError(f'cannot read project description file: {e}')
