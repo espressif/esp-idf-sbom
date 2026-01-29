@@ -478,8 +478,7 @@ class SPDXDocument(SPDXObject):
         self['Creator'] = ['Tool: ESP-IDF SBOM builder']
         self['Created'] = [created]
         self['CreatorComment'] = [('<text>'
-                                   'Draft esp-idf POC SBOM document in SPDX format. '
-                                   'Unofficial content for demonstration purposes only.'
+                                   'ESP-IDF SBOM document in SPDX format'
                                    '</text>')]
         self['Relationship'] += [f'{self["SPDXID"][0]} DESCRIBES {self.project["SPDXID"][0]}']
 
