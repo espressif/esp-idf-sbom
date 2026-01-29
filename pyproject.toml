@@ -1,0 +1,140 @@
+# SPDX-FileCopyrightText: 2023-2026 Espressif Systems (Shanghai) CO LTD
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=45"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "esp-idf-sbom"
+dynamic = ["version"]
+description = "SPDX SBOM generator for ESP-IDF projects"
+readme = "README.md"
+requires-python = ">=3.7"
+keywords = ["espressif", "embedded", "spdx", "sbom"]
+authors = [
+    {name = "Espressif Systems"}
+]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Environment :: Console",
+    "Topic :: Software Development :: Embedded Systems",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: POSIX",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS :: MacOS X",
+]
+dependencies = [
+    "PyYAML",
+    "schema",
+    "license-expression",
+    "rich",
+    "pyparsing>=2.2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "commitizen",
+    "spdx-tools>=v0.8.0rc1",
+    "jsonschema",
+]
+
+[project.urls]
+Homepage = "https://github.com/espressif/esp-idf-sbom"
+
+[project.scripts]
+esp-idf-sbom = "esp_idf_sbom.sbom:main"
+
+[project.entry-points.idf_extension]
+esp_idf_sbom_ext = "esp_idf_sbom.idf_ext:action_extensions"
+
+[tool.setuptools]
+packages = ["esp_idf_sbom", "esp_idf_sbom.libsbom"]
+
+[tool.setuptools.dynamic]
+version = {attr = "esp_idf_sbom.__version__"}
+
+[tool.commitizen]
+version = "1.0.0"
+update_changelog_on_bump = true
+tag_format = "v$version"
+changelog_start_rev = "v0.13.0"
+changelog_merge_prerelease = true
+annotated_tag = true
+bump_message = "change: Update version to $new_version"
+version_files = [
+    "esp_idf_sbom/__init__.py:__version__"
+]
+change_type_order = [
+    "BREAKING CHANGE",
+    "New Features",
+    "Bug Fixes",
+    "Code Refactoring",
+    "Performance Improvements"
+]
+
+[tool.commitizen.change_type_map]
+feat = "New Features"
+fix = "Bug Fixes"
+refactor = "Code Refactoring"
+perf = "Performance Improvements"
+
+[tool.pytest.ini_options]
+addopts = "-s -p no:pytest_embedded -p no:idf-ci"
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s %(levelname)s %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+junit_logging = "stdout"
+junit_log_passing_tests = false
+
+[tool.mypy]
+python_version = "3.9"
+disallow_untyped_defs = false
+warn_return_any = true
+warn_no_return = true
+ignore_missing_imports = true
+disallow_incomplete_defs = false
+
+[tool.flake8]
+select = [
+    # pyflakes error codes
+    "F401", "F402", "F403", "F404", "F405", "F406", "F407",
+    "F601", "F602", "F621", "F622", "F631",
+    "F701", "F702", "F703", "F704", "F705", "F706", "F707",
+    "F721", "F722",
+    "F811", "F812", "F821", "F822", "F823", "F831", "F841",
+    "F901",
+    # pycodestyle violations
+    "E101", "E111", "E112", "E113", "E114", "E115", "E116",
+    "E121", "E122", "E123", "E124", "E125", "E126", "E127", "E128", "E129", "E131", "E133",
+    "E201", "E202", "E203", "E211",
+    "E221", "E222", "E223", "E224", "E225", "E226", "E227", "E228", "E231",
+    "E241", "E242", "E251",
+    "E261", "E262", "E265", "E266",
+    "E271", "E272", "E273", "E274", "E275",
+    "E301", "E302", "E303", "E304", "E305", "E306",
+    "E401", "E402",
+    "E501", "E502",
+    "E701", "E702", "E703", "E704",
+    "E711", "E712", "E713", "E714", "E721", "E722", "E731", "E741", "E742", "E743",
+    "E901", "E902",
+    "W191", "W291", "W292", "W293", "W391", "W503", "W504", "W505",
+    "W601", "W602", "W603", "W604", "W605", "W606",
+    # flake8 violations
+    "E999",
+    # mccabe violations
+    "C901"
+]
+ignore = ["E221", "E231", "E241", "W503", "W504"]
+max-line-length = 160
+show_source = true
+statistics = true
