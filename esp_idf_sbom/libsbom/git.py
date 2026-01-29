@@ -178,7 +178,7 @@ def get_submodules_config(fn: str) -> CFGDict:
         }
     """
     cfg = get_config(fn)
-    prefix = f'submodule.'
+    prefix = 'submodule.'
     sub_cfg = CFGDict()
     for var, val in cfg.items():
         if not var.startswith(prefix):

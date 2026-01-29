@@ -15,7 +15,7 @@ workflow:
 # TEMPLATES
 # ------------------------------------------------------------------------------------------------------
 .base_template:
-  image: python:3.7-bullseye
+  image: python:3.11
   tags:
     - build
     - internet

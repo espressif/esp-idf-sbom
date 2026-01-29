@@ -1,0 +1,118 @@
+# SPDX-FileCopyrightText: 2023-2026 Espressif Systems (Shanghai) CO LTD
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=45"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "esp-idf-sbom"
+dynamic = ["version"]
+description = "SPDX SBOM generator for ESP-IDF projects"
+readme = "README.md"
+requires-python = ">=3.7"
+keywords = ["espressif", "embedded", "spdx", "sbom"]
+authors = [
+    {name = "Espressif Systems"}
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Environment :: Console",
+    "Topic :: Software Development :: Embedded Systems",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: POSIX",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS :: MacOS X",
+]
+dependencies = [
+    "PyYAML",
+    "schema",
+    "license-expression",
+    "rich",
+    "pyparsing>=2.2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "czespressif",
+    "spdx-tools>=0.8.0rc1",
+    "jsonschema",
+]
+
+[project.urls]
+Homepage = "https://github.com/espressif/esp-idf-sbom"
+
+[project.scripts]
+esp-idf-sbom = "esp_idf_sbom.sbom:main"
+
+[project.entry-points.idf_extension]
+esp_idf_sbom_ext = "esp_idf_sbom.idf_ext:action_extensions"
+
+[tool.setuptools]
+packages = ["esp_idf_sbom", "esp_idf_sbom.libsbom"]
+
+[tool.setuptools.dynamic]
+version = {attr = "esp_idf_sbom.__version__"}
+
+[tool.commitizen]
+name = "czespressif"
+version = "1.0.0"
+update_changelog_on_bump = true
+tag_format = "v$version"
+changelog_start_rev = "v0.13.0"
+changelog_merge_prerelease = true
+annotated_tag = true
+bump_message = "change(bump): release $current_version → $new_version [skip-ci]"
+version_files = [
+    "esp_idf_sbom/__init__.py:__version__"
+]
+
+[tool.pytest.ini_options]
+addopts = "-s -p no:pytest_embedded -p no:idf-ci"
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s %(levelname)s %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+junit_logging = "stdout"
+junit_log_passing_tests = false
+
+[tool.mypy]
+python_version = "3.9"
+disallow_untyped_defs = false
+warn_return_any = true
+warn_no_return = true
+ignore_missing_imports = true
+disallow_incomplete_defs = false
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Enable pyflakes (F), pycodestyle (E, W), isort (I), and pyupgrade (UP) rules
+# This matches the flake8 and isort configuration
+select = [
+    "F",    # Pyflakes
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "UP",   # pyupgrade
+]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.ruff.format]
+quote-style = 'single'
+indent-style = 'space'
+docstring-code-format = true
