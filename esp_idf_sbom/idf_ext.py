@@ -3,12 +3,14 @@
 import json
 import sys
 from pathlib import Path
-from subprocess import CalledProcessError, run
+from subprocess import CalledProcessError
+from subprocess import run
 from typing import Any
 
 import click
 from idf_py_actions.errors import FatalError
-from idf_py_actions.tools import PropertyDict, yellow_print
+from idf_py_actions.tools import PropertyDict
+from idf_py_actions.tools import yellow_print
 
 
 def get_proj_desc(proj_desc_path: Path) -> dict:
@@ -28,8 +30,9 @@ def get_proj_desc_path(args: PropertyDict) -> Path:
 
 
 def action_extensions(base_actions: dict, project_path: str) -> dict:
-    def sbom_create(subcommand_name: str, ctx: click.Context, args: PropertyDict,
-                    spdx_file: str, **action_args: Any) -> None:
+    def sbom_create(
+        subcommand_name: str, ctx: click.Context, args: PropertyDict, spdx_file: str, **action_args: Any
+    ) -> None:
         proj_desc_path = get_proj_desc_path(args)
         proj_desc = get_proj_desc(proj_desc_path)
         app_bin = proj_desc['app_bin']
@@ -37,15 +40,17 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
         if not spdx_file:
             spdx_file = (Path(args.build_dir) / app_bin).with_suffix('.spdx')
 
-        cmd = [sys.executable,
-               '-m',
-               'esp_idf_sbom',
-               'create',
-               '--rem-unused',
-               '--rem-config',
-               '--output-file',
-               str(spdx_file),
-               str(proj_desc_path)]
+        cmd = [
+            sys.executable,
+            '-m',
+            'esp_idf_sbom',
+            'create',
+            '--rem-unused',
+            '--rem-config',
+            '--output-file',
+            str(spdx_file),
+            str(proj_desc_path),
+        ]
         try:
             run(cmd, check=True)
         except CalledProcessError as e:
@@ -53,10 +58,18 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
 
         yellow_print(f'SBOM for "{app_bin}" created in "{spdx_file}"')
 
-    def sbom_check(subcommand_name: str, ctx: click.Context, args: PropertyDict,
-                   spdx_file: str, path: str, report_file: str, output_format: str,
-                   nvd_api: bool, no_sync_db: bool, **action_args: Any) -> None:
-
+    def sbom_check(
+        subcommand_name: str,
+        ctx: click.Context,
+        args: PropertyDict,
+        spdx_file: str,
+        path: str,
+        report_file: str,
+        output_format: str,
+        nvd_api: bool,
+        no_sync_db: bool,
+        **action_args: Any,
+    ) -> None:
         if spdx_file:
             cmd = [sys.executable, '-m', 'esp_idf_sbom', 'check', '--format', output_format]
         else:
@@ -93,9 +106,11 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
                 'options': [
                     {
                         'names': ['--spdx-file'],
-                        'help': ('The SBOM SPDX file path. The SBOM is by default created '
-                                 'in the project build directory and is named after the project, '
-                                 'with the filename having a .spdx extension.'),
+                        'help': (
+                            'The SBOM SPDX file path. The SBOM is by default created '
+                            'in the project build directory and is named after the project, '
+                            'with the filename having a .spdx extension.'
+                        ),
                         'type': str,
                     }
                 ],
@@ -103,8 +118,7 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
             },
             'sbom-check': {
                 'callback': sbom_check,
-                'help': ('Check application SBOM SPDX file or path with SBOM YAML '
-                         'manifest files for vulnerabilities'),
+                'help': ('Check application SBOM SPDX file or path with SBOM YAML manifest files for vulnerabilities'),
                 'options': [
                     {
                         'names': ['--spdx-file'],
@@ -113,8 +127,9 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
                     },
                     {
                         'names': ['--path'],
-                        'help': ('Path to recursively search for SBOM YAML manifest files and '
-                                 'scan them for vulnerabilities.'),
+                        'help': (
+                            'Path to recursively search for SBOM YAML manifest files and scan them for vulnerabilities.'
+                        ),
                         'type': str,
                     },
                     {
@@ -130,18 +145,22 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
                     },
                     {
                         'names': ['--nvd-api'],
-                        'help': ('Use NVD REST API for vulnerabilities scan. '
-                                 'By default local NVD database mirror is used. '
-                                 'This option requires an internet connection, and '
-                                 'the scan may take longer.'),
+                        'help': (
+                            'Use NVD REST API for vulnerabilities scan. '
+                            'By default local NVD database mirror is used. '
+                            'This option requires an internet connection, and '
+                            'the scan may take longer.'
+                        ),
                         'is_flag': True,
                         'default': False,
                     },
                     {
                         'names': ['--no-sync-db'],
-                        'help': ('By default, the local NVD database is updated before each scan. '
-                                 'This option prevents the automatic update, allowing scans to be '
-                                 'performed without an internet connection.'),
+                        'help': (
+                            'By default, the local NVD database is updated before each scan. '
+                            'This option prevents the automatic update, allowing scans to be '
+                            'performed without an internet connection.'
+                        ),
                         'is_flag': True,
                         'default': False,
                     },

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -6,7 +6,10 @@ Simple module for git interaction.
 """
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
 
 from esp_idf_sbom.libsbom import utils
 
@@ -33,7 +36,7 @@ def get_gitpath(path: str) -> str:
     return _helper(['git', 'rev-parse', '--git-path', path])
 
 
-def submodule_foreach_enum(git_wdir: str, cache: Dict[str,List[Dict[str,str]]]={}) -> List[Dict[str,str]]:
+def submodule_foreach_enum(git_wdir: str, cache: Dict[str, List[Dict[str, str]]] = {}) -> List[Dict[str, str]]:
     """Return list of dictionaries with info about submodules found in git
     working directory. No recursive search is done and this function needs
     to be called again, with proper git working directory, to get submodules
@@ -48,8 +51,9 @@ def submodule_foreach_enum(git_wdir: str, cache: Dict[str,List[Dict[str,str]]]={
     if git_wdir in cache:
         return cache[git_wdir]
 
-    out = _helper(['git', '-C', git_wdir, 'submodule', '--quiet', 'foreach',
-                   'echo "$name,$sm_path,$displaypath,$sha1,$toplevel"'])
+    out = _helper(
+        ['git', '-C', git_wdir, 'submodule', '--quiet', 'foreach', 'echo "$name,$sm_path,$displaypath,$sha1,$toplevel"']
+    )
 
     submodules = []
     for line in out.splitlines():
@@ -81,10 +85,11 @@ class CFGDict(dict):
        it returns the last list entry. This mimics git-config --get
        d.get_value('a') # returns 2
     """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def get_value(self, key: str, default: Optional[Any]=None) -> Any:
+    def get_value(self, key: str, default: Optional[Any] = None) -> Any:
         """As "git-config --get" return only the last value."""
         val = self.get(key, default)
         if isinstance(val, list):
@@ -104,7 +109,7 @@ class CFGDict(dict):
             super().__setitem__(key, value)
 
 
-def get_config(fn: str, cache: Dict[str, CFGDict]={}) -> CFGDict:
+def get_config(fn: str, cache: Dict[str, CFGDict] = {}) -> CFGDict:
     """Return git configuration for absolute config file path.
 
     It uses git-config --list and parses its output into a CFGDict object.
@@ -145,7 +150,7 @@ def get_submodule_config(git_wdir: str, name: str) -> CFGDict:
     for var, val in cfg.items():
         if not var.startswith(prefix):
             continue
-        var = var[len(prefix):]
+        var = var[len(prefix) :]
         sub_cfg[var] = val
 
     return sub_cfg
@@ -183,7 +188,7 @@ def get_submodules_config(fn: str) -> CFGDict:
     for var, val in cfg.items():
         if not var.startswith(prefix):
             continue
-        var = var[len(prefix):]
+        var = var[len(prefix) :]
         splitted = var.rsplit('.', maxsplit=1)
         if len(splitted) != 2:
             continue

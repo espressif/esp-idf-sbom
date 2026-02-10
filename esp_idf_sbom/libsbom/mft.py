@@ -1,15 +1,23 @@
-# SPDX-FileCopyrightText: 2023-2025 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 import os
 import shlex
-from typing import Any, Dict, List, Set
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Set
 
 import schema
 import yaml
-from license_expression import ExpressionError, get_spdx_licensing
+from license_expression import ExpressionError
+from license_expression import get_spdx_licensing
 
-from esp_idf_sbom.libsbom import CPE, expr, git, log, utils
+from esp_idf_sbom.libsbom import CPE
+from esp_idf_sbom.libsbom import expr
+from esp_idf_sbom.libsbom import git
+from esp_idf_sbom.libsbom import log
+from esp_idf_sbom.libsbom import utils
 
 licensing = get_spdx_licensing()
 
@@ -40,14 +48,14 @@ def fix(manifest: Dict[str, Any]) -> None:
         manifest['cpe'] = cpes_expanded
 
 
-def load(path: str) -> Dict[str,Any]:
+def load(path: str) -> Dict[str, Any]:
     """Load manifest file
 
     :param path:  Full path to the manifest file.
     :returns:     Manifest dictionary.
     """
 
-    manifest: Dict[str,Any] = {}
+    manifest: Dict[str, Any] = {}
     if not os.path.isfile(path):
         return manifest
 
@@ -69,7 +77,7 @@ def get_submodule_manifest(cfg: Dict[str, Any]) -> Dict[str, Any]:
     :returns:     Manifest dictionary.
     """
     # Get all sbom keys and strip "sbom-" prefix
-    module_sbom = {k[len('sbom-'):]:v for k,v in cfg.items() if k.startswith('sbom-')}
+    module_sbom = {k[len('sbom-') :]: v for k, v in cfg.items() if k.startswith('sbom-')}
 
     if 'cve-exclude-list' in module_sbom:
         # Convert cve-exclude-list values from .gitconfig into list of dicts
@@ -123,11 +131,7 @@ def get_files(sources: List[str]) -> Dict[str, Set[str]]:
     :returns:         Dictionary with set of manifest file paths devided by
                       type(sbom.yml, idf_component.yml, .gitmodules)
     """
-    manifest_files: Dict[str, Set[str]] = {
-        'sbom.yml': set(),
-        'idf_component.yml': set(),
-        '.gitmodules': set()
-    }
+    manifest_files: Dict[str, Set[str]] = {'sbom.yml': set(), 'idf_component.yml': set(), '.gitmodules': set()}
 
     def add_file(path: str) -> None:
         file_name = os.path.basename(path)
@@ -166,8 +170,9 @@ def get_manifests(sources: List[str]) -> List[Dict[str, Any]]:
     manifest_sources: List = []
     manifest_source_files = get_files(sources)
 
-    manifest_sources = [(s, os.path.dirname(s)) for s in manifest_source_files['sbom.yml'] |
-                        manifest_source_files['idf_component.yml']]
+    manifest_sources = [
+        (s, os.path.dirname(s)) for s in manifest_source_files['sbom.yml'] | manifest_source_files['idf_component.yml']
+    ]
     while manifest_sources:
         manifest_source, manifest_dir = manifest_sources.pop(0)
         if isinstance(manifest_source, str):
@@ -197,15 +202,24 @@ def get_manifests(sources: List[str]) -> List[Dict[str, Any]]:
 
             if referenced_manifest.get('path'):
                 # Referenced manifest is in file.
-                manifest_sources.append((utils.pjoin(manifest_dir, referenced_manifest['path']),
-                                         utils.pjoin(manifest_dir, referenced_manifest['dest'])))
+                manifest_sources.append(
+                    (
+                        utils.pjoin(manifest_dir, referenced_manifest['path']),
+                        utils.pjoin(manifest_dir, referenced_manifest['dest']),
+                    )
+                )
             elif referenced_manifest.get('manifest'):
                 # Referenced manifest is embedded.
-                manifest_sources.append(((f'{manifest_path} in embedded manifest {cnt}', referenced_manifest['manifest']),
-                                         utils.pjoin(manifest_dir, referenced_manifest['dest'])))
+                manifest_sources.append(
+                    (
+                        (f'{manifest_path} in embedded manifest {cnt}', referenced_manifest['manifest']),
+                        utils.pjoin(manifest_dir, referenced_manifest['dest']),
+                    )
+                )
             else:
-                raise RuntimeError(f'Referenced manifest {cnt} in "{manifest_path}" is '
-                                    f'missing "path" or "manifest" entries')
+                raise RuntimeError(
+                    f'Referenced manifest {cnt} in "{manifest_path}" is missing "path" or "manifest" entries'
+                )
 
     # Handle all .gitmodules files
     for submodule_file in manifest_source_files['.gitmodules']:
@@ -222,7 +236,7 @@ def get_manifests(sources: List[str]) -> List[Dict[str, Any]]:
     return manifest_list
 
 
-def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) -> None:
+def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = True) -> None:
     """Validate manifest dictionary
 
     :param manifest:  Loaded manifest file.
@@ -264,19 +278,19 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
 
         return True
 
-    def check_manifest_path(path:str) -> bool:
+    def check_manifest_path(path: str) -> bool:
         fullpath = utils.pjoin(directory, path)
         if os.path.isfile(fullpath):
             return True
         raise schema.SchemaError(f'Referenced manifest file "{fullpath}" does not exist or is not a file')
 
-    def check_manifest_destination(dest:str) -> bool:
+    def check_manifest_destination(dest: str) -> bool:
         fullpath = utils.pjoin(directory, dest)
         if os.path.isdir(fullpath):
             return True
         raise schema.SchemaError(f'Destination manifest directory "{fullpath}" does not exist or is not a directory')
 
-    def check_hash(sha:str) -> bool:
+    def check_hash(sha: str) -> bool:
         git_sha = git.get_tree_sha(directory)
         if git_sha is None:
             # Even though the manifest contains hash variable, it may happen
@@ -285,12 +299,14 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             # This is the case for managed components. Since there is no git information
             # available, we just skip this check.
             return True
-        msg = (f'Manifest in \"{source}\" contains SHA \"{sha}\", which does not '
-               f'match SHA \"{git_sha}\" recorded in git-tree for directory "{directory}". '
-               f'Please update \"hash\" in \"{source}\" manifest '
-               f'and also please do not forget to update version and other '
-               f'information if necessary. It is important to keep this information '
-               f'up-to-date for SBOM generation.')
+        msg = (
+            f'Manifest in "{source}" contains SHA "{sha}", which does not '
+            f'match SHA "{git_sha}" recorded in git-tree for directory "{directory}". '
+            f'Please update "hash" in "{source}" manifest '
+            f'and also please do not forget to update version and other '
+            f'information if necessary. It is important to keep this information '
+            f'up-to-date for SBOM generation.'
+        )
         if sha == git_sha:
             return True
         raise schema.SchemaError(msg)
@@ -308,27 +324,33 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
         return True
 
     cve_exclude_list_schema = schema.Schema(
-        [{
-            'cve': str,
-            'reason': str,
-        }], ignore_extra_keys=True)
+        [
+            {
+                'cve': str,
+                'reason': str,
+            }
+        ],
+        ignore_extra_keys=True,
+    )
 
-    manifest_entry_schema = schema.Schema(schema.And(
-        {
-            schema.Optional('path'): schema.And(str, check_manifest_path),
-            schema.Optional('manifest'): dict,
-            'dest': schema.And(str, check_manifest_destination),
-        },
-        check_manifest,
-        ignore_extra_keys=True))
+    manifest_entry_schema = schema.Schema(
+        schema.And(
+            {
+                schema.Optional('path'): schema.And(str, check_manifest_path),
+                schema.Optional('manifest'): dict,
+                'dest': schema.And(str, check_manifest_destination),
+            },
+            check_manifest,
+            ignore_extra_keys=True,
+        )
+    )
 
-    manifests_schema = schema.Schema(
-        [manifest_entry_schema], ignore_extra_keys=True)
+    manifests_schema = schema.Schema([manifest_entry_schema], ignore_extra_keys=True)
 
     sbom_schema = schema.Schema(
         {
             schema.Optional('name'): str,
-            schema.Optional('version'): schema.Or(str,float,int),
+            schema.Optional('version'): schema.Or(str, float, int),
             schema.Optional('repository'): schema.And(str, check_url),
             schema.Optional('url'): schema.And(str, check_url),
             schema.Optional('cpe'): schema.And(list, check_cpes),
@@ -343,7 +365,9 @@ def validate(manifest: Dict[str,str], source:str, directory:str, die:bool=True) 
             schema.Optional('manifests'): manifests_schema,
             schema.Optional('virtpackages'): schema.And(list, check_virtpackages),
             schema.Optional('if'): schema.And(str, check_if),
-        }, ignore_extra_keys=True)
+        },
+        ignore_extra_keys=True,
+    )
 
     try:
         sbom_schema.validate(manifest)
