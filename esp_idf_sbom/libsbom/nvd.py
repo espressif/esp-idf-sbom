@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023-2025 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -12,18 +12,23 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 import yaml
 
-from esp_idf_sbom.libsbom import CPE, git, log, utils
+from esp_idf_sbom.libsbom import CPE
+from esp_idf_sbom.libsbom import git
+from esp_idf_sbom.libsbom import log
+from esp_idf_sbom.libsbom import utils
 
-HINT = '''\
+HINT = """\
 NVD REST API five requests in a rolling 30 second window reached.
 To overcome this limitation you may request NVD API key at
 https://nvd.nist.gov/developers/request-an-api-key and set the NVDAPIKEY
 environmental variable. For more information please see
-https://nvd.nist.gov/developers/start-here, section "Rate Limits".'''
+https://nvd.nist.gov/developers/start-here, section "Rate Limits"."""
 WARNED = False
 
 NVD_MIRROR_URL = 'https://github.com/espressif/esp-nvd-mirror.git'
@@ -63,7 +68,7 @@ def nvd_request(params: str) -> List[Dict[str, Any]]:
                 if not WARNED:
                     log.warn(HINT)
                     WARNED = True
-                log.warn(f'Sleeping for 30 seconds...')
+                log.warn('Sleeping for 30 seconds...')
                 time.sleep(30)
                 continue
             elif e.code == 503 and unavailable_cnt < 3:
@@ -96,7 +101,7 @@ def nvd_request(params: str) -> List[Dict[str, Any]]:
     return vulns
 
 
-def get_excluded_cves(cache: Dict[str, Dict[str, Any]]={}) -> Dict[str, Any]:
+def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}) -> Dict[str, Any]:
     """Retrieve the YAML file from the esp-idf-sbom repository, which includes a list of excluded CVEs."""
 
     if 'cves' in cache:
@@ -120,14 +125,14 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]]={}) -> Dict[str, Any]:
             log.warn(f'Cannot load list of excluded CVEs: {e}')
             break
     else:
-        log.warn(f'Failed to download list of excluded CVEs')
+        log.warn('Failed to download list of excluded CVEs')
 
     cache['cves'] = cves
     return cves
 
 
 # https://nvd.nist.gov/developers/vulnerabilities
-def check_cpe(cpe: str, localdb: bool=False) -> List[Dict[str, Any]]:
+def check_cpe(cpe: str, localdb: bool = False) -> List[Dict[str, Any]]:
     """Check given CPE against NVD data."""
 
     # Check vulnerabilities that have already been processed in the NVD and have an assigned CPE.
@@ -140,7 +145,7 @@ def check_cpe(cpe: str, localdb: bool=False) -> List[Dict[str, Any]]:
     return cpe_vulns
 
 
-def check_keyword(keyword: str, localdb: bool=False) -> List[Dict[str, Any]]:
+def check_keyword(keyword: str, localdb: bool = False) -> List[Dict[str, Any]]:
     """Check given keyword against CVE description."""
 
     cpe_vulns: List[Dict[str, Any]] = []
@@ -212,7 +217,7 @@ def cache_cves(cpes: List[str], keywords: List[str]) -> None:
     cmd += ['HEAD', '--', 'cve']
 
     rv, stdout, stderr = utils.run(cmd)
-    if rv not in [0,1]:
+    if rv not in [0, 1]:
         # git fatal error
         raise RuntimeError(stderr)
     for cve_fn in stdout.splitlines():
@@ -380,7 +385,7 @@ def vercmp(ver1: str, ver2: str) -> int:
     elif len(v1_parts) > len(v2_parts):
         return 1
     else:
-        return 0    # versions are equal
+        return 0  # versions are equal
 
 
 def is_version_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool:
@@ -402,8 +407,7 @@ def is_version_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool:
             versionEndExcluding = cpe_match.get('versionEndExcluding')
             versionEndIncluding = cpe_match.get('versionEndIncluding')
 
-            if not any((versionStartExcluding, versionStartIncluding,
-                       versionEndExcluding, versionEndIncluding)):
+            if not any((versionStartExcluding, versionStartIncluding, versionEndExcluding, versionEndIncluding)):
                 # If there is no version range information available, compare
                 # the version from the CPE with the version from cpeMatch
                 # criteria.
@@ -470,12 +474,22 @@ def sync() -> int:
     dst = local_db_path()
     if not git.get_gitdir(dst):
         log.eprint(f'Cloning NVD data from repository {NVD_MIRROR_URL} to {dst}. This may take some time.')
-        cmd = ['git', 'clone', '--bare', '--depth', '1', '--single-branch', '--branch',
-               'master', '--no-tags', NVD_MIRROR_URL, dst]
+        cmd = [
+            'git',
+            'clone',
+            '--bare',
+            '--depth',
+            '1',
+            '--single-branch',
+            '--branch',
+            'master',
+            '--no-tags',
+            NVD_MIRROR_URL,
+            dst,
+        ]
     else:
         log.eprint(f'Synchronizing NVD data from the remote repository {NVD_MIRROR_URL} to {dst}.')
-        cmd = ['git', '-C', dst, 'fetch', '--depth', '1', '--force', '--no-tags',
-               'origin', 'master:master']
+        cmd = ['git', '-C', dst, 'fetch', '--depth', '1', '--force', '--no-tags', 'origin', 'master:master']
 
     rv, _, _ = utils.run(cmd, stdout=False, stderr=False)
     return rv

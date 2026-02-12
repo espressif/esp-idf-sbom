@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# SPDX-FileCopyrightText: 2023-2025 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
@@ -8,31 +8,44 @@ import json
 import os
 import sys
 from argparse import Namespace
-from typing import Any, Dict, List
+from typing import Any
+from typing import Dict
+from typing import List
 
 import yaml
-from rich.progress import (BarColumn, MofNCompleteColumn, Progress, TextColumn,
-                           TimeElapsedColumn)
+from rich.progress import BarColumn
+from rich.progress import MofNCompleteColumn
+from rich.progress import Progress
+from rich.progress import TextColumn
+from rich.progress import TimeElapsedColumn
 from rich.table import Table
 
-from esp_idf_sbom.libsbom import git, log, mft, nvd, report, spdx, utils
+from esp_idf_sbom.libsbom import git
+from esp_idf_sbom.libsbom import log
+from esp_idf_sbom.libsbom import mft
+from esp_idf_sbom.libsbom import nvd
+from esp_idf_sbom.libsbom import report
+from esp_idf_sbom.libsbom import spdx
+from esp_idf_sbom.libsbom import utils
 
 NAME_ARG = {
     'args': ['--extended-scan', '-n', '--name'],
     'kwargs': {
         'action': 'store_true',
         'dest': 'name',
-        'help': ('If available, use the product part of the CPE and the keywords found '
-                 'under the cve-keywords key in the manifest or generated SBOM file to '
-                 'search for potential vulnerabilities. This involves scanning CVE '
-                 'descriptions for these keywords in CVEs that have not yet been analyzed '
-                 'by the NVD. The identified CVEs should be thoroughly examined for false '
-                 'positives. Using this option may result in a report that includes CVEs '
-                 'unrelated to the scanned components or CVEs that have already been fixed '
-                 'in the scanned component versions. Exercise caution when using this option, '
-                 'as it can provide early insights into newly reported CVEs but may also '
-                 'lead to misleading reports.'),
-    }
+        'help': (
+            'If available, use the product part of the CPE and the keywords found '
+            'under the cve-keywords key in the manifest or generated SBOM file to '
+            'search for potential vulnerabilities. This involves scanning CVE '
+            'descriptions for these keywords in CVEs that have not yet been analyzed '
+            'by the NVD. The identified CVEs should be thoroughly examined for false '
+            'positives. Using this option may result in a report that includes CVEs '
+            'unrelated to the scanned components or CVEs that have already been fixed '
+            'in the scanned component versions. Exercise caution when using this option, '
+            'as it can provide early insights into newly reported CVEs but may also '
+            'lead to misleading reports.'
+        ),
+    },
 }
 
 
@@ -47,12 +60,12 @@ def cmd_check(args: Namespace) -> int:
         buf = sys.stdin.read()
     else:
         try:
-            with open(args.input_file, 'r') as f:
+            with open(args.input_file) as f:
                 buf = f.read()
         except OSError as e:
             sys.exit(f'cannot read SBOM file: {e}')
 
-    record_list: List[Dict[str,str]] = []
+    record_list: List[Dict[str, str]] = []
     exit_code = 0
 
     packages = spdx.parse_packages(buf)
@@ -65,7 +78,8 @@ def cmd_check(args: Namespace) -> int:
         TimeElapsedColumn(),
         TextColumn('{task.description}'),
         disable=args.no_progress,
-        console=log.console_stderr)
+        console=log.console_stderr,
+    )
 
     try:
         if args.local_db:
@@ -93,12 +107,12 @@ def cmd_check(args: Namespace) -> int:
         progress.start()
         progress_task = progress.add_task('Checking packages', total=len(packages))
         for pkg in packages.values():
-            pkg_records: List[Dict[str,str]] = []
+            pkg_records: List[Dict[str, str]] = []
             pkg_name = pkg['PackageName'][0]
             pkg_ver = pkg['PackageVersion'][0] if 'PackageVersion' in pkg else ''
             package_added = False
 
-            progress.update(progress_task,advance=1, refresh=True, description=pkg['PackageName'][0])
+            progress.update(progress_task, advance=1, refresh=True, description=pkg['PackageName'][0])
 
             cpes = []
             keywords = []
@@ -158,7 +172,7 @@ def cmd_check(args: Namespace) -> int:
         progress.stop()
         log.die('Process terminated')
 
-    progress.update(progress_task,advance=0, refresh=True, description='')
+    progress.update(progress_task, advance=0, refresh=True, description='')
     progress.stop()
 
     # Project package is the first one
@@ -220,11 +234,16 @@ def cmd_license(args: Namespace) -> int:
             packages.append(package_info)
 
     if args.format == 'json':
-        log.print_json(json.dumps(
-            {'license_concluded': license_concluded,
-             'licenses': licenses,
-             'copyrights': copyrights,
-             'packages': packages}))
+        log.print_json(
+            json.dumps(
+                {
+                    'license_concluded': license_concluded,
+                    'licenses': licenses,
+                    'copyrights': copyrights,
+                    'packages': packages,
+                }
+            )
+        )
         return 0
 
     table = Table(title=f'Licenses and copyrights for project {proj_name}', show_header=False)
@@ -270,7 +289,8 @@ def cmd_manifest_validate(args: Namespace) -> int:
         TimeElapsedColumn(),
         TextColumn('{task.description}'),
         disable=args.no_progress,
-        console=log.console_stderr)
+        console=log.console_stderr,
+    )
 
     exit_code = 0
     try:
@@ -300,14 +320,14 @@ def cmd_manifest_validate(args: Namespace) -> int:
         progress.stop()
         log.die('Process terminated')
 
-    progress.update(progress_task,advance=0, refresh=True, description='')
+    progress.update(progress_task, advance=0, refresh=True, description='')
     progress.stop()
 
     return exit_code
 
 
 def cmd_manifest_check(args: Namespace) -> int:
-    record_list: List[Dict[str,str]] = []
+    record_list: List[Dict[str, str]] = []
     exit_code = 0
 
     progress = Progress(
@@ -316,7 +336,8 @@ def cmd_manifest_check(args: Namespace) -> int:
         TimeElapsedColumn(),
         TextColumn('{task.description}'),
         disable=args.no_progress,
-        console=log.console_stderr)
+        console=log.console_stderr,
+    )
 
     try:
         if args.local_db and not args.no_sync_db:
@@ -341,7 +362,7 @@ def cmd_manifest_check(args: Namespace) -> int:
         progress.start()
         progress_task = progress.add_task('Checking manifest files for vulnerabilities', total=len(manifests))
         for manifest in manifests:
-            pkg_records: List[Dict[str,str]] = []
+            pkg_records: List[Dict[str, str]] = []
             pkg_name = manifest.get('name')
             pkg_ver = manifest.get('version', '')
             package_added = False
@@ -407,7 +428,7 @@ def cmd_manifest_check(args: Namespace) -> int:
         progress.stop()
         log.die('Process terminated')
 
-    progress.update(progress_task,advance=0, refresh=True, description='')
+    progress.update(progress_task, advance=0, refresh=True, description='')
     progress.stop()
     report.show(record_list, args)
 
@@ -421,7 +442,8 @@ def cmd_manifest_license(args: Namespace) -> int:
         TimeElapsedColumn(),
         TextColumn('{task.description}'),
         disable=args.no_progress,
-        console=log.console_stderr)
+        console=log.console_stderr,
+    )
 
     packages = []
     progress.start()
@@ -464,7 +486,7 @@ def cmd_manifest_license(args: Namespace) -> int:
             package_info['copyrights'] = package_copyrights
             packages.append(package_info)
 
-        progress.update(progress_task,advance=0, refresh=True, description='')
+        progress.update(progress_task, advance=0, refresh=True, description='')
         progress.stop()
 
         if args.format == 'json':
@@ -528,267 +550,365 @@ def cmd_manifest_aggregate(args: Namespace) -> int:
 
 def main():
     parser = argparse.ArgumentParser(prog='esp-idf-sbom', description='ESP-IDF SBOM tool')
-    parser.add_argument('-q', '--quiet',
-                        action='store_true',
-                        default=bool(os.environ.get('SBOM_QUIET')),
-                        help='Suppress all output.')
-    parser.add_argument('-n', '--no-color',
-                        action='store_true',
-                        default=bool(os.environ.get('SBOM_NO_COLOR')),
-                        help=('Do not emit color codes. By default color codes are used when stdout '
-                              'or stderr is connected to a terminal.'))
-    parser.add_argument('-f', '--force-terminal',
-                        action='store_true',
-                        default=bool(os.environ.get('SBOM_FORCE_TERMINAL')) or None,
-                        help=('Enable terminal control codes even if out is not attached to terminal. '
-                              'This option is ignored if used along with the "--output-file" option.'))
-    parser.add_argument('-d', '--debug',
-                        action='store_true',
-                        default=bool(os.environ.get('SBOM_DEBUG')),
-                        help=('Print debug information. Messages are printed to standard error output.'))
-    parser.add_argument('--no-progress',
-                        action='store_true',
-                        default=bool(os.environ.get('SBOM_CHECK_NO_PROGRESS')),
-                        help=('Disable progress bar.'))
+    parser.add_argument(
+        '-q', '--quiet', action='store_true', default=bool(os.environ.get('SBOM_QUIET')), help='Suppress all output.'
+    )
+    parser.add_argument(
+        '-n',
+        '--no-color',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_NO_COLOR')),
+        help=(
+            'Do not emit color codes. By default color codes are used when stdout or stderr is connected to a terminal.'
+        ),
+    )
+    parser.add_argument(
+        '-f',
+        '--force-terminal',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_FORCE_TERMINAL')) or None,
+        help=(
+            'Enable terminal control codes even if out is not attached to terminal. '
+            'This option is ignored if used along with the "--output-file" option.'
+        ),
+    )
+    parser.add_argument(
+        '-d',
+        '--debug',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_DEBUG')),
+        help=('Print debug information. Messages are printed to standard error output.'),
+    )
+    parser.add_argument(
+        '--no-progress',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CHECK_NO_PROGRESS')),
+        help=('Disable progress bar.'),
+    )
 
     subparsers = parser.add_subparsers(help='sub-command help')
 
-    create_parser = subparsers.add_parser('create',
-                                          help=('Create SBOM file based on the ESP-IDF '
-                                                'project_description.json file.'))
+    create_parser = subparsers.add_parser(
+        'create', help=('Create SBOM file based on the ESP-IDF project_description.json file.')
+    )
 
     create_parser.set_defaults(func=cmd_create)
-    create_parser.add_argument('input_file',
-                               metavar='PROJECT_DESCRIPTION',
-                               help=('Path to the project_description.json file generated '
-                                     'by the ESP-IDF sbom tool.'))
-    create_parser.add_argument('-o', '--output-file',
-                               metavar='SBOM_FILE',
-                               default=None,
-                               help='Output SBOM file. Default is stdout.')
-    create_parser.add_argument('--rem-config',
-                               action='store_true',
-                               default=bool(os.environ.get('SBOM_CREATE_REM_CONFIG')),
-                               help='Remove configuration only components.')
-    create_parser.add_argument('--add-config-deps',
-                               action='store_true',
-                               default=bool(os.environ.get('SBOM_CREATE_ADD_CONFIG_DEPS')),
-                               help=('Add dependencies on configuration only components.'))
-    create_parser.add_argument('--rem-unused',
-                               action='store_true',
-                               default=bool(os.environ.get('SBOM_CREATE_REM_UNUSED')),
-                               help=('Remove components not linked into the final binary.'))
-    create_parser.add_argument('--add-unused-deps',
-                               action='store_true',
-                               default=bool(os.environ.get('SBOM_CREATE_ADD_UNUSED_DEPS')),
-                               help=('Add dependencies on components not linked '
-                                     'into the final binary.'))
-    create_parser.add_argument('--rem-submodules',
-                               action='store_true',
-                               default=bool(os.environ.get('SBOM_CREATE_REM_SUBMODULES')),
-                               help=('Remove submodules info and include submodules files directly '
-                                     'in components. By default submodules are reported as separated '
-                                     'packages.'))
-    create_parser.add_argument('--rem-subpackages',
-                               action='store_true',
-                               default=bool(os.environ.get('SBOM_CREATE_REM_SUBPACKAGES')),
-                               help=('Remove subpackages info and include subpackages files directly '
-                                     'in components. By default subpackages are reported as separated '
-                                     'packages.'))
-    create_parser.add_argument('--files',
-                               choices=['auto', 'add', 'rem'],
-                               default=os.environ.get('SBOM_CREATE_FILES', 'rem'),
-                               help=('rem - Exclude all files. This will generate much smaller SBOM file '
-                                     'and it is the default value. '
-                                     'add - Explicitly add all files for any package. '
-                                     'auto - Adds files only if there is no repository or URL and version '
-                                     'information available for package.'))
-    create_parser.add_argument('--no-guess',
-                               action='store_true',
-                               default=bool(os.environ.get('SBOM_CREATE_NO_GUESS')),
-                               help=('Don\'t try to identify PackageSupplier and PackageVersion. '
-                                     'By default URLs are checked for known suppliers, currently only '
-                                     'Espressif Systems, and project version or git describe is used '
-                                     'to identify versions. With this option PackageSupplier and '
-                                     'PackageVersion will be omitted, unless explicitly stated in '
-                                     'sbom.yml, idf_component.yml or .gitmodules.'))
-    create_parser.add_argument('--file-tags',
-                               action='store_true',
-                               default=bool(os.environ.get('SBOM_CREATE_NO_FILE_TAGS')),
-                               help=('Scan files for SPDX file tags. This includes SPDX-License-Identifier, '
-                                     'SPDX-FileCopyrightText and SPDX-FileContributor'))
-    create_parser.add_argument('--disable-conditions',
-                               action='store_true',
-                               help=('When processing manifest files, disregard the conditions for the "if" key.'))
+    create_parser.add_argument(
+        'input_file',
+        metavar='PROJECT_DESCRIPTION',
+        help=('Path to the project_description.json file generated by the ESP-IDF sbom tool.'),
+    )
+    create_parser.add_argument(
+        '-o', '--output-file', metavar='SBOM_FILE', default=None, help='Output SBOM file. Default is stdout.'
+    )
+    create_parser.add_argument(
+        '--rem-config',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CREATE_REM_CONFIG')),
+        help='Remove configuration only components.',
+    )
+    create_parser.add_argument(
+        '--add-config-deps',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CREATE_ADD_CONFIG_DEPS')),
+        help=('Add dependencies on configuration only components.'),
+    )
+    create_parser.add_argument(
+        '--rem-unused',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CREATE_REM_UNUSED')),
+        help=('Remove components not linked into the final binary.'),
+    )
+    create_parser.add_argument(
+        '--add-unused-deps',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CREATE_ADD_UNUSED_DEPS')),
+        help=('Add dependencies on components not linked into the final binary.'),
+    )
+    create_parser.add_argument(
+        '--rem-submodules',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CREATE_REM_SUBMODULES')),
+        help=(
+            'Remove submodules info and include submodules files directly '
+            'in components. By default submodules are reported as separated '
+            'packages.'
+        ),
+    )
+    create_parser.add_argument(
+        '--rem-subpackages',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CREATE_REM_SUBPACKAGES')),
+        help=(
+            'Remove subpackages info and include subpackages files directly '
+            'in components. By default subpackages are reported as separated '
+            'packages.'
+        ),
+    )
+    create_parser.add_argument(
+        '--files',
+        choices=['auto', 'add', 'rem'],
+        default=os.environ.get('SBOM_CREATE_FILES', 'rem'),
+        help=(
+            'rem - Exclude all files. This will generate much smaller SBOM file '
+            'and it is the default value. '
+            'add - Explicitly add all files for any package. '
+            'auto - Adds files only if there is no repository or URL and version '
+            'information available for package.'
+        ),
+    )
+    create_parser.add_argument(
+        '--no-guess',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CREATE_NO_GUESS')),
+        help=(
+            "Don't try to identify PackageSupplier and PackageVersion. "
+            'By default URLs are checked for known suppliers, currently only '
+            'Espressif Systems, and project version or git describe is used '
+            'to identify versions. With this option PackageSupplier and '
+            'PackageVersion will be omitted, unless explicitly stated in '
+            'sbom.yml, idf_component.yml or .gitmodules.'
+        ),
+    )
+    create_parser.add_argument(
+        '--file-tags',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CREATE_NO_FILE_TAGS')),
+        help=(
+            'Scan files for SPDX file tags. This includes SPDX-License-Identifier, '
+            'SPDX-FileCopyrightText and SPDX-FileContributor'
+        ),
+    )
+    create_parser.add_argument(
+        '--disable-conditions',
+        action='store_true',
+        help=('When processing manifest files, disregard the conditions for the "if" key.'),
+    )
 
-    check_parser = subparsers.add_parser('check',
-                                         help=('Check components/submodules in the ESP-IDF SBOM file '
-                                               'for possible vulnerabilities reported in the '
-                                               'National Vulnerability Database.'))
+    check_parser = subparsers.add_parser(
+        'check',
+        help=(
+            'Check components/submodules in the ESP-IDF SBOM file '
+            'for possible vulnerabilities reported in the '
+            'National Vulnerability Database.'
+        ),
+    )
     check_parser.set_defaults(func=cmd_check)
-    check_parser.add_argument('input_file',
-                              metavar='SBOM_FILE',
-                              default='-',
-                              nargs='?',
-                              help=('Path to the SBOM file generated by the ESP-IDF sbom tool. '
-                                    'If not provided or "-", read from stdin.'))
+    check_parser.add_argument(
+        'input_file',
+        metavar='SBOM_FILE',
+        default='-',
+        nargs='?',
+        help=('Path to the SBOM file generated by the ESP-IDF sbom tool. If not provided or "-", read from stdin.'),
+    )
 
-    check_parser.add_argument('-o', '--output-file',
-                              metavar='OUTPUT_FILE',
-                              help=('Print output to the specified file instead of stdout.'))
+    check_parser.add_argument(
+        '-o', '--output-file', metavar='OUTPUT_FILE', help=('Print output to the specified file instead of stdout.')
+    )
 
     check_parser.add_argument(*NAME_ARG['args'], **NAME_ARG['kwargs'])
 
-    check_parser.add_argument('--check-all-packages',
-                              action='store_true',
-                              default=bool(os.environ.get('SBOM_CHECK_ALL')),
-                              help=('Check all packages in the SBOM file. By default only packages, '
-                                    'linked via the SPDX relationship to the main project package, '
-                                    'are checked. This may report vulnerabilities, which do not '
-                                    'affect the resulting binary! For example components with libraries, '
-                                    'which are not linked into the final binary will be checked too.'))
+    check_parser.add_argument(
+        '--check-all-packages',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CHECK_ALL')),
+        help=(
+            'Check all packages in the SBOM file. By default only packages, '
+            'linked via the SPDX relationship to the main project package, '
+            'are checked. This may report vulnerabilities, which do not '
+            'affect the resulting binary! For example components with libraries, '
+            'which are not linked into the final binary will be checked too.'
+        ),
+    )
 
-    check_parser.add_argument('--local-db',
-                              action='store_true',
-                              default=bool(os.environ.get('SBOM_CHECK_LOCAL_DB')),
-                              help=('Use local NVD mirror for vulnerability check.'))
+    check_parser.add_argument(
+        '--local-db',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CHECK_LOCAL_DB')),
+        help=('Use local NVD mirror for vulnerability check.'),
+    )
 
-    check_parser.add_argument('--no-sync-db',
-                              action='store_true',
-                              default=bool(os.environ.get('SBOM_CHECK_NO_SYNC_DB')),
-                              help=('Skip updating local NVD mirror before vulnerability check.'))
+    check_parser.add_argument(
+        '--no-sync-db',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CHECK_NO_SYNC_DB')),
+        help=('Skip updating local NVD mirror before vulnerability check.'),
+    )
 
-    check_parser.add_argument('--format',
-                              choices=['table', 'json', 'csv', 'markdown'],
-                              default=os.environ.get('SBOM_CHECK_FORMAT', 'table'),
-                              help=('table - Print report table. This is default.'
-                                    'json - Print report in JSON format. '
-                                    'csv - Print report in CSV format.'))
+    check_parser.add_argument(
+        '--format',
+        choices=['table', 'json', 'csv', 'markdown'],
+        default=os.environ.get('SBOM_CHECK_FORMAT', 'table'),
+        help=(
+            'table - Print report table. This is default.'
+            'json - Print report in JSON format. '
+            'csv - Print report in CSV format.'
+        ),
+    )
 
-    license_parser = subparsers.add_parser('license',
-                                           help=('Print licenses and copyrights used in the project '
-                                                 'described by PROJECT_DESCRIPTION json file.'))
+    license_parser = subparsers.add_parser(
+        'license',
+        help=('Print licenses and copyrights used in the project described by PROJECT_DESCRIPTION json file.'),
+    )
     license_parser.set_defaults(func=cmd_license)
-    license_parser.add_argument('input_file',
-                                metavar='PROJECT_DESCRIPTION',
-                                help=('Path to the project_description.json file generated '
-                                      'by the ESP-IDF sbom tool.'))
+    license_parser.add_argument(
+        'input_file',
+        metavar='PROJECT_DESCRIPTION',
+        help=('Path to the project_description.json file generated by the ESP-IDF sbom tool.'),
+    )
 
-    license_parser.add_argument('-o', '--output-file',
-                                metavar='OUTPUT_FILE',
-                                help=('Print output to the specified file instead of stdout.'))
+    license_parser.add_argument(
+        '-o', '--output-file', metavar='OUTPUT_FILE', help=('Print output to the specified file instead of stdout.')
+    )
 
-    license_parser.add_argument('--format',
-                                choices=['table', 'json'],
-                                default=os.environ.get('SBOM_LICENSE_FORMAT', 'table'),
-                                help=('table - Print report table. This is default.'
-                                      'json - Print report in JSON format.'))
+    license_parser.add_argument(
+        '--format',
+        choices=['table', 'json'],
+        default=os.environ.get('SBOM_LICENSE_FORMAT', 'table'),
+        help=('table - Print report table. This is default.json - Print report in JSON format.'),
+    )
 
-    license_parser.add_argument('-p', '--packages',
-                                action='store_true',
-                                default=bool(os.environ.get('SBOM_LICENSE_PACKAGES')),
-                                help='Include also per package license and copyright information.')
+    license_parser.add_argument(
+        '-p',
+        '--packages',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_LICENSE_PACKAGES')),
+        help='Include also per package license and copyright information.',
+    )
 
-    license_parser.add_argument('-u', '--unify-copyrights',
-                                action='store_true',
-                                default=bool(os.environ.get('SBOM_LICENSE_UNIFY_COPYRIGHTS')),
-                                help=('Unify copyright years. If the same copyright is used at different '
-                                      'places with different years or year ranges, this option will unify them.'))
+    license_parser.add_argument(
+        '-u',
+        '--unify-copyrights',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_LICENSE_UNIFY_COPYRIGHTS')),
+        help=(
+            'Unify copyright years. If the same copyright is used at different '
+            'places with different years or year ranges, this option will unify them.'
+        ),
+    )
 
-    license_parser.add_argument('--disable-conditions',
-                                action='store_true',
-                                help=('When processing manifest files, disregard the conditions for the "if" key.'))
+    license_parser.add_argument(
+        '--disable-conditions',
+        action='store_true',
+        help=('When processing manifest files, disregard the conditions for the "if" key.'),
+    )
 
-    nvdsync_parser = subparsers.add_parser('sync-db',
-                                           help=('Update local NVD git repository.'))
+    nvdsync_parser = subparsers.add_parser('sync-db', help=('Update local NVD git repository.'))
     nvdsync_parser.set_defaults(func=cmd_nvdsync)
 
-    manifest_parser = subparsers.add_parser('manifest',
-                                            help=('Commands operating atop of manifest files.'))
+    manifest_parser = subparsers.add_parser('manifest', help=('Commands operating atop of manifest files.'))
     manifest_subparsers = manifest_parser.add_subparsers(help='sub-command help')
 
-    manifest_validate_parser = manifest_subparsers.add_parser('validate',
-                                                              help=('Validate manifest files.'))
+    manifest_validate_parser = manifest_subparsers.add_parser('validate', help=('Validate manifest files.'))
     manifest_validate_parser.set_defaults(func=cmd_manifest_validate)
-    manifest_validate_parser.add_argument('validate_paths',
-                                          metavar='PATH_TO_VALIDATE',
-                                          default=[os.path.curdir],
-                                          nargs='*',
-                                          help=('Manifest file (sbom.yml, idf_manifest.yml or .gitmodules) or '
-                                                'directory, which will be searched for manifest files.'))
+    manifest_validate_parser.add_argument(
+        'validate_paths',
+        metavar='PATH_TO_VALIDATE',
+        default=[os.path.curdir],
+        nargs='*',
+        help=(
+            'Manifest file (sbom.yml, idf_manifest.yml or .gitmodules) or '
+            'directory, which will be searched for manifest files.'
+        ),
+    )
 
     # Bypass validation if a git rebase is ongoing. Utilized by the pre-commit hook.
-    manifest_validate_parser.add_argument('--skip-on-rebase',
-                                          action='store_true',
-                                          help=argparse.SUPPRESS)
+    manifest_validate_parser.add_argument('--skip-on-rebase', action='store_true', help=argparse.SUPPRESS)
 
-    manifest_check_parser = manifest_subparsers.add_parser('check',
-                                                           help=('Check manifest files for vulnerabilities.'))
+    manifest_check_parser = manifest_subparsers.add_parser('check', help=('Check manifest files for vulnerabilities.'))
     manifest_check_parser.set_defaults(func=cmd_manifest_check)
 
-    manifest_check_parser.add_argument('-o', '--output-file',
-                                       metavar='OUTPUT_FILE',
-                                       help=('Print output to the specified file instead of stdout.'))
+    manifest_check_parser.add_argument(
+        '-o', '--output-file', metavar='OUTPUT_FILE', help=('Print output to the specified file instead of stdout.')
+    )
 
     manifest_check_parser.add_argument(*NAME_ARG['args'], **NAME_ARG['kwargs'])
 
-    manifest_check_parser.add_argument('--local-db',
-                                       action='store_true',
-                                       default=bool(os.environ.get('SBOM_CHECK_LOCAL_DB')),
-                                       help=('Use local NVD mirror for vulnerability check.'))
+    manifest_check_parser.add_argument(
+        '--local-db',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CHECK_LOCAL_DB')),
+        help=('Use local NVD mirror for vulnerability check.'),
+    )
 
-    manifest_check_parser.add_argument('--no-sync-db',
-                                       action='store_true',
-                                       default=bool(os.environ.get('SBOM_CHECK_NO_SYNC_DB')),
-                                       help=('Skip updating local NVD mirror before vulnerability check.'))
+    manifest_check_parser.add_argument(
+        '--no-sync-db',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_CHECK_NO_SYNC_DB')),
+        help=('Skip updating local NVD mirror before vulnerability check.'),
+    )
 
-    manifest_check_parser.add_argument('--format',
-                                       choices=['table', 'json', 'csv', 'markdown'],
-                                       help=('table - Print report table. This is default.'
-                                             'json - Print report in JSON format. '
-                                             'csv - Print report in CSV format.'))
-    manifest_check_parser.add_argument('check_paths',
-                                       metavar='PATH_TO_CHECK',
-                                       default=[os.path.curdir],
-                                       nargs='*',
-                                       help=('Manifest file (sbom.yml, idf_manifest.yml or .gitmodules) or '
-                                             'directory, which will be searched for manifest files.'))
+    manifest_check_parser.add_argument(
+        '--format',
+        choices=['table', 'json', 'csv', 'markdown'],
+        help=(
+            'table - Print report table. This is default.'
+            'json - Print report in JSON format. '
+            'csv - Print report in CSV format.'
+        ),
+    )
+    manifest_check_parser.add_argument(
+        'check_paths',
+        metavar='PATH_TO_CHECK',
+        default=[os.path.curdir],
+        nargs='*',
+        help=(
+            'Manifest file (sbom.yml, idf_manifest.yml or .gitmodules) or '
+            'directory, which will be searched for manifest files.'
+        ),
+    )
 
-    manifest_license_parser = manifest_subparsers.add_parser('license',
-                                                             help=('Print licenses and copyrights for manifest files '
-                                                                   'found in specified path'))
+    manifest_license_parser = manifest_subparsers.add_parser(
+        'license', help=('Print licenses and copyrights for manifest files found in specified path')
+    )
     manifest_license_parser.set_defaults(func=cmd_manifest_license)
-    manifest_license_parser.add_argument('license_paths',
-                                         metavar='LICENCE_PATH',
-                                         default=[os.path.curdir],
-                                         nargs='*',
-                                         help=('Manifest file (sbom.yml, idf_manifest.yml or .gitmodules) or '
-                                               'directory, which will be searched for manifest files.'))
-    manifest_license_parser.add_argument('--format',
-                                         choices=['table', 'json'],
-                                         default=os.environ.get('SBOM_LICENSE_FORMAT', 'table'),
-                                         help=('table - Print report table. This is default.'
-                                               'json - Print report in JSON format.'))
-    manifest_license_parser.add_argument('-u', '--unify-copyrights',
-                                         action='store_true',
-                                         default=bool(os.environ.get('SBOM_LICENSE_UNIFY_COPYRIGHTS')),
-                                         help=('Unify copyright years. If the same copyright is used at different '
-                                               'places with different years or year ranges, this option will unify them.'))
+    manifest_license_parser.add_argument(
+        'license_paths',
+        metavar='LICENCE_PATH',
+        default=[os.path.curdir],
+        nargs='*',
+        help=(
+            'Manifest file (sbom.yml, idf_manifest.yml or .gitmodules) or '
+            'directory, which will be searched for manifest files.'
+        ),
+    )
+    manifest_license_parser.add_argument(
+        '--format',
+        choices=['table', 'json'],
+        default=os.environ.get('SBOM_LICENSE_FORMAT', 'table'),
+        help=('table - Print report table. This is default.json - Print report in JSON format.'),
+    )
+    manifest_license_parser.add_argument(
+        '-u',
+        '--unify-copyrights',
+        action='store_true',
+        default=bool(os.environ.get('SBOM_LICENSE_UNIFY_COPYRIGHTS')),
+        help=(
+            'Unify copyright years. If the same copyright is used at different '
+            'places with different years or year ranges, this option will unify them.'
+        ),
+    )
 
     manifest_aggregate_parser = manifest_subparsers.add_parser(
         'aggregate',
-        help=(('Combine all manifest files located in AGGREGATE_PATH into a single SBOM '
-               'manifest file by using the referenced manifests'))
+        help=(
+            'Combine all manifest files located in AGGREGATE_PATH into a single SBOM '
+            'manifest file by using the referenced manifests'
+        ),
     )
     manifest_aggregate_parser.set_defaults(func=cmd_manifest_aggregate)
-    manifest_aggregate_parser.add_argument('aggregate_path',
-                                           metavar='AGGREGATE_PATH',
-                                           default=[os.path.curdir],
-                                           help=('Manifest file (sbom.yml, idf_manifest.yml or .gitmodules) or '
-                                                 'directory, which will be searched for manifest files.'))
-    manifest_aggregate_parser.add_argument('-o', '--output-file',
-                                           metavar='OUTPUT_FILE',
-                                           help=('Print output to the specified file instead of stdout.'))
+    manifest_aggregate_parser.add_argument(
+        'aggregate_path',
+        metavar='AGGREGATE_PATH',
+        default=[os.path.curdir],
+        help=(
+            'Manifest file (sbom.yml, idf_manifest.yml or .gitmodules) or '
+            'directory, which will be searched for manifest files.'
+        ),
+    )
+    manifest_aggregate_parser.add_argument(
+        '-o', '--output-file', metavar='OUTPUT_FILE', help=('Print output to the specified file instead of stdout.')
+    )
 
     ofile = sys.stdout
     try:
@@ -804,8 +924,7 @@ def main():
             force_terminal_stdout = False
             ofile = open(args.output_file, 'w')
 
-        log.set_console(ofile, args.quiet, args.no_color, force_terminal_stdout,
-                        force_terminal_stderr, args.debug)
+        log.set_console(ofile, args.quiet, args.no_color, force_terminal_stdout, force_terminal_stderr, args.debug)
 
         env = {key: value for key, value in os.environ.items() if key.startswith('SBOM_')}
         log.debug(f'environ: {env}')
