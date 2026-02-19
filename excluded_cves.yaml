@@ -49,3 +49,4 @@ CVE-2025-66199: Related to OpenSSL
 CVE-2026-24813: Related to cJSON in SKRoot-linuxKernelRoot. Already fixed in cJSON
 CVE-2026-24810: Related to cJSON in RethinkDB. Already fixed in cJSON
 CVE-2026-23147: Related to Linux kernel
+CVE-2025-71226: Related to Linux kernel
