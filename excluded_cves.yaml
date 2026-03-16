@@ -54,3 +54,4 @@ CVE-2026-27734: Related to Beszel (server monitoring platform)
 CVE-2025-12150: Related to Keycloak
 CVE-2026-3381: Related to zlib library included in Perl
 CVE-2026-2229: Related to the undici WebSocket client
+CVE-2026-23943: Related to Erlang/OTP
