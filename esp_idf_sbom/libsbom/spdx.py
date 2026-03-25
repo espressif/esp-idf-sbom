@@ -810,6 +810,7 @@ class SPDXProject(SPDXPackage):
         self.args = args
         self.proj_desc = proj_desc
 
+        self._resolve_req_aliases()
         self.linked_libs = self._get_linked_libs()
         self.components = self._get_components()
         self.toolchain = SPDXToolchain(args, proj_desc)
@@ -817,6 +818,27 @@ class SPDXProject(SPDXPackage):
         name = proj_desc['project_name']
         path = proj_desc['project_path']
         super().__init__(args, proj_desc, path, name, 'project')
+
+    def _resolve_req_aliases(self) -> None:
+        # Component requirements may use aliases (e.g. "idf::fatfs" instead of "fatfs")
+        # when specified with the prefix::name syntax in idf_component_register().
+        # The build system stores these verbatim in project_description.json, but
+        # build_component_info is keyed by plain component names. Normalize all
+        # requirement names to plain component names.
+        build_components = self.proj_desc['build_component_info']
+        alias_map = {}
+        for name, info in build_components.items():
+            alias = info.get('alias', '')
+            if alias and alias != name:
+                alias_map[alias] = name
+
+        if not alias_map:
+            return
+
+        req_types = ['reqs', 'priv_reqs', 'managed_reqs', 'managed_priv_reqs']
+        for info in build_components.values():
+            for req_type in req_types:
+                info[req_type] = [alias_map.get(r, r) for r in info[req_type]]
 
     def _remove_components(self, remove: List[str], components: Dict[str, Dict]) -> Dict[str, Dict]:
         # Helper to remove components and dependencies on them from component list.
@@ -1001,6 +1023,12 @@ class SPDXProject(SPDXPackage):
         while todo:
             name = todo.pop()
             seen.add(name)
+            if name not in build_components:
+                # A required component may not be registered. For instance, "esp_phy"
+                # might be required by "bt", but not registered on the esp32p4. See
+                # the similar workaround in _get_components() and
+                # https://github.com/espressif/esp-idf/issues/13447.
+                continue
             if not self._component_used(build_components[name]):
                 continue
             reachable.add(name)
