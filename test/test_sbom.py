@@ -613,3 +613,28 @@ def test_none_severity_handling() -> None:
     assert 'CVE-2023-00002' in result['cves_summary']['high']['cves'], (
         "CVE-2023-00002 not found in 'high' severity CVEs"
     )
+
+
+def test_aliased_requirements(hello_world_build: Path) -> None:
+    """Test that aliased requirement names (e.g. idf::spi_flash) in
+    build_component_info are resolved correctly and don't cause KeyError.
+    See https://github.com/espressif/esp-idf-sbom/issues/17"""
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+
+    with open(proj_desc_path) as f:
+        proj_desc = json.load(f)
+
+    # Replace plain requirement names with their aliased form
+    main_info = proj_desc['build_component_info']['main']
+    main_info['priv_reqs'] = [
+        proj_desc['build_component_info'][r]['alias'] if r in proj_desc['build_component_info'] else r
+        for r in main_info['priv_reqs']
+    ]
+
+    modified_proj_desc_path = hello_world_build / 'build' / 'project_description_aliased.json'
+    with open(modified_proj_desc_path, 'w') as f:
+        json.dump(proj_desc, f)
+
+    run([sys.executable, '-m', 'esp_idf_sbom', 'create', modified_proj_desc_path], check=True)
+
+    modified_proj_desc_path.unlink()
