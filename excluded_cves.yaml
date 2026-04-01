@@ -57,3 +57,5 @@ CVE-2026-2229: Related to the undici WebSocket client
 CVE-2026-23943: Related to Erlang/OTP
 CVE-2026-4206: Related to D-Link
 CVE-2026-4743: Related to cJSON in ncmdump by taurusxin. Already fixed in cJSON
+CVE-2026-4176: Related to zlib library included in Perl
+CVE-2026-24029: Related to nghttp2 with DNS over HTTPs
