@@ -59,3 +59,4 @@ CVE-2026-4206: Related to D-Link
 CVE-2026-4743: Related to cJSON in ncmdump by taurusxin. Already fixed in cJSON
 CVE-2026-4176: Related to zlib library included in Perl
 CVE-2026-24029: Related to nghttp2 with DNS over HTTPs
+CVE-2026-5312: Related to D-Link DNS/DNR network storage devices
