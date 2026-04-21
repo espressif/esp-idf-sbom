@@ -63,3 +63,5 @@ CVE-2026-5312: Related to D-Link DNS/DNR network storage devices
 CVE-2026-34608: Related to NanoMQ MQTT Broker's misuse of cJSON. Not a vulnerability in cJSON itself
 CVE-2026-34940: Related to KubeAI (Kubernetes AI inference operator), uses Go's fmt.Sprintf, not the C++ fmtlib/fmt library
 CVE-2026-40036: Related to unbounded zlib decompression in obsidianforensics Unfurl. Not a vulnerability in zlib itself
+CVE-2026-35469: Related to moby/spdystream Go library for SPDY protocol. Not a vulnerability in zlib itself
+CVE-2026-27820: Related to Ruby's zlib gem (Zlib::GzipReader). Not a vulnerability in the zlib C library
