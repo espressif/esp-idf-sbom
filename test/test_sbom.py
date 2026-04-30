@@ -495,7 +495,9 @@ def test_validate_report_json(hello_world_build: Path) -> None:
 
     run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--output', sbom_path, proj_desc_path], check=True)
 
-    run(
+    # Avoid using check=True, because if a vulnerability is found, esp-idf-sbom will return 1.
+    # A return value of 128 indicates a fatal error.
+    p = run(
         [
             sys.executable,
             '-m',
@@ -508,8 +510,8 @@ def test_validate_report_json(hello_world_build: Path) -> None:
             report_path,
             sbom_path,
         ],
-        check=True,
     )
+    assert p.returncode in [0, 1]
 
     with open(report_path) as report_file, open(schema_path) as schema_file:
         json_data = json.load(report_file)
