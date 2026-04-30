@@ -65,3 +65,8 @@ CVE-2026-34940: Related to KubeAI (Kubernetes AI inference operator), uses Go's 
 CVE-2026-40036: Related to unbounded zlib decompression in obsidianforensics Unfurl. Not a vulnerability in zlib itself
 CVE-2026-35469: Related to moby/spdystream Go library for SPDY protocol. Not a vulnerability in zlib itself
 CVE-2026-27820: Related to Ruby's zlib gem (Zlib::GzipReader). Not a vulnerability in the zlib C library
+CVE-2026-7422: Related to FreeRTOS-Plus-TCP. ESP-IDF does not use FreeRTOS-Plus-TCP directly, but uses lwIP for TCP/IP stack.
+CVE-2026-7423: Related to FreeRTOS-Plus-TCP. ESP-IDF does not use FreeRTOS-Plus-TCP directly, but uses lwIP for TCP/IP stack.
+CVE-2026-7424: Related to FreeRTOS-Plus-TCP. ESP-IDF does not use FreeRTOS-Plus-TCP directly, but uses lwIP for TCP/IP stack.
+CVE-2026-7425: Related to FreeRTOS-Plus-TCP. ESP-IDF does not use FreeRTOS-Plus-TCP directly, but uses lwIP for TCP/IP stack.
+CVE-2026-7426: Related to FreeRTOS-Plus-TCP. ESP-IDF does not use FreeRTOS-Plus-TCP directly, but uses lwIP for TCP/IP stack.
