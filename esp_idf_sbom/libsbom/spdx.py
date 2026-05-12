@@ -41,8 +41,27 @@ class SPDXTags:
     SPDX_COPYRIGHT_RE = re.compile(r'SPDX-FileCopyrightText: *(.*)')
     SPDX_CONTRIBUTOR_RE = re.compile(r'SPDX-FileContributor: *(.*)')
     COPYRIGHT_RE = re.compile(r'([ \d,-]+)(.*)', flags=re.DOTALL)
+    # Whole-line comment wrappers that hide SPDX tags inside delimiters.
+    # Without unwrapping, the trailing delimiter gets captured by the SPDX
+    # regexes and produces a malformed expression (e.g. "CC-BY-4.0)").
+    COMMENT_WRAPPER_REs = [
+        # Markdown invisible-comment: [//]: # (CONTENT)
+        re.compile(r'^\s*\[//\]:\s*#\s*\((.*)\)\s*$'),
+        # HTML/XML: <!-- CONTENT -->
+        re.compile(r'^\s*<!--\s*(.*?)\s*-->\s*$'),
+        # C / CSS / JS block on a single line: /* CONTENT */
+        re.compile(r'^\s*/\*\s*(.*?)\s*\*/\s*$'),
+    ]
     # SPDX license parser/validator
     licensing = get_spdx_licensing()
+
+    @classmethod
+    def _strip_comment_wrappers(cls, line: str) -> str:
+        for rx in cls.COMMENT_WRAPPER_REs:
+            m = rx.match(line)
+            if m:
+                return m.group(1)
+        return line
 
     def simplify_licenses(self, licenses: Set[str]) -> str:
         exprs = [f'({expr})' for expr in licenses]
@@ -183,6 +202,7 @@ class SPDXFileTags(SPDXTags):
                 except UnicodeDecodeError:
                     # ignore decode errors, the file may be some binary file
                     continue
+                line = self._strip_comment_wrappers(line)
                 match = self.SPDX_COPYRIGHT_RE.search(line)
                 if match:
                     self.copyrights.add(match.group(1))
@@ -194,14 +214,28 @@ class SPDXFileTags(SPDXTags):
                 match = self.SPDX_LICENSE_RE.search(line)
                 if match:
                     expr = match.group(1)
+                    parsed = None
                     try:
                         parsed = self.licensing.parse(expr, validate=True)
                     except ExpressionError as e:
+                        # validate=True can fail for two reasons:
+                        #   - syntactic error    -> lenient parse will also fail
+                        #   - unknown identifier -> lenient parse succeeds
+                        # Try the lenient parse to recover the second case; if it
+                        # also fails, the expression is genuinely malformed and we
+                        # skip it rather than crash the tool.
                         log.warn(f'License expression "{expr}" found in "{self.path}" is not valid: {e}')
-                        parsed = self.licensing.parse(expr)
-                    self.licenses_expressions.add(expr)
-                    for lic in parsed.objects:
-                        self.licenses.add(lic)
+                        try:
+                            parsed = self.licensing.parse(expr)
+                        except ExpressionError as e2:
+                            log.warn(
+                                f'License expression "{expr}" found in "{self.path}" '
+                                f'could not be parsed, skipping: {e2}'
+                            )
+                    if parsed is not None:
+                        self.licenses_expressions.add(expr)
+                        for lic in parsed.objects:
+                            self.licenses.add(lic)
 
 
 class SPDXFilesTags(SPDXTags):
