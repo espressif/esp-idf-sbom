@@ -70,3 +70,9 @@ CVE-2026-7423: Related to FreeRTOS-Plus-TCP. ESP-IDF does not use FreeRTOS-Plus-
 CVE-2026-7424: Related to FreeRTOS-Plus-TCP. ESP-IDF does not use FreeRTOS-Plus-TCP directly, but uses lwIP for TCP/IP stack.
 CVE-2026-7425: Related to FreeRTOS-Plus-TCP. ESP-IDF does not use FreeRTOS-Plus-TCP directly, but uses lwIP for TCP/IP stack.
 CVE-2026-7426: Related to FreeRTOS-Plus-TCP. ESP-IDF does not use FreeRTOS-Plus-TCP directly, but uses lwIP for TCP/IP stack.
+CVE-2021-32921: Related to Prosody XMPP server's non-constant-time secret string comparison when running under Lua 5.2+. Not a vulnerability in Lua itself
+CVE-2026-2331: Related to SICK AG AppEngine Fileaccess HTTP feature exposing the custom application directory. Not a vulnerability in Lua itself
+CVE-2026-40959: Related to Luanti (Minetest) Lua sandbox escape via a crafted mod, only exploitable when using LuaJIT. Not a vulnerability in Lua itself
+CVE-2026-41196: Related to Luanti (Minetest) Lua sandbox escape via getfenv, only exploitable when using LuaJIT. Not a vulnerability in Lua itself
+CVE-2026-40960: Related to Luanti (Minetest) unintended access to the insecure environment via secure.trusted_mods/secure.http_mods. Not a vulnerability in Lua itself
+CVE-2026-42214: Related to NotepadNext detectLanguageFromExtension() interpolating an unsanitized filename extension into a Lua script. Not a vulnerability in Lua itself
