@@ -76,3 +76,5 @@ CVE-2026-40959: Related to Luanti (Minetest) Lua sandbox escape via a crafted mo
 CVE-2026-41196: Related to Luanti (Minetest) Lua sandbox escape via getfenv, only exploitable when using LuaJIT. Not a vulnerability in Lua itself
 CVE-2026-40960: Related to Luanti (Minetest) unintended access to the insecure environment via secure.trusted_mods/secure.http_mods. Not a vulnerability in Lua itself
 CVE-2026-42214: Related to NotepadNext detectLanguageFromExtension() interpolating an unsanitized filename extension into a Lua script. Not a vulnerability in Lua itself
+CVE-2026-1677: Related to mbedTLS usage in Zephyr. Not a vulnerability in mbedTLS
+CVE-2026-7210: Related to libexpat usage in cpython. Not a vulnerability in libexpat
