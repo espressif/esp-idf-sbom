@@ -137,12 +137,27 @@ def check_cpe(cpe: str, localdb: bool = False) -> List[Dict[str, Any]]:
 
     # Check vulnerabilities that have already been processed in the NVD and have an assigned CPE.
     if localdb:
-        cpe_vulns = repo_check(cpe)
-    else:
-        cpe = urllib.parse.quote(cpe)
-        cpe_vulns = nvd_request(f'cpeName={cpe}')
+        return repo_check(cpe)
 
-    return cpe_vulns
+    cpe_quoted = urllib.parse.quote(cpe)
+    cpe_vulns = nvd_request(f'cpeName={cpe_quoted}')
+
+    # The NVD REST API returns every CVE that references this CPE name in any
+    # configuration, regardless of the per-cpeMatch "vulnerable" flag or version
+    # range. That includes CVEs where our CPE appears only as a runtime
+    # requirement (vulnerable=false, the "Running on/with" entries in the NVD
+    # UI), e.g. CVE-2021-32921 listing lua under an AND with Prosody. Filter
+    # these out using is_version_vulnerable, which honors cpeMatch[vulnerable]
+    # and the version-range keys carried inline in the response. The local-db
+    # path applies equivalent filtering through repo_check.
+    filtered = []
+    for cve in cpe_vulns:
+        for cfg in cve['cve'].get('configurations', []):
+            if is_version_vulnerable(cpe, cfg):
+                filtered.append(cve)
+                break
+
+    return filtered
 
 
 def check_keyword(keyword: str, localdb: bool = False) -> List[Dict[str, Any]]:
