@@ -640,3 +640,50 @@ def test_aliased_requirements(hello_world_build: Path) -> None:
     run([sys.executable, '-m', 'esp_idf_sbom', 'create', modified_proj_desc_path], check=True)
 
     modified_proj_desc_path.unlink()
+
+
+def test_symlinked_component(hello_world_build: Path, tmp_path: Path) -> None:
+    """Regression test for https://github.com/espressif/esp-idf-sbom/issues/19.
+
+    A component whose directory is a symlink (or a Windows directory junction)
+    into a separate git repo used to crash `esp-idf-sbom create`: `git
+    rev-parse --show-toplevel` returns the resolved upstream path while
+    project_description.json records the symlink, and `utils.prelpath`
+    couldn't bridge that asymmetry.
+
+    Copy hello_world's `main` component into a separate git repo, swap the
+    original `main` directory for a symlink into it, and verify sbom create
+    succeeds and emits the upstream remote with the `#main` path fragment.
+    """
+    upstream = tmp_path / 'upstream'
+    shutil.copytree(hello_world_build / 'main', upstream / 'main')
+    run(['git', 'init', '-q'], cwd=upstream, check=True)
+    run(['git', 'add', '.'], cwd=upstream, check=True)
+    run(
+        ['git', '-c', 'user.email=test@example.com', '-c', 'user.name=test', 'commit', '-q', '-m', 'init'],
+        cwd=upstream,
+        check=True,
+    )
+    run(['git', 'remote', 'add', 'origin', 'https://example.com/fake/main.git'], cwd=upstream, check=True)
+
+    main = hello_world_build / 'main'
+    backup = hello_world_build / 'main_backup'
+    main.rename(backup)
+    try:
+        main.symlink_to(upstream / 'main')
+        proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+        p = run(
+            [sys.executable, '-m', 'esp_idf_sbom', 'create', proj_desc_path],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert re.search(
+            r'ExternalRef: OTHER repository https://example\.com/fake/main\.git@[0-9a-f]+#main',
+            p.stdout,
+        )
+    finally:
+        if main.is_symlink():
+            main.unlink()
+        if backup.exists():
+            backup.rename(main)
