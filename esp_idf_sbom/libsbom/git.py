@@ -269,7 +269,9 @@ def get_remote_location(path: str) -> str:
     if head:
         url += f'@{head}'
 
-    if path == git_wdir:
+    if utils.presolve(path) == utils.presolve(git_wdir):
+        # path is the git working tree root (possibly via a symlink);
+        # don't append an empty/dot path fragment.
         return url
 
     url += '#' + utils.prelpath(path, git_wdir)

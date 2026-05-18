@@ -34,8 +34,13 @@ def pdirname(path: str) -> str:
 
 
 def prelpath(path: str, base: str) -> str:
-    """Return relative path to base with forward slashes."""
-    return Path(path).relative_to(base).as_posix()
+    """Return relative path to base with forward slashes.
+
+    Both paths are resolved first so that symlinks and Windows directory
+    junctions don't break the comparison when one side has already been
+    resolved upstream (e.g. by `git rev-parse --show-toplevel`).
+    """
+    return Path(path).resolve().relative_to(Path(base).resolve()).as_posix()
 
 
 def psubdir(path: str, base: str) -> bool:
