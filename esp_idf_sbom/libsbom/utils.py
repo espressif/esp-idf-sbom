@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023-2024 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2023-2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -8,7 +8,13 @@ Miscellaneous helpers
 import os
 import subprocess
 from pathlib import Path
-from typing import AnyStr, Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import AnyStr
+from typing import Dict
+from typing import Iterable
+from typing import Iterator
+from typing import List
+from typing import Optional
+from typing import Tuple
 from urllib.parse import urlparse
 
 
@@ -47,17 +53,17 @@ def ppath(path: str) -> str:
     return ppaths([path])[0]
 
 
-def psplit(path: str) -> Tuple[str,...]:
+def psplit(path: str) -> Tuple[str, ...]:
     """Split path into tuple of components."""
     return Path(path).parts
 
 
-def presolve(path:str) -> str:
+def presolve(path: str) -> str:
     """Return resolved path with forward slashes."""
     return Path(path).resolve().as_posix()
 
 
-def pwalk(path: str, exclude_dirs: Optional[List[str]]=None) -> Iterator[Tuple[str, List[str], List[str]]]:
+def pwalk(path: str, exclude_dirs: Optional[List[str]] = None) -> Iterator[Tuple[str, List[str], List[str]]]:
     """Perform os.walk() and skip directories in exclude_dirs. Compare and
     return paths in posix format."""
     path = ppath(path)
@@ -72,7 +78,7 @@ def pwalk(path: str, exclude_dirs: Optional[List[str]]=None) -> Iterator[Tuple[s
         yield (root, dirs, files)
 
 
-def is_remote_url(url: str='') -> bool:
+def is_remote_url(url: str = '') -> bool:
     """Check if url has git, http or https scheme and domain.
     This is just a very basic test."""
     res = urlparse(url)
@@ -88,14 +94,16 @@ def csv_escape(entries: Iterable) -> List[str]:
     return out
 
 
-def run(cmd:    List[str],
-        stdin:  Optional[AnyStr]=None,
-        stdout: bool=True,
-        stderr: bool=True,
-        text:   bool=True,
-        env:    Optional[Dict[str,str]] = None,
-        strip:  bool=True,
-        die:    bool=False) -> Tuple[int, AnyStr, AnyStr]:
+def run(
+    cmd: List[str],
+    stdin: Optional[AnyStr] = None,
+    stdout: bool = True,
+    stderr: bool = True,
+    text: bool = True,
+    env: Optional[Dict[str, str]] = None,
+    strip: bool = True,
+    die: bool = False,
+) -> Tuple[int, AnyStr, AnyStr]:
     """Simple popen wrapper, which returns tuple of process
     return code, stdout and stderr.
     """
@@ -106,11 +114,13 @@ def run(cmd:    List[str],
     env_new = os.environ.copy()
     if env:
         env_new.update(env)
-    p = subprocess.Popen(cmd,
-                         stdin=subprocess.PIPE if stdin else None,
-                         stdout=subprocess.PIPE if stdout else None,
-                         stderr=subprocess.PIPE if stderr else None,
-                         env=env_new)
+    p = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE if stdin else None,
+        stdout=subprocess.PIPE if stdout else None,
+        stderr=subprocess.PIPE if stderr else None,
+        env=env_new,
+    )
 
     out, err = p.communicate(input=stdin)  # type: ignore
     if not stdout:
