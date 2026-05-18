@@ -20,6 +20,7 @@ from rich.progress import TextColumn
 from rich.progress import TimeElapsedColumn
 from rich.table import Table
 
+from esp_idf_sbom import __version__
 from esp_idf_sbom.libsbom import git
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import mft
@@ -550,6 +551,9 @@ def cmd_manifest_aggregate(args: Namespace) -> int:
 
 def main():
     parser = argparse.ArgumentParser(prog='esp-idf-sbom', description='ESP-IDF SBOM tool')
+    parser.add_argument(
+        '-V', '--version', action='version', version=f'%(prog)s {__version__}', help='Show version and exit.'
+    )
     parser.add_argument(
         '-q', '--quiet', action='store_true', default=bool(os.environ.get('SBOM_QUIET')), help='Suppress all output.'
     )
