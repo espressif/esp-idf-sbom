@@ -49,6 +49,22 @@ NAME_ARG = {
     },
 }
 
+NO_SYNC_EXCLUDED_CVES_ARG = {
+    'args': ['--no-sync-excluded-cves'],
+    'kwargs': {
+        'action': 'store_true',
+        'dest': 'no_sync_excluded_cves',
+        'default': bool(os.environ.get('SBOM_NO_SYNC_EXCLUDED_CVES')),
+        'help': (
+            'Skip downloading the excluded_cves.yaml file from the esp-idf-sbom '
+            'repository. The on-disk cache at ~/.esp-idf-sbom/excluded_cves.yaml '
+            'is used if it exists; otherwise the exclusion list is treated as '
+            'empty. Intended for fully air-gapped runs that combine well with '
+            '--local-db.'
+        ),
+    },
+}
+
 
 def cmd_create(args: Namespace) -> int:
     spdx_sbom = spdx.SPDXDocument(args, args.input_file)
@@ -703,6 +719,8 @@ def main():
         help=('When processing manifest files, disregard the conditions for the "if" key.'),
     )
 
+    create_parser.add_argument(*NO_SYNC_EXCLUDED_CVES_ARG['args'], **NO_SYNC_EXCLUDED_CVES_ARG['kwargs'])
+
     check_parser = subparsers.add_parser(
         'check',
         help=(
@@ -745,6 +763,8 @@ def main():
         default=bool(os.environ.get('SBOM_CHECK_LOCAL_DB')),
         help=('Use local NVD mirror for vulnerability check.'),
     )
+
+    check_parser.add_argument(*NO_SYNC_EXCLUDED_CVES_ARG['args'], **NO_SYNC_EXCLUDED_CVES_ARG['kwargs'])
 
     check_parser.add_argument(
         '--no-sync-db',
@@ -856,6 +876,8 @@ def main():
         help=('Skip updating local NVD mirror before vulnerability check.'),
     )
 
+    manifest_check_parser.add_argument(*NO_SYNC_EXCLUDED_CVES_ARG['args'], **NO_SYNC_EXCLUDED_CVES_ARG['kwargs'])
+
     manifest_check_parser.add_argument(
         '--format',
         choices=['table', 'json', 'csv', 'markdown'],
@@ -951,6 +973,10 @@ def main():
         if 'func' not in args:
             parser.print_help(sys.stderr)
             sys.exit(1)
+
+        # Propagate the --no-sync-excluded-cves flag to the nvd module so the
+        # excluded_cves.yaml fetch is skipped on subcommands that consult it.
+        nvd.EXCLUDED_CVES_NO_SYNC = bool(getattr(args, 'no_sync_excluded_cves', False))
 
         return args.func(args)
 

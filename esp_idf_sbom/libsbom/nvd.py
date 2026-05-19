@@ -41,6 +41,11 @@ EXCLUDED_CVES_URL = 'https://raw.githubusercontent.com/espressif/esp-idf-sbom/ma
 EXCLUDED_CVES_CACHE_PATH = Path.home() / '.esp-idf-sbom' / 'excluded_cves.yaml'
 EXCLUDED_CVES_TTL_SECONDS = 3600
 
+# When True, get_excluded_cves() skips the upstream fetch and uses only the
+# on-disk cache (returning an empty mapping if the cache does not exist). Set
+# from the --no-sync-excluded-cves CLI flag for fully air-gapped runs.
+EXCLUDED_CVES_NO_SYNC = False
+
 
 def nvd_request(params: str) -> List[Dict[str, Any]]:
     """When NVD API key is not provided, sleeps for 30 seconds to
@@ -148,37 +153,43 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}) -> Dict[str, Any]:
                 log.warn(f'Cannot read cached excluded CVEs from {cache_path}: {e}')
 
     # 2) Cache stale or missing -- fetch from upstream and refresh the cache.
+    #    Skipped entirely when sync is disabled (--no-sync-excluded-cves), so
+    #    the code falls through to step 3 and uses whatever is on disk.
     fetched = False
-    req = urllib.request.Request(EXCLUDED_CVES_URL)
-    for retry in range(1, 4):
-        try:
-            with urllib.request.urlopen(req, timeout=30) as res:
-                data = res.read()
-            cves = yaml.safe_load(data.decode()) or {}
+    if not EXCLUDED_CVES_NO_SYNC:
+        req = urllib.request.Request(EXCLUDED_CVES_URL)
+        for retry in range(1, 4):
             try:
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-                cache_path.write_bytes(data)
-            except OSError as e:
-                log.warn(f'Cannot write cached excluded CVEs to {cache_path}: {e}')
-            fetched = True
-            break
+                with urllib.request.urlopen(req, timeout=30) as res:
+                    data = res.read()
+                cves = yaml.safe_load(data.decode()) or {}
+                try:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    cache_path.write_bytes(data)
+                except OSError as e:
+                    log.warn(f'Cannot write cached excluded CVEs to {cache_path}: {e}')
+                fetched = True
+                break
 
-        except urllib.error.HTTPError as e:
-            log.warn(f'Cannot download list of excluded CVEs: {e}. Retrying({retry}) ...')
+            except urllib.error.HTTPError as e:
+                log.warn(f'Cannot download list of excluded CVEs: {e}. Retrying({retry}) ...')
 
-        except yaml.YAMLError as e:
-            log.warn(f'Cannot load list of excluded CVEs: {e}')
-            fetched = True
-            break
-    else:
-        log.warn('Failed to download list of excluded CVEs')
+            except yaml.YAMLError as e:
+                log.warn(f'Cannot load list of excluded CVEs: {e}')
+                fetched = True
+                break
+        else:
+            log.warn('Failed to download list of excluded CVEs')
 
-    # 3) Fetch failed -- fall back to the on-disk cache even if it's stale.
+    # 3) Fetch failed or was skipped -- fall back to the on-disk cache even if
+    #    it's stale. When sync is disabled the warning is suppressed since the
+    #    user explicitly opted into using whatever is on disk.
     if not fetched and cache_path.is_file():
         try:
             with open(cache_path) as f:
                 cves = yaml.safe_load(f) or {}
-            log.warn(f'Using stale on-disk cache for excluded CVEs at {cache_path}')
+            if not EXCLUDED_CVES_NO_SYNC:
+                log.warn(f'Using stale on-disk cache for excluded CVEs at {cache_path}')
         except (yaml.YAMLError, OSError) as e:
             log.warn(f'Cannot read cached excluded CVEs from {cache_path}: {e}')
 
