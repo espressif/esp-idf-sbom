@@ -169,8 +169,12 @@ The resulting `blink.spdx` sbom file can be found in the `blink` project directo
 
 The SBOM file is created based on application sources, build artefacts, information
 provided by the ESP-IDF build system and SBOM manifest files. The resulting SBOM
-file contains SPDX packages for the final **project** application, used **toolchain**,
-**components** used during build, git **submodules** and **subpackages**. The **subpackages**
+file contains SPDX packages for the final **project** application, the **framework**
+(ESP-IDF itself), used **toolchain**, **components** used during build, git
+**submodules** and **subpackages**. The **framework** package carries the ESP-IDF
+version and the CPEs Espressif uses in NVD advisories (the application CPE plus the
+generic `esp32` hardware and `esp32_firmware` OS CPEs); the **project** package
+`DEPENDS_ON` it instead of carrying the ESP-IDF CPE directly. The **subpackages**
 are created based on `sbom.yml` manifest files found in **submodules** and **subpackages**
 sub-directories or referenced manifest files or manifest files for virtual packages.
 Please see [Manifest file](#manifest-file).
