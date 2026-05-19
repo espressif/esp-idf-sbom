@@ -30,6 +30,7 @@ from esp_idf_sbom.libsbom import expr
 from esp_idf_sbom.libsbom import git
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import mft
+from esp_idf_sbom.libsbom import nvd
 from esp_idf_sbom.libsbom import utils
 
 
@@ -697,8 +698,20 @@ class SPDXPackage(SPDXObject):
 
         comment = ''
 
-        if self.manifest['cve-exclude-list']:
-            cve_info = {'cve-exclude-list': self.manifest['cve-exclude-list']}
+        # Merge manifest-level cve-exclude-list with globally-applicable exclusions
+        # from excluded_cves.yaml for any of this package's CPEs. Manifest entries
+        # take precedence over global ones for the same CVE (more specific).
+        merged_excludes: Dict[str, str] = {}
+        for cpe in self.manifest['cpe']:
+            for cve_id, reason in nvd.get_excluded_cves_for_cpe(cpe).items():
+                merged_excludes.setdefault(cve_id, reason)
+        for entry in self.manifest['cve-exclude-list']:
+            merged_excludes[entry['cve']] = entry['reason']
+
+        if merged_excludes:
+            cve_info = {
+                'cve-exclude-list': [{'cve': cve_id, 'reason': reason} for cve_id, reason in merged_excludes.items()]
+            }
             cve_info_yaml = yaml.dump(cve_info, indent=4)
             cve_info_desc = (
                 '# The cve-exclude-list list contains CVEs, which were '
