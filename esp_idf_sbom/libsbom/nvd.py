@@ -46,6 +46,12 @@ EXCLUDED_CVES_TTL_SECONDS = 3600
 # from the --no-sync-excluded-cves CLI flag for fully air-gapped runs.
 EXCLUDED_CVES_NO_SYNC = False
 
+# Environment variable that, when set, forces get_excluded_cves() to load the
+# file from the named path. Bypasses both the upstream fetch and the on-disk
+# cache. Useful for tests and for users maintaining their own exclusion list
+# outside the upstream repository.
+EXCLUDED_CVES_FILE_ENV = 'SBOM_EXCLUDED_CVES_FILE'
+
 
 def nvd_request(params: str) -> List[Dict[str, Any]]:
     """When NVD API key is not provided, sleeps for 30 seconds to
@@ -137,8 +143,23 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}) -> Dict[str, Any]:
         # Read the excluded CVEs once per script run.
         return cache['cves']
 
-    cache_path = EXCLUDED_CVES_CACHE_PATH
     cves: Dict[str, Any] = {}
+
+    # 0) Optional override: when SBOM_EXCLUDED_CVES_FILE is set, load the file
+    #    from that path directly and skip both the disk cache and the upstream
+    #    fetch. This is the data source for tests and for users keeping their
+    #    own exclusion list outside the upstream repository.
+    override = os.environ.get(EXCLUDED_CVES_FILE_ENV)
+    if override:
+        try:
+            with open(override) as f:
+                cves = yaml.safe_load(f) or {}
+        except (yaml.YAMLError, OSError) as e:
+            log.warn(f'Cannot read excluded CVEs from {override}: {e}')
+        cache['cves'] = cves
+        return cves
+
+    cache_path = EXCLUDED_CVES_CACHE_PATH
 
     # 1) On-disk cache is fresh -- use it directly without hitting the network.
     if cache_path.is_file():
