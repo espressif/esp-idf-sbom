@@ -131,33 +131,58 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}) -> Dict[str, Any]:
     return cves
 
 
+def get_globally_excluded_cves() -> Dict[str, str]:
+    """Return ``{cve_id: reason}`` for CVEs that are unrelated to any Espressif product.
+
+    These are the entries in ``excluded_cves.yaml`` whose value is a plain
+    string. They are filtered at the NVD-query layer in :func:`check_cpe` and
+    :func:`check_keyword` and never propagate to the report, regardless of how
+    NVD matched them. Used for cases such as a Linux kernel CVE that mentions
+    ``zlib`` or ``fmt`` in its description and gets returned by keyword search,
+    or a CVE that NVD has (incorrectly) attributed to an Espressif CPE.
+    """
+    result: Dict[str, str] = {}
+    cves = get_excluded_cves()
+    if not isinstance(cves, dict):
+        return result
+    for cve_id, value in cves.items():
+        if isinstance(value, str):
+            result[cve_id] = value
+    return result
+
+
 # https://nvd.nist.gov/developers/vulnerabilities
 def check_cpe(cpe: str, localdb: bool = False) -> List[Dict[str, Any]]:
     """Check given CPE against NVD data."""
 
+    globally_excluded = get_globally_excluded_cves()
+
     # Check vulnerabilities that have already been processed in the NVD and have an assigned CPE.
     if localdb:
-        return repo_check(cpe)
+        vulns = repo_check(cpe)
+    else:
+        cpe_quoted = urllib.parse.quote(cpe)
+        cpe_vulns = nvd_request(f'cpeName={cpe_quoted}')
 
-    cpe_quoted = urllib.parse.quote(cpe)
-    cpe_vulns = nvd_request(f'cpeName={cpe_quoted}')
+        # The NVD REST API returns every CVE that references this CPE name in any
+        # configuration, regardless of the per-cpeMatch "vulnerable" flag or version
+        # range. That includes CVEs where our CPE appears only as a runtime
+        # requirement (vulnerable=false, the "Running on/with" entries in the NVD
+        # UI), e.g. CVE-2021-32921 listing lua under an AND with Prosody. Filter
+        # these out using is_version_vulnerable, which honors cpeMatch[vulnerable]
+        # and the version-range keys carried inline in the response. The local-db
+        # path applies equivalent filtering through repo_check.
+        vulns = []
+        for cve in cpe_vulns:
+            for cfg in cve['cve'].get('configurations', []):
+                if is_version_vulnerable(cpe, cfg):
+                    vulns.append(cve)
+                    break
 
-    # The NVD REST API returns every CVE that references this CPE name in any
-    # configuration, regardless of the per-cpeMatch "vulnerable" flag or version
-    # range. That includes CVEs where our CPE appears only as a runtime
-    # requirement (vulnerable=false, the "Running on/with" entries in the NVD
-    # UI), e.g. CVE-2021-32921 listing lua under an AND with Prosody. Filter
-    # these out using is_version_vulnerable, which honors cpeMatch[vulnerable]
-    # and the version-range keys carried inline in the response. The local-db
-    # path applies equivalent filtering through repo_check.
-    filtered = []
-    for cve in cpe_vulns:
-        for cfg in cve['cve'].get('configurations', []):
-            if is_version_vulnerable(cpe, cfg):
-                filtered.append(cve)
-                break
-
-    return filtered
+    # Drop CVEs that are unrelated to any Espressif product. These are listed in
+    # excluded_cves.yaml as plain string entries and must never appear in scan
+    # output, regardless of how NVD attributed them.
+    return [v for v in vulns if v['cve']['id'] not in globally_excluded]
 
 
 def check_keyword(keyword: str, localdb: bool = False) -> List[Dict[str, Any]]:
@@ -165,8 +190,10 @@ def check_keyword(keyword: str, localdb: bool = False) -> List[Dict[str, Any]]:
 
     cpe_vulns: List[Dict[str, Any]] = []
 
-    # Obtain the list of excluded CVEs to filter them out from the unanalyzed CVEs provided by NVD.
-    excluded_cves = get_excluded_cves()
+    # CVEs unrelated to any Espressif product (e.g. a Linux kernel CVE that
+    # happens to mention "zlib" or "fmt"). Filter these out so they never appear
+    # in keyword-search output.
+    globally_excluded = get_globally_excluded_cves()
 
     if localdb:
         keyword_vulns = repo_keyword(keyword)
@@ -176,9 +203,8 @@ def check_keyword(keyword: str, localdb: bool = False) -> List[Dict[str, Any]]:
 
     for vuln in keyword_vulns:
         if vuln['cve']['vulnStatus'] in ['Received', 'Awaiting Analysis', 'Undergoing Analysis']:
-            # CVE not analyzed in NVD, include it in the results.
-            if vuln['cve']['id'] in excluded_cves:
-                # This CVE was previously analyzed and determined to be a false positive, unrelated to ESP-IDF.
+            # CVE not analyzed in NVD yet; include unless it's globally excluded.
+            if vuln['cve']['id'] in globally_excluded:
                 continue
             cpe_vulns.append(vuln)
 
