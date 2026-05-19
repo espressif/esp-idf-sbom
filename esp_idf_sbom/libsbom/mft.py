@@ -271,6 +271,30 @@ def get_manifests(sources: List[str]) -> List[Dict[str, Any]]:
             manifest['_dst'] = directory
             manifest_list.append(manifest)
 
+    # If any of the scan sources is itself the root of an ESP-IDF tree,
+    # synthesize an esp-idf framework manifest and append it so the scan
+    # reports CVEs against ESP-IDF's CPEs. Detection is an exact path match:
+    # the source must point directly at the IDF root (presence of
+    # tools/cmake/version.cmake at that path). Deduplicated by resolved path
+    # so passing the same IDF root twice does not produce duplicate entries.
+    seen_idf_roots: Set[str] = set()
+    for source in sources:
+        if not utils.is_idf_root(source):
+            continue
+        resolved = utils.presolve(source)
+        if resolved in seen_idf_roots:
+            continue
+        seen_idf_roots.add(resolved)
+
+        framework = build_idf_framework_manifest(source)
+        if not framework:
+            log.warn(f'cannot read ESP-IDF version from {source}; framework manifest not injected')
+            continue
+
+        framework['_src'] = source
+        framework['_dst'] = source
+        manifest_list.append(framework)
+
     return manifest_list
 
 
