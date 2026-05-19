@@ -102,7 +102,23 @@ def nvd_request(params: str) -> List[Dict[str, Any]]:
 
 
 def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}) -> Dict[str, Any]:
-    """Retrieve the YAML file from the esp-idf-sbom repository, which includes a list of excluded CVEs."""
+    """Retrieve the YAML file from the esp-idf-sbom repository, which includes a list of excluded CVEs.
+
+    The file is a top-level mapping keyed by CVE ID. The value can be either:
+
+    * a string -- the CVE is unrelated to any Espressif product. The string is
+      the reason. Filtered at the NVD-query layer in :func:`check_cpe` and
+      :func:`check_keyword`; never appears in scan output. See
+      :func:`get_globally_excluded_cves`.
+
+    * a mapping with ``cpes`` and ``reason`` -- the CVE does apply to an
+      Espressif product but is considered handled (e.g. patched) for the CPEs
+      in ``cpes``. The scan still reports the CVE for matching CPEs but marks
+      it as EXCLUDED with the given reason. Each entry in ``cpes`` carries a
+      ``cpe`` plus optional ``versionStartIncluding`` / ``versionStartExcluding``
+      / ``versionEndIncluding`` / ``versionEndExcluding`` fields, mirroring
+      NVD's own ``cpeMatch`` shape. See :func:`get_excluded_cves_for_cpe`.
+    """
 
     if 'cves' in cache:
         # Download the excluded CVEs once per script run, not for each check.
@@ -129,6 +145,43 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}) -> Dict[str, Any]:
 
     cache['cves'] = cves
     return cves
+
+
+def get_excluded_cves_for_cpe(cpe: str) -> Dict[str, str]:
+    """Return ``{cve_id: reason}`` for CPE-scoped exclusions matching ``cpe``.
+
+    These are dict-valued entries in ``excluded_cves.yaml`` whose ``cpes`` list
+    contains a match for the given CPE (OR semantics, NVD ``cpeMatch`` version
+    range semantics). They represent CVEs that do apply to an Espressif product
+    but have been patched in specific versions -- so the scan should mark them
+    as EXCLUDED for the patched (and later) versions while still reporting them
+    on affected versions.
+
+    Globally-excluded (string-valued) entries are intentionally not returned
+    here; they are filtered at the NVD-query level instead.
+    """
+    result: Dict[str, str] = {}
+    cves = get_excluded_cves()
+    if not isinstance(cves, dict):
+        return result
+
+    for cve_id, value in cves.items():
+        if not isinstance(value, dict):
+            continue
+        for entry in value.get('cpes', []) or []:
+            if not isinstance(entry, dict) or 'cpe' not in entry:
+                continue
+            # Wrap into an NVD-shaped configuration so we can reuse is_version_vulnerable.
+            cpe_match: Dict[str, Any] = {'vulnerable': True, 'criteria': entry['cpe']}
+            for key in ('versionStartIncluding', 'versionStartExcluding', 'versionEndIncluding', 'versionEndExcluding'):
+                if key in entry:
+                    cpe_match[key] = entry[key]
+            synth_cfg = {'nodes': [{'cpeMatch': [cpe_match]}]}
+            if is_version_vulnerable(cpe, synth_cfg):
+                result[cve_id] = value.get('reason', '')
+                break
+
+    return result
 
 
 def get_globally_excluded_cves() -> Dict[str, str]:

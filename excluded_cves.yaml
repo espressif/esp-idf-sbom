@@ -1,6 +1,41 @@
-# This file lists excluded CVEs to be used with the --name option during
-# esp-idf-sbom check or manifest check, helping to exclude false positives for
-# unanalyzed CVEs in the NVD database.
+# This file lists excluded CVEs honored by esp-idf-sbom during check and SBOM
+# generation.
+#
+# Top-level keys are CVE IDs. Each value can be either:
+#
+#   * a string -- the CVE is unrelated to any Espressif product. The string is
+#     the reason. Such CVEs are dropped at the NVD-query layer in nvd.py and
+#     never appear in scan output, no matter how NVD matched them (keyword or
+#     CPE). Used for CVEs that have nothing to do with the actual library/code
+#     used by ESP-IDF -- for example a Linux kernel CVE that mentions `zlib` or
+#     `fmt` in its description and gets returned by a keyword search.
+#
+#   * a mapping with `cpes` and `reason` -- the CVE does apply to an Espressif
+#     product but is considered handled (e.g. patched) for the CPEs in `cpes`.
+#     The scan still reports the CVE for matching CPEs but marks it EXCLUDED
+#     with the given reason, so the customer can see we evaluated it. The CVE
+#     is NOT excluded for CPEs outside the `cpes` list -- those should still
+#     be reported as a real hit. OR semantics across `cpes`. Each entry has a
+#     `cpe` plus optional version-range fields (versionStartIncluding/Excluding,
+#     versionEndIncluding/Excluding), mirroring NVD's own cpeMatch shape.
+#
+# Example of the scoped form:
+#
+#   CVE-2024-53845:
+#     cpes:
+#       - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+#         versionStartIncluding: '5.0.8'
+#         versionEndExcluding:   '5.1'
+#       - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+#         versionStartIncluding: '5.1.6'
+#         versionEndExcluding:   '5.2'
+#       - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+#         versionStartIncluding: '5.2.4'
+#         versionEndExcluding:   '5.3'
+#       - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+#         versionStartIncluding: '5.3.2'
+#     reason: >-
+#       https://github.com/espressif/esp-idf/security/advisories/GHSA-wm57-466g-mhrr
 
 CVE-2021-47262: Related to the Linux kernel
 CVE-2021-47264: Related to the Linux kernel
