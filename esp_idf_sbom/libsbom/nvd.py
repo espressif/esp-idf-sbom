@@ -33,6 +33,14 @@ WARNED = False
 
 NVD_MIRROR_URL = 'https://github.com/espressif/esp-nvd-mirror.git'
 
+# On-disk cache for excluded_cves.yaml. The file is refreshed from the upstream
+# repository at most once per EXCLUDED_CVES_TTL_SECONDS; within that window the
+# cached copy is used directly. On fetch failure we fall back to the cached
+# copy (even if stale) so offline scans don't lose previously-known exclusions.
+EXCLUDED_CVES_URL = 'https://raw.githubusercontent.com/espressif/esp-idf-sbom/master/excluded_cves.yaml'
+EXCLUDED_CVES_CACHE_PATH = Path.home() / '.esp-idf-sbom' / 'excluded_cves.yaml'
+EXCLUDED_CVES_TTL_SECONDS = 3600
+
 
 def nvd_request(params: str) -> List[Dict[str, Any]]:
     """When NVD API key is not provided, sleeps for 30 seconds to
@@ -121,17 +129,38 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}) -> Dict[str, Any]:
     """
 
     if 'cves' in cache:
-        # Download the excluded CVEs once per script run, not for each check.
+        # Read the excluded CVEs once per script run.
         return cache['cves']
 
+    cache_path = EXCLUDED_CVES_CACHE_PATH
     cves: Dict[str, Any] = {}
-    url = 'https://raw.githubusercontent.com/espressif/esp-idf-sbom/master/excluded_cves.yaml'
-    req = urllib.request.Request(url)
 
+    # 1) On-disk cache is fresh -- use it directly without hitting the network.
+    if cache_path.is_file():
+        age = time.time() - cache_path.stat().st_mtime
+        if age < EXCLUDED_CVES_TTL_SECONDS:
+            try:
+                with open(cache_path) as f:
+                    cves = yaml.safe_load(f) or {}
+                cache['cves'] = cves
+                return cves
+            except (yaml.YAMLError, OSError) as e:
+                log.warn(f'Cannot read cached excluded CVEs from {cache_path}: {e}')
+
+    # 2) Cache stale or missing -- fetch from upstream and refresh the cache.
+    fetched = False
+    req = urllib.request.Request(EXCLUDED_CVES_URL)
     for retry in range(1, 4):
         try:
             with urllib.request.urlopen(req, timeout=30) as res:
-                cves = yaml.safe_load(res.read().decode())
+                data = res.read()
+            cves = yaml.safe_load(data.decode()) or {}
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_bytes(data)
+            except OSError as e:
+                log.warn(f'Cannot write cached excluded CVEs to {cache_path}: {e}')
+            fetched = True
             break
 
         except urllib.error.HTTPError as e:
@@ -139,9 +168,19 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}) -> Dict[str, Any]:
 
         except yaml.YAMLError as e:
             log.warn(f'Cannot load list of excluded CVEs: {e}')
+            fetched = True
             break
     else:
         log.warn('Failed to download list of excluded CVEs')
+
+    # 3) Fetch failed -- fall back to the on-disk cache even if it's stale.
+    if not fetched and cache_path.is_file():
+        try:
+            with open(cache_path) as f:
+                cves = yaml.safe_load(f) or {}
+            log.warn(f'Using stale on-disk cache for excluded CVEs at {cache_path}')
+        except (yaml.YAMLError, OSError) as e:
+            log.warn(f'Cannot read cached excluded CVEs from {cache_path}: {e}')
 
     cache['cves'] = cves
     return cves
