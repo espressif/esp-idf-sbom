@@ -19,6 +19,44 @@ from esp_idf_sbom.libsbom import git
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import utils
 
+# Shared text used on the synthesized ESP-IDF framework manifest. Lives here so
+# both the SPDX-generation path (SPDXFramework) and the manifest-check
+# injection path use the same wording.
+IDF_FRAMEWORK_DESCRIPTION = (
+    "Espressif IoT Development Framework -- the official development framework for Espressif Systems' chips."
+)
+IDF_FRAMEWORK_SUPPLIER = 'Organization: Espressif Systems (Shanghai) CO LTD'
+
+
+def build_idf_framework_manifest(idf_path: str) -> Dict[str, Any]:
+    """Build the in-memory manifest dict for an ESP-IDF framework package.
+
+    Reads the IDF version from ``tools/cmake/version.cmake`` at ``idf_path``,
+    composes the three NVD CPEs, and derives ``PackageDownloadLocation`` from
+    the checkout's git remote (so customer forks are attributed correctly).
+
+    Returns an empty dict when the version cannot be read; callers should
+    treat that as "no framework manifest available" and skip emitting one.
+    The helper itself is silent -- it is up to each caller to log a warning
+    in the way that fits their flow.
+    """
+    version = utils.read_idf_version(idf_path)
+    if not version:
+        return {}
+
+    manifest: Dict[str, Any] = {
+        'name': 'esp-idf',
+        'version': version,
+        'cpe': utils.build_idf_framework_cpes(version),
+        'description': IDF_FRAMEWORK_DESCRIPTION,
+        'supplier': IDF_FRAMEWORK_SUPPLIER,
+    }
+    remote = git.get_remote_location(idf_path)
+    if remote:
+        manifest['url'] = f'git+{remote}'
+    return manifest
+
+
 licensing = get_spdx_licensing()
 
 
