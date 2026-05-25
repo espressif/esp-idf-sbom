@@ -47,6 +47,13 @@ def fix(manifest: Dict[str, Any]) -> None:
         cpes_expanded = [cpe.format(ver) for cpe in manifest['cpe']]
         manifest['cpe'] = cpes_expanded
 
+    if 'purl' in manifest and manifest['purl']:
+        # Expand purl with version value, mirroring the {} substitution
+        # already supported for cpe so component maintainers only have to
+        # express the PURL template once.
+        ver = manifest.get('version', '')
+        manifest['purl'] = manifest['purl'].format(ver)
+
 
 def load(path: str) -> Dict[str, Any]:
     """Load manifest file
@@ -262,6 +269,15 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
                 raise schema.SchemaError(f'Value "{cpe}" does not seem to be well-formed CPE string binding')
         return True
 
+    def check_purl(purl: str) -> bool:
+        # Minimal validator for PURL syntax (purl-spec):
+        #   pkg:<type>/<namespace>?/<name>[@<version>][?<qualifiers>][#<subpath>]
+        # The version may legitimately still be a "{}" placeholder at validate
+        # time; fix() will substitute it before the PURL is emitted.
+        if not utils.is_purl(purl):
+            raise schema.SchemaError(f'Value "{purl}" does not look like a valid PURL (expected "pkg:<type>/..." form)')
+        return True
+
     def check_license(lic: str) -> bool:
         try:
             licensing.parse(lic, validate=True)
@@ -354,6 +370,7 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
             schema.Optional('repository'): schema.And(str, check_url),
             schema.Optional('url'): schema.And(str, check_url),
             schema.Optional('cpe'): schema.And(list, check_cpes),
+            schema.Optional('purl'): schema.And(str, check_purl),
             schema.Optional('supplier'): schema.And(str, check_person_organization),
             schema.Optional('originator'): schema.And(str, check_person_organization),
             schema.Optional('description'): str,

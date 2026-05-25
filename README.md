@@ -225,6 +225,43 @@ The `sbom.yml` is a simple yaml file, which may contain the following entries.
 * **cpe**:
     CPE used for vulnerabilities check against NVD. This can be single CPE value or a
     list of CPEs.
+* **purl**:
+    [Package URL][8] (PURL) identifying the source of the package. Emitted as the
+    SPDX `PACKAGE-MANAGER purl` `ExternalRef`. Like `cpe`, the value supports the
+    `{}` placeholder which is substituted with the package `version`, so the PURL
+    template is written once and a version bump only touches the `version` field:
+
+    ```
+    name: zlib
+    version: 1.3.2
+    cpe: cpe:2.3:a:zlib:zlib:{}:*:*:*:*:*:*:*
+    purl: pkg:github/madler/zlib@{}
+    ```
+
+    Only a single PURL per package is supported. PURL identifies the *source* of
+    the artifact (one URL per package), while the multi-value `cpe` list already
+    covers the case where the same software is tracked in NVD under multiple
+    vendor names.
+
+    When `purl` is not set explicitly, a PURL is auto-derived for components and
+    submodules from `url` (preferred) or `repository` if it points at a
+    `github.com` or `gitlab.com` repository. `github.com/<owner>/<repo>/tree/<branch>/<subdir>`
+    URLs are emitted with the PURL `subpath` qualifier so the package is
+    identified as a subdirectory rather than the whole repo. Non-github/gitlab
+    URLs (e.g. `https://www.lua.org/`) need an explicit `purl`. Subpackages do
+    **not** auto-derive, because their directory lives inside the parent's git
+    tree and the derived PURL would falsely point at the parent project; a
+    subpackage must opt in by setting `purl` in its own manifest.
+
+    The explicit `purl` value also acts as an override for forks where the
+    auto-derived "where we built from" PURL is not what downstream OSV/GHSA-style
+    scanners would query (e.g. for `mbedtls`, the resolved submodule URL is
+    `github.com/espressif/mbedtls` but advisories are indexed against the
+    upstream `github.com/Mbed-TLS/mbedtls`):
+
+    ```
+    sbom-purl = pkg:github/Mbed-TLS/mbedtls@{}
+    ```
 * **supplier**:
     Package supplier. Person or organization distributing the package. Should be prefixed
     with *Person:* or *Organization:* as described in SPDX specification.
@@ -549,3 +586,4 @@ given **project**, **component** or **submodule**.
 [5]: https://en.wikipedia.org/wiki/Common_Platform_Enumeration
 [6]: https://github.com/espressif/esp-nvd-mirror
 [7]: https://www.youtube.com/watch?v=ODZwxKawVXo
+[8]: https://github.com/package-url/purl-spec

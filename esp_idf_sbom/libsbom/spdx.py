@@ -309,6 +309,7 @@ class SPDXObject:
         'LicenseInfoInFile',
         'FileCopyrightText',
         'FileChecksum',
+        'PackageChecksum',
         'ExternalRef',
         'LicenseConcluded',
         'FileContributor',
@@ -324,6 +325,7 @@ class SPDXObject:
         'repository': '',
         'url': '',
         'cpe': [],
+        'purl': '',
         'supplier': '',
         'originator': '',
         'description': '',
@@ -639,6 +641,9 @@ class SPDXPackage(SPDXObject):
         if not self.manifest['supplier']:
             self.manifest['supplier'] = self.guess_supplier(self.dir, self.manifest['url'], self.manifest['repository'])
 
+        if not self.manifest['purl']:
+            self.manifest['purl'] = self.guess_purl()
+
         all_subpackages = self.get_subpackages()
         self.subpackages = [subpkg for subpkg in all_subpackages if subpkg.include]
 
@@ -695,6 +700,9 @@ class SPDXPackage(SPDXObject):
         for cpe in self.manifest['cpe']:
             self['ExternalRef'] += [f'SECURITY cpe23Type {cpe}']
 
+        if self.manifest['purl']:
+            self['ExternalRef'] += [f'PACKAGE-MANAGER purl {self.manifest["purl"]}']
+
         comment = ''
 
         if self.manifest['cve-exclude-list']:
@@ -716,6 +724,46 @@ class SPDXPackage(SPDXObject):
             self['PackageComment'] = [f'<text>\n{comment}</text>']
 
         self.add_relationships()
+
+    def guess_purl(self) -> str:
+        """Try to derive a PURL from the manifest url or repository.
+
+        Tries manifest['url'] first (explicit, maintainer-curated upstream
+        URL set in sbom.yml or sbom-url in .gitmodules). If that does not
+        yield a PURL -- e.g. a release-asset download URL like the
+        toolchain's .../releases/download/.../foo.tar.xz -- falls back to
+        manifest['repository'], stripping the @<sha>#<path> suffix that
+        get_remote_location() appends.
+
+        The repository fallback is skipped when the auto-filled URL has a
+        "#<path>" fragment, which marks the package directory as a
+        subdirectory of a parent git repository (typical for in-tree
+        wrapper components and the project itself when both live inside
+        esp-idf). Without this guard every in-tree wrapper would
+        auto-derive the same pkg:github/espressif/esp-idf@<ver> PURL --
+        identical lines on dozens of packages add no identification
+        information that the per-package OTHER repository ExternalRef
+        (which retains the subpath) doesn't already provide.
+
+        Returns empty string when neither source yields a PURL; the
+        caller is then expected to leave manifest['purl'] empty so no
+        PACKAGE-MANAGER ExternalRef is emitted.
+        """
+        if self.args.no_guess:
+            return ''
+
+        ver = self.manifest['version']
+        purl = utils.derive_purl(self.manifest['url'], ver)
+        if purl or not self.manifest['repository']:
+            return purl
+
+        # A "#" anywhere in the repository value signals the auto-filled
+        # "<URL>@<sha>#<path>" form from get_remote_location() where the
+        # package lives inside a parent repo. Skip rather than emit a
+        # PURL pointing at the parent.
+        if '#' in self.manifest['repository']:
+            return ''
+        return utils.derive_purl(self.manifest['repository'].split('@', 1)[0], ver)
 
     def include_package(self) -> bool:
         if self.args.disable_conditions:
@@ -1171,6 +1219,14 @@ class SPDXToolchain(SPDXPackage):
         if self.info:
             name = self.info['name']
             super().__init__(args, proj_desc, self.info['path'], name, 'toolchain')
+            # tools.json carries the SHA256 of the toolchain release tarball.
+            # Emit it as PackageChecksum so the SBOM pins the exact binary
+            # used to build the firmware, independent of --files add (which
+            # would hash files unpacked on disk rather than the distributed
+            # artifact). Important for CRA/SLSA-style provenance: identifies
+            # "the compiler that built this", not just "some version named X".
+            if self.include and self.info.get('sha256'):
+                self['PackageChecksum'] = [f'SHA256: {self.info["sha256"]}']
         else:
             log.warn(
                 'The toolchain cannot be identified and will not be included '
@@ -1184,6 +1240,13 @@ class SPDXToolchain(SPDXPackage):
         if self.info:  # make mypy happy, because this method will not be called if self.info in None
             manifest['description'] = self.info['description']
             manifest['url'] = self.info['url']
+            # info_url points at the toolchain's upstream repository (e.g.
+            # https://github.com/espressif/crosstool-NG for xtensa-esp-elf)
+            # and is suitable input for PURL derivation. info['url'] is the
+            # release-asset download URL (.../releases/download/...) which
+            # is the right PackageDownloadLocation but does not match the
+            # PURL "owner/repo" shape.
+            manifest['repository'] = self.info.get('info_url', '')
             manifest['version'] = self.info['version']
             manifest['supplier'] = self.ESPRESSIF_SUPPLIER
         return manifest
