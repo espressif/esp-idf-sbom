@@ -125,7 +125,7 @@ def set_variables(variables: Dict[str, Any]) -> None:
 
 def evaluate(string: str) -> bool:
     try:
-        res = _expr.parse_string(string, parse_all=True)
-    except pp.exceptions.ParseException as e:
+        res = _expr.parseString(string, parseAll=True)
+    except pp.ParseException as e:
         raise RuntimeError(e)
     return _boolit(res[0])
