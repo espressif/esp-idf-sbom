@@ -1,11 +1,13 @@
-# SPDX-FileCopyrightText: 2024 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2024-2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
 """
 Basic evaluation of expressions for configuration values specified with kconfig.
 """
 
-from typing import Any, Dict, Union
+from typing import Any
+from typing import Dict
+from typing import Union
 
 import pyparsing as pp
 
@@ -26,7 +28,7 @@ def _boolit(operator: Union[bool, int, str]) -> bool:
     return False if type(operator) is not bool else operator
 
 
-def _eval_binary_operator(toks: pp.ParseResults, logical: bool=False) -> bool:
+def _eval_binary_operator(toks: pp.ParseResults, logical: bool = False) -> bool:
     operator_map = {
         '=': lambda o1, o2: o1 == o2,
         '!=': lambda o1, o2: o1 != o2,
@@ -112,7 +114,8 @@ _expr = pp.infixNotation(
         (pp.oneOf('= !='), 2, pp.opAssoc.LEFT, _eval_comparison_operator),
         ('&&', 2, pp.opAssoc.LEFT, _eval_logical_operator),
         ('||', 2, pp.opAssoc.LEFT, _eval_logical_operator),
-    ])
+    ],
+)
 
 
 def set_variables(variables: Dict[str, Any]) -> None:
@@ -122,7 +125,7 @@ def set_variables(variables: Dict[str, Any]) -> None:
 
 def evaluate(string: str) -> bool:
     try:
-        res = _expr.parse_string(string, parse_all=True)
-    except pp.exceptions.ParseException as e:
+        res = _expr.parseString(string, parseAll=True)
+    except pp.ParseException as e:
         raise RuntimeError(e)
     return _boolit(res[0])
