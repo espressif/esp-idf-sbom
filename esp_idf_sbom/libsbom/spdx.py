@@ -564,6 +564,28 @@ class SPDXDocument(SPDXObject):
                 f'Please see the list of IDF versions required by esp-idf-sbom.'
             )
 
+        # ESP-IDF built without git and without version.txt (pre-esp-idf#18240)
+        # writes git describe's failure marker, e.g. "-128-NOTFOUND", into
+        # git_revision. guess_version() uses git_revision as the version of
+        # in-tree ESP-IDF components, so recover the real version from the
+        # committed tools/cmake/version.cmake instead of propagating the marker.
+        git_revision = proj_desc.get('git_revision', '')
+        if git_revision.endswith('-NOTFOUND'):
+            idf_ver = utils.read_idf_version(proj_desc.get('idf_path', ''))
+            if idf_ver:
+                log.warn(
+                    f'ESP-IDF git revision in the project description is "{git_revision}", a git describe '
+                    f'failure marker from building ESP-IDF without git or version.txt. '
+                    f'Using "v{idf_ver}" from tools/cmake/version.cmake instead.'
+                )
+                proj_desc['git_revision'] = f'v{idf_ver}'
+            else:
+                log.warn(
+                    f'ESP-IDF git revision in the project description is "{git_revision}" and the version '
+                    f'could not be read from tools/cmake/version.cmake; ESP-IDF component versions will be omitted.'
+                )
+                proj_desc['git_revision'] = ''
+
         return proj_desc  # type: ignore
 
     def _set_expr_variables(self, proj_desc: Dict[str, Any], args: Namespace) -> None:
