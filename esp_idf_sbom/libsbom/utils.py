@@ -6,6 +6,7 @@ Miscellaneous helpers
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import AnyStr
@@ -88,6 +89,63 @@ def is_remote_url(url: str = '') -> bool:
     This is just a very basic test."""
     res = urlparse(url)
     return bool(res.scheme in ['git', 'http', 'https'] and res.netloc)
+
+
+# PURL: pkg:<type>/<namespace>?/<name>[@<version>][?<qualifiers>][#<subpath>]
+# Reference: https://github.com/package-url/purl-spec
+# The version part may still contain the "{}" placeholder at validate time;
+# version substitution happens later in mft.fix().
+_PURL_RE = re.compile(r'^pkg:[a-z][a-z0-9+\-.]*/.+', re.IGNORECASE)
+
+
+def is_purl(purl: str = '') -> bool:
+    """Minimal syntactic check for a Package URL (PURL).
+    Validates only the leading "pkg:<type>/..." structure; full per-type
+    rules are intentionally not enforced here."""
+    return bool(_PURL_RE.match(purl))
+
+
+# Matches a github.com or gitlab.com repository URL pointing at the repository
+# root only -- with an optional trailing slash or ".git" suffix. URLs that go
+# deeper (e.g. ".../tree/<branch>/<subpath>", which github uses to browse a
+# subdirectory) intentionally do not match; the same suppression that applies
+# to the auto-filled "<URL>@<sha>#<path>" form in guess_purl applies here, so
+# auto-derivation never claims a subdirectory of a parent repo as its own
+# package.
+# Captures:
+#   1: host ("github" or "gitlab")
+#   2: owner (namespace)
+#   3: repo name (".git" suffix stripped)
+_GIT_HOST_RE = re.compile(
+    r'^https?://(?:www\.)?(github|gitlab)\.com/([^/]+)/([^/]+?)(?:\.git)?/?$',
+    re.IGNORECASE,
+)
+
+
+def derive_purl(url: str, version: str) -> str:
+    """Derive a Package URL from a github.com or gitlab.com source URL.
+
+    Recognises plain repository URLs at the repo root (with optional
+    trailing slash or ".git" suffix). Subdirectory URLs such as
+    ".../tree/<branch>/<subpath>" intentionally do not match -- a PURL
+    derived from them would identify the parent repo at a version that
+    does not exist there (e.g. the IDF Component Registry's "<ver>~<rev>"
+    revision form for the bundling, which is not a github tag). The
+    maintainer can set an explicit purl: in the manifest for such cases.
+
+    Returns an empty string when the URL cannot be derived from (unknown
+    host, subdirectory URL, missing version). The caller is expected to
+    skip emission in that case rather than producing a partial PURL.
+    """
+    if not url or not version:
+        return ''
+
+    m = _GIT_HOST_RE.match(url)
+    if not m:
+        return ''
+
+    host, owner, repo = m.group(1), m.group(2), m.group(3)
+    return f'pkg:{host.lower()}/{owner}/{repo}@{version}'
 
 
 def csv_escape(entries: Iterable) -> List[str]:

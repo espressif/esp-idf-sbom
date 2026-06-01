@@ -687,3 +687,129 @@ def test_symlinked_component(hello_world_build: Path, tmp_path: Path) -> None:
             main.unlink()
         if backup.exists():
             backup.rename(main)
+
+
+def test_purl_end_to_end(hello_world_build: Path) -> None:
+    """End-to-end coverage of the PURL feature in a single SBOM run:
+
+    * explicit purl in main/sbom.yml with the {} version placeholder
+      substituted from the manifest's version
+    * a subpackage with only a url: gets no auto-derived PURL (would
+      otherwise falsely inherit the parent component's coordinates)
+    * a subpackage with an explicit purl: still emits it -- suppression
+      is on the guess only, not on the explicit opt-in
+    * the toolchain auto-derives a github PURL from tools.json info_url
+    * the toolchain emits the tarball SHA256 from tools.json as
+      PackageChecksum, pinning the exact toolchain binary used for the
+      build even without --files add
+    """
+    main_manifest = hello_world_build / 'main' / 'sbom.yml'
+    auto_purl_dir = hello_world_build / 'main' / 'subpackage_auto_purl'
+    with_purl_dir = hello_world_build / 'main' / 'subpackage_with_purl'
+
+    main_manifest.write_text(
+        dedent(
+            """
+            name: 'main-test'
+            version: '9.9.9'
+            purl: 'pkg:generic/main-test@{}'
+            """
+        )
+    )
+    auto_purl_dir.mkdir(parents=True)
+    (auto_purl_dir / 'sbom.yml').write_text(
+        dedent(
+            """
+            name: 'SUB-AUTO-PURL'
+            version: '1.0'
+            url: 'https://github.com/example/sub-auto-purl'
+            """
+        )
+    )
+    with_purl_dir.mkdir(parents=True)
+    (with_purl_dir / 'sbom.yml').write_text(
+        dedent(
+            """
+            name: 'SUB-WITH-PURL'
+            version: '2.2'
+            purl: 'pkg:generic/sub-with-purl@{}'
+            """
+        )
+    )
+    try:
+        proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+        p = run(
+            [sys.executable, '-m', 'esp_idf_sbom', 'create', proj_desc_path],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        # Explicit purl on main with {} substituted from version.
+        assert 'ExternalRef: PACKAGE-MANAGER purl pkg:generic/main-test@9.9.9' in p.stdout
+
+        # Subpackage with only a url: auto-derives a PURL from it. The
+        # repository-fallback's #fragment check is what stops subpackages
+        # inside a parent repo from emitting misleading parent PURLs, so
+        # no subpackage-specific suppression is needed.
+        assert 'SUB-AUTO-PURL' in p.stdout
+        assert 'ExternalRef: PACKAGE-MANAGER purl pkg:github/example/sub-auto-purl@1.0' in p.stdout
+
+        # Subpackage with explicit purl: emitted with {} substituted.
+        assert 'ExternalRef: PACKAGE-MANAGER purl pkg:generic/sub-with-purl@2.2' in p.stdout
+
+        # Toolchain auto-derives a github PURL from tools.json info_url.
+        assert re.search(
+            r'ExternalRef: PACKAGE-MANAGER purl pkg:github/espressif/crosstool-NG@\S+',
+            p.stdout,
+        )
+
+        # In-tree wrapper components (components/* inside esp-idf, the
+        # project directory itself) must not auto-derive a PURL that
+        # points at the superproject -- identical pkg:github/espressif/
+        # esp-idf@<ver> lines on dozens of packages would just be noise
+        # over the per-package OTHER repository ExternalRef.
+        assert 'PACKAGE-MANAGER purl pkg:github/espressif/esp-idf@' not in p.stdout
+
+        # Toolchain emits the tarball SHA256 from tools.json. Match only
+        # within the toolchain package block to avoid matching checksums
+        # other packages might carry under --files add.
+        toolchain_block = re.search(
+            r'PackageName: toolchain-\S+.*?(?=\n#|\Z)',
+            p.stdout,
+            re.DOTALL,
+        )
+        assert toolchain_block is not None
+        assert re.search(r'PackageChecksum: SHA256: [0-9a-f]{64}', toolchain_block.group(0))
+    finally:
+        main_manifest.unlink()
+        shutil.rmtree(auto_purl_dir)
+        shutil.rmtree(with_purl_dir)
+
+
+def test_derive_purl() -> None:
+    """derive_purl handles the URL shapes seen across esp-idf and
+    idf-extra-components manifests: plain github URLs at the repository
+    root with optional trailing slash or .git suffix, and gitlab.com URLs.
+
+    Coverage of regex edge cases that an end-to-end test cannot
+    sensibly exercise without one SBOM build per URL shape."""
+    from esp_idf_sbom.libsbom.utils import derive_purl
+
+    assert derive_purl('https://github.com/madler/zlib', '1.3.2') == 'pkg:github/madler/zlib@1.3.2'
+    assert derive_purl('https://github.com/argtable/argtable3/', '3.2.2') == 'pkg:github/argtable/argtable3@3.2.2'
+    assert derive_purl('https://github.com/espressif/mbedtls.git', '4.1.0') == 'pkg:github/espressif/mbedtls@4.1.0'
+    assert derive_purl('https://gitlab.com/owner/repo', '2.0') == 'pkg:gitlab/owner/repo@2.0'
+
+    # Subdirectory URLs identify a package within a parent repo, not the
+    # whole repo. A derived PURL would point at the parent at a version
+    # that may not exist there (e.g. the IDF Component Registry's
+    # "<ver>~<rev>" revision form is not a github tag). Skip and let the
+    # maintainer set an explicit purl: in the manifest.
+    assert derive_purl('https://github.com/espressif/idf-extra-components/tree/master/esp_cli', '1.0') == ''
+
+    # Non-github/gitlab URLs and missing inputs return empty so the caller
+    # can skip PURL emission rather than producing something misleading.
+    assert derive_purl('https://www.lua.org/', '5.4') == ''
+    assert derive_purl('https://github.com/foo/bar', '') == ''
+    assert derive_purl('', '1.0') == ''
