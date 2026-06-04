@@ -4,7 +4,6 @@
 import datetime
 import json
 import sys
-from argparse import Namespace
 from typing import Any
 from typing import Dict
 from typing import List
@@ -37,7 +36,7 @@ empty_record = {
 }
 
 
-def show(records: List[Dict[str, str]], args: Namespace, proj_name: str = '', proj_ver: str = '') -> None:
+def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '', proj_ver: str = '') -> None:
     # Sort records based on CVSS base score
     records_sorted = sorted(records, key=lambda r: float(r['cvss_base_score'] or 0), reverse=True)
     record_list = [r for r in records_sorted if r['vulnerable'] == 'YES']
@@ -48,7 +47,7 @@ def show(records: List[Dict[str, str]], args: Namespace, proj_name: str = '', pr
 
     pkgs_cnt = len({record['pkg_name'] for record in record_list})
 
-    if args.local_db:
+    if args['local_db']:
         version = nvd.local_db_version()
         database = f'NATIONAL VULNERABILITY DATABASE MIRROR ({version})'
     else:
@@ -121,16 +120,16 @@ def show(records: List[Dict[str, str]], args: Namespace, proj_name: str = '', pr
         if r['pkg_name'] not in severity_dict['packages']:
             severity_dict['packages'].append(r['pkg_name'])
 
-    if args.format == 'json':
+    if args['format'] == 'json':
         summary['records'] = record_list
         log.print_json(json.dumps(summary))
         return
-    elif args.format == 'csv':
+    elif args['format'] == 'csv':
         log.print(','.join(utils.csv_escape(empty_record.keys())))
         for r in record_list:
             log.print(','.join(utils.csv_escape(r.values())))
         return
-    elif args.format == 'markdown':
+    elif args['format'] == 'markdown':
         table = Table(box=MARKDOWN)
         for key in empty_record.keys():
             table.add_column(key, overflow='fold')
@@ -311,13 +310,13 @@ def show(records: List[Dict[str, str]], args: Namespace, proj_name: str = '', pr
     table.add_column('Package', vertical='middle', justify='center', overflow='fold')
     table.add_column('Version', vertical='middle', justify='center', overflow='fold')
     table.add_column('CPE', vertical='middle', justify='center', overflow='fold')
-    if args.name:
+    if args['name']:
         table.add_column('Keyword', vertical='middle', justify='center', overflow='fold')
 
     for r in record_list:
         if r['vulnerable'] != 'NO':
             continue
-        if args.name:
+        if args['name']:
             table.add_row(
                 '[bright_blue]' + r['pkg_name'],
                 r['pkg_version'],

@@ -563,7 +563,6 @@ def test_validate_report_json(hello_world_build: Path) -> None:
 def test_none_severity_handling() -> None:
     """Test that CVEs with 'NONE' severity are handled correctly without KeyError."""
     import io
-    from argparse import Namespace
 
     from esp_idf_sbom.libsbom import log
     from esp_idf_sbom.libsbom import report
@@ -625,7 +624,7 @@ def test_none_severity_handling() -> None:
     log.set_console(stdout)
 
     # Create test args for JSON output
-    args = Namespace(format='json', local_db=False)
+    args = {'format': 'json', 'local_db': False}
 
     try:
         report.show(test_records, args, 'test_project', '1.0.0')
