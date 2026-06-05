@@ -704,7 +704,7 @@ class SPDXPackage(SPDXObject):
             self['FilesAnalyzed'] = ['true']
             self['PackageVerificationCode'] = [self.get_verification_code([f.sha1 for f in self.files])]
             if self.tags.licenses:
-                self['PackageLicenseInfoFromFiles'] = list(self.tags.licenses)
+                self['PackageLicenseInfoFromFiles'] = sorted(self.tags.licenses)
             else:
                 self['PackageLicenseInfoFromFiles'] = ['NOASSERTION']
         else:
@@ -712,7 +712,7 @@ class SPDXPackage(SPDXObject):
         self['PackageLicenseConcluded'] = [self.tags.get_license_concluded() or 'NOASSERTION']
         self['PackageLicenseDeclared'] = [self.tags.get_license_declared() or 'NOASSERTION']
         if self.tags.copyrights:
-            self['PackageCopyrightText'] = ['<text>{}</text>'.format('\n'.join(self.tags.copyrights))]
+            self['PackageCopyrightText'] = ['<text>{}</text>'.format('\n'.join(sorted(self.tags.copyrights)))]
         else:
             self['PackageCopyrightText'] = ['NOASSERTION']
 
@@ -1063,7 +1063,7 @@ class SPDXProject(SPDXPackage):
         for name, info in build_components.items():
             reqs = set(info['reqs'] + info['priv_reqs'] + info['managed_reqs'] + info['managed_priv_reqs'])
             log.debug(f'component {name} requires: {reqs}')
-            for req in reqs:
+            for req in sorted(reqs):
                 try:
                     if not self._component_used(build_components[req]):
                         continue
@@ -1227,7 +1227,7 @@ class SPDXProject(SPDXPackage):
             proj_reqs.append(name)
             reachable |= self.get_reachable_components([name])
 
-        for req in proj_reqs:
+        for req in sorted(proj_reqs):
             self['Relationship'] += [f'{self["SPDXID"][0]} DEPENDS_ON {self.components[req]["SPDXID"][0]}']
 
     def dump(self) -> str:
@@ -1515,7 +1515,7 @@ class SPDXFile(SPDXObject):
         self['FileChecksum'] += [f'SHA256: {self.sha256}']
 
         if self.tags.licenses:
-            self['LicenseInfoInFile'] = list(self.tags.licenses)
+            self['LicenseInfoInFile'] = sorted(self.tags.licenses)
         else:
             self['LicenseInfoInFile'] = ['NOASSERTION']
 
@@ -1525,12 +1525,12 @@ class SPDXFile(SPDXObject):
             self['LicenseConcluded'] = ['NOASSERTION']
 
         if self.tags.copyrights:
-            self['FileCopyrightText'] = ['<text>' + '\n'.join(self.tags.copyrights) + '</text>']
+            self['FileCopyrightText'] = ['<text>' + '\n'.join(sorted(self.tags.copyrights)) + '</text>']
         else:
             self['FileCopyrightText'] = ['NOASSERTION']
 
         if self.tags.contributors:
-            self['FileContributor'] = list(self.tags.contributors)
+            self['FileContributor'] = sorted(self.tags.contributors)
 
     def dump(self) -> str:
         return super().dump()

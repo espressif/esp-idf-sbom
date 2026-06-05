@@ -215,23 +215,23 @@ def cmd_license(args: Dict[str, Any]) -> int:
     tags = spdx_sbom.project.tags
     proj_name = spdx_sbom.project.name
     if args['unify_copyrights']:
-        copyrights = list(tags.simplify_copyrights(tags.copyrights))
+        copyrights = sorted(tags.simplify_copyrights(tags.copyrights))
     else:
-        copyrights = list(tags.copyrights)
+        copyrights = sorted(tags.copyrights)
     licenses_merged = tags.licenses_expressions | tags.licenses_expressions_declared
     license_concluded = tags.simplify_licenses(licenses_merged)
-    licenses = list(licenses_merged)
+    licenses = sorted(licenses_merged)
 
     packages = []
     if args['packages']:
         for package in spdx_sbom.project.walk_packages():
             if args['unify_copyrights']:
-                package_copyrights = list(package.tags.simplify_copyrights(package.tags.copyrights))
+                package_copyrights = sorted(package.tags.simplify_copyrights(package.tags.copyrights))
             else:
-                package_copyrights = list(package.tags.copyrights)
+                package_copyrights = sorted(package.tags.copyrights)
             package_licenses_merged = package.tags.licenses_expressions | package.tags.licenses_expressions_declared
             package_license_concluded = tags.simplify_licenses(package_licenses_merged)
-            package_licenses = list(package_licenses_merged)
+            package_licenses = sorted(package_licenses_merged)
 
             package_info: Dict[str, Any] = {}
             package_info['name'] = package.name
@@ -458,12 +458,12 @@ def cmd_manifest_license(args: Dict[str, Any]) -> int:
                     tags.licenses_expressions_declared |= set([manifest['license']])
 
                 if args['unify_copyrights']:
-                    package_copyrights = list(tags.simplify_copyrights(tags.copyrights))
+                    package_copyrights = sorted(tags.simplify_copyrights(tags.copyrights))
                 else:
-                    package_copyrights = list(tags.copyrights)
+                    package_copyrights = sorted(tags.copyrights)
                 package_licenses_merged = tags.licenses_expressions | tags.licenses_expressions_declared
                 package_license_concluded = tags.simplify_licenses(package_licenses_merged)
-                package_licenses = list(package_licenses_merged)
+                package_licenses = sorted(package_licenses_merged)
 
                 package_info: Dict[str, Any] = {}
                 package_info['name'] = manifest['name'] if 'name' in manifest else manifest['_src']
