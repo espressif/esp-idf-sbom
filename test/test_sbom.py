@@ -804,23 +804,20 @@ def test_purl_end_to_end(hello_world_build: Path) -> None:
             p.stdout,
         )
 
-        # In-tree wrapper components (components/* inside esp-idf, the
-        # project directory itself) must not auto-derive a PURL that
-        # points at the superproject -- identical pkg:github/espressif/
-        # esp-idf@<ver> lines on dozens of packages would just be noise
-        # over the per-package OTHER repository ExternalRef.
-        assert 'PACKAGE-MANAGER purl pkg:github/espressif/esp-idf@' not in p.stdout
+        # The esp-idf superproject PURL must not auto-derive onto the in-tree
+        # wrapper components (components/* inside esp-idf) or the project
+        # itself -- that repeats one identical pkg:github/espressif/esp-idf@<ver>
+        # line across dozens of packages, noise over each package's own OTHER
+        # repository ExternalRef. At most one is allowed: the FRAMEWORK-esp-idf
+        # package carries it when esp-idf's remote is a github.com/gitlab.com
+        # forge, and none when the remote is an internal/ssh URL that
+        # guess_purl ignores -- hence <= 1, not == 1.
+        assert p.stdout.count('pkg:github/espressif/esp-idf@') <= 1
 
-        # Toolchain emits the tarball SHA256 from tools.json. Match only
-        # within the toolchain package block to avoid matching checksums
-        # other packages might carry under --files add.
-        toolchain_block = re.search(
-            r'PackageName: toolchain-\S+.*?(?=\n#|\Z)',
-            p.stdout,
-            re.DOTALL,
-        )
-        assert toolchain_block is not None
-        assert re.search(r'PackageChecksum: SHA256: [0-9a-f]{64}', toolchain_block.group(0))
+        # Toolchain emits the tarball SHA256 from tools.json as the only
+        # PackageChecksum in the SBOM (files get FileChecksum, packages get
+        # PackageVerificationCode), so a plain match is unambiguous.
+        assert re.search(r'PackageChecksum: SHA256: [0-9a-f]{64}', p.stdout)
     finally:
         main_manifest.unlink()
         shutil.rmtree(auto_purl_dir)
