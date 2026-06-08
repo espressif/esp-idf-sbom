@@ -35,13 +35,15 @@ def validate_scoped(cve_id: str, value: dict) -> list:
         if not isinstance(cpe, str) or not CPE.is_cpe_valid(cpe):
             errors.append(f'{cve_id}: cpes[{idx}].cpe is not a valid CPE 2.3 string: {cpe!r}')
             continue
-        # Foot-gun guard: at least one of (concrete version in CPE) or (a version bound) must be set.
         cpe_version = cpe.split(':')[5]
         has_bound = any(k in entry for k in VERSION_KEYS)
-        if cpe_version in ('*', '-') and not has_bound:
+        if cpe_version == '*' and not has_bound:
+            # An ANY (*) version with no version bounds matches every version,
+            # so it would suppress the CVE for all versions, including ones
+            # where it is not fixed. Require bounds in that case.
             errors.append(
-                f'{cve_id}: cpes[{idx}] has wildcard version in `cpe` and no '
-                f'version bounds -- this would suppress the CVE for all versions, '
+                f'{cve_id}: cpes[{idx}] has ANY (*) version in `cpe` and no '
+                f'version bounds. This would suppress the CVE for all versions, '
                 f'including unfixed ones'
             )
         # Pair sanity: Start*Including and Start*Excluding mutually exclusive (same for End*).

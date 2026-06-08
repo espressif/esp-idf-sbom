@@ -27,8 +27,9 @@ IDF_VERSION_CMAKE = 'tools/cmake/version.cmake'
 # registers them as Espressif's catch-all identifiers (no variant-specific
 # hardware or firmware CPEs exist for esp32-s2/s3/c3/c6/h2/p4 etc.).
 IDF_FRAMEWORK_CPE_APP = 'cpe:2.3:a:espressif:esp-idf:{ver}:*:*:*:*:*:*:*'
-IDF_FRAMEWORK_CPE_HW = 'cpe:2.3:h:espressif:esp32:-:*:*:*:*:*:*:*'
+IDF_FRAMEWORK_CPE_HW_NA = 'cpe:2.3:h:espressif:esp32:-:*:*:*:*:*:*:*'
 IDF_FRAMEWORK_CPE_OS = 'cpe:2.3:o:espressif:esp32_firmware:{ver}:*:*:*:*:*:*:*'
+IDF_FRAMEWORK_CPE_OS_NA = 'cpe:2.3:o:espressif:esp32_firmware:-:*:*:*:*:*:*:*'
 
 
 def pjoin(*paths: str) -> str:
@@ -212,6 +213,7 @@ def build_idf_framework_cpes(version: str) -> List[str]:
         return []
     return [
         IDF_FRAMEWORK_CPE_APP.format(ver=version),
-        IDF_FRAMEWORK_CPE_HW,
+        IDF_FRAMEWORK_CPE_HW_NA,
         IDF_FRAMEWORK_CPE_OS.format(ver=version),
+        IDF_FRAMEWORK_CPE_OS_NA,
     ]

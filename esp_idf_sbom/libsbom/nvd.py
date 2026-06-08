@@ -559,6 +559,8 @@ def is_version_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool:
 
     for node in configuration['nodes']:
         for cpe_match in node['cpeMatch']:
+            criteria_ver = cpe_match['criteria'].split(':')[5]
+
             if not cpe_match['vulnerable']:
                 # skip, cpe_match not vulnerable
                 continue
@@ -572,27 +574,31 @@ def is_version_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool:
             versionEndExcluding = cpe_match.get('versionEndExcluding')
             versionEndIncluding = cpe_match.get('versionEndIncluding')
 
-            if not any((versionStartExcluding, versionStartIncluding, versionEndExcluding, versionEndIncluding)):
+            if any((versionStartExcluding, versionStartIncluding, versionEndExcluding, versionEndIncluding)):
+                if cpe_ver in ['-', '*']:
+                    # NA or ANY in CPE cannot match any cpeMatch criteria with
+                    # version range
+                    continue
+                if versionStartExcluding and vercmp(cpe_ver, versionStartExcluding) <= 0:
+                    continue
+                if versionStartIncluding and vercmp(cpe_ver, versionStartIncluding) < 0:
+                    continue
+                if versionEndExcluding and vercmp(cpe_ver, versionEndExcluding) >= 0:
+                    continue
+                if versionEndIncluding and vercmp(cpe_ver, versionEndIncluding) > 0:
+                    continue
+
+                return True
+            else:
                 # If there is no version range information available, compare
                 # the version from the CPE with the version from cpeMatch
                 # criteria.
-                criteria_ver = cpe_match['criteria'].split(':')[5]
-                if criteria_ver == cpe_ver:
+                if criteria_ver == '*':
+                    # ANY in cpeMatch criteria matches anything
                     return True
 
-                # skip, no version information
-                continue
-
-            if versionStartExcluding and vercmp(cpe_ver, versionStartExcluding) <= 0:
-                continue
-            if versionStartIncluding and vercmp(cpe_ver, versionStartIncluding) < 0:
-                continue
-            if versionEndExcluding and vercmp(cpe_ver, versionEndExcluding) >= 0:
-                continue
-            if versionEndIncluding and vercmp(cpe_ver, versionEndIncluding) > 0:
-                continue
-
-            return True
+                if criteria_ver == cpe_ver:
+                    return True
 
     return False
 

@@ -114,3 +114,13 @@ CVE-2026-42214: Related to NotepadNext detectLanguageFromExtension() interpolati
 CVE-2026-1677: Related to mbedTLS usage in Zephyr. Not a vulnerability in mbedTLS
 CVE-2026-7210: Related to libexpat usage in cpython. Not a vulnerability in libexpat
 CVE-2026-42587: Related to Netty's HttpContentDecompressor/DelegatingDecompressorFrameListener silently ignoring maxAllocation for br/zstd/snappy encodings. Not a vulnerability in the zlib C library
+
+CVE-2025-27840:
+  cpes:
+    - cpe: cpe:2.3:o:espressif:esp32_firmware:-:*:*:*:*:*:*:*
+  reason: >-
+    A security issue was reported concerning undocumented HCI commands in ESP32
+    Bluetooth controller. Espressif had earlier clarified that these vendor HCI
+    commands are primarily used for debugging purposes and pose no real, known
+    security threat. Technical details were shared in this
+    https://developer.espressif.com/blog/2025/03/esp32-bluetooth-clearing-the-air/
