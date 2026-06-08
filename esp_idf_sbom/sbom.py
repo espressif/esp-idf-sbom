@@ -49,6 +49,22 @@ NAME_ARG = {
     },
 }
 
+NO_SYNC_EXCLUDED_CVES_ARG = {
+    'args': ['--no-sync-excluded-cves'],
+    'kwargs': {
+        'action': 'store_true',
+        'dest': 'no_sync_excluded_cves',
+        'default': bool(os.environ.get('SBOM_NO_SYNC_EXCLUDED_CVES')),
+        'help': (
+            'Skip downloading the excluded_cves.yaml file from the esp-idf-sbom '
+            'repository. The on-disk cache at ~/.esp-idf-sbom/excluded_cves.yaml '
+            'is used if it exists; otherwise the exclusion list is treated as '
+            'empty. Intended for fully air-gapped runs that combine well with '
+            '--local-db.'
+        ),
+    },
+}
+
 
 def cmd_create(args: Namespace) -> int:
     spdx_sbom = spdx.SPDXDocument(args, args.input_file)
@@ -127,15 +143,20 @@ def cmd_check(args: Namespace) -> int:
                     product = cpe.split(':')[4]
                     keywords.append(product)
 
-            cve_exclude_list = {}
+            manifest_exclude_list: Dict[str, str] = {}
             comment = spdx.parse_package_comment(pkg)
             if 'cve-exclude-list' in comment:
                 # get information about excluded CVEs
-                cve_exclude_list = {cve['cve']: cve['reason'] for cve in comment['cve-exclude-list']}
+                manifest_exclude_list = {cve['cve']: cve['reason'] for cve in comment['cve-exclude-list']}
             if args.name:
                 keywords += comment.get('cve-keywords', [])
 
             for cpe in cpes:
+                # Merge globally-applicable exclusions for this CPE with manifest excludes.
+                # Manifest-level entries take precedence (more specific).
+                cve_exclude_list = nvd.get_excluded_cves_for_cpe(cpe)
+                cve_exclude_list.update(manifest_exclude_list)
+
                 vulns = nvd.check_cpe(cpe, args.local_db)
                 for vuln in vulns:
                     record = report.create_vulnerable_record(vuln, cve_exclude_list, cpe, '', pkg_name, pkg_ver)
@@ -151,7 +172,9 @@ def cmd_check(args: Namespace) -> int:
                             # The same CVE was discovered using different keywords.
                             existing_record['keyword'] += f', {keyword}'
                             continue
-                        record = report.create_vulnerable_record(vuln, cve_exclude_list, '', keyword, pkg_name, pkg_ver)
+                        record = report.create_vulnerable_record(
+                            vuln, manifest_exclude_list, '', keyword, pkg_name, pkg_ver
+                        )
                         pkg_records.append(record)
                         package_added = True
 
@@ -388,10 +411,15 @@ def cmd_manifest_check(args: Namespace) -> int:
                 # Without a package name or CPE, use the manifest path as the name.
                 pkg_name = manifest['_src']
 
-            cve_exclude_list = {cve['cve']: cve['reason'] for cve in manifest.get('cve-exclude-list', [])}
+            manifest_exclude_list = {cve['cve']: cve['reason'] for cve in manifest.get('cve-exclude-list', [])}
             if args.name:
                 keywords += manifest.get('cve-keywords', [])
             for cpe in cpes:
+                # Merge globally-applicable exclusions for this CPE with manifest excludes.
+                # Manifest-level entries take precedence (more specific).
+                cve_exclude_list = nvd.get_excluded_cves_for_cpe(cpe)
+                cve_exclude_list.update(manifest_exclude_list)
+
                 vulns = nvd.check_cpe(cpe, args.local_db)
                 for vuln in vulns:
                     record = report.create_vulnerable_record(vuln, cve_exclude_list, cpe, '', pkg_name, pkg_ver)
@@ -407,7 +435,9 @@ def cmd_manifest_check(args: Namespace) -> int:
                             # The same CVE was discovered using different keywords.
                             existing_record['keyword'] += f', {keyword}'
                             continue
-                        record = report.create_vulnerable_record(vuln, cve_exclude_list, '', keyword, pkg_name, pkg_ver)
+                        record = report.create_vulnerable_record(
+                            vuln, manifest_exclude_list, '', keyword, pkg_name, pkg_ver
+                        )
                         pkg_records.append(record)
                         package_added = True
 
@@ -689,6 +719,8 @@ def main():
         help=('When processing manifest files, disregard the conditions for the "if" key.'),
     )
 
+    create_parser.add_argument(*NO_SYNC_EXCLUDED_CVES_ARG['args'], **NO_SYNC_EXCLUDED_CVES_ARG['kwargs'])
+
     check_parser = subparsers.add_parser(
         'check',
         help=(
@@ -731,6 +763,8 @@ def main():
         default=bool(os.environ.get('SBOM_CHECK_LOCAL_DB')),
         help=('Use local NVD mirror for vulnerability check.'),
     )
+
+    check_parser.add_argument(*NO_SYNC_EXCLUDED_CVES_ARG['args'], **NO_SYNC_EXCLUDED_CVES_ARG['kwargs'])
 
     check_parser.add_argument(
         '--no-sync-db',
@@ -842,6 +876,8 @@ def main():
         help=('Skip updating local NVD mirror before vulnerability check.'),
     )
 
+    manifest_check_parser.add_argument(*NO_SYNC_EXCLUDED_CVES_ARG['args'], **NO_SYNC_EXCLUDED_CVES_ARG['kwargs'])
+
     manifest_check_parser.add_argument(
         '--format',
         choices=['table', 'json', 'csv', 'markdown'],
@@ -937,6 +973,10 @@ def main():
         if 'func' not in args:
             parser.print_help(sys.stderr)
             sys.exit(1)
+
+        # Propagate the --no-sync-excluded-cves flag to the nvd module so the
+        # excluded_cves.yaml fetch is skipped on subcommands that consult it.
+        nvd.EXCLUDED_CVES_NO_SYNC = bool(getattr(args, 'no_sync_excluded_cves', False))
 
         return args.func(args)
 

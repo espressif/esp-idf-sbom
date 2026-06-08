@@ -18,6 +18,19 @@ from typing import Optional
 from typing import Tuple
 from urllib.parse import urlparse
 
+# Path inside an ESP-IDF tree to tools/cmake/version.cmake; presence of this
+# file at a path is the marker that identifies the path as an IDF root.
+IDF_VERSION_CMAKE = 'tools/cmake/version.cmake'
+
+# Three CPEs that represent ESP-IDF in NVD. These are emitted on the framework
+# package unconditionally regardless of target chip; NVD's CPE dictionary
+# registers them as Espressif's catch-all identifiers (no variant-specific
+# hardware or firmware CPEs exist for esp32-s2/s3/c3/c6/h2/p4 etc.).
+IDF_FRAMEWORK_CPE_APP = 'cpe:2.3:a:espressif:esp-idf:{ver}:*:*:*:*:*:*:*'
+IDF_FRAMEWORK_CPE_HW_NA = 'cpe:2.3:h:espressif:esp32:-:*:*:*:*:*:*:*'
+IDF_FRAMEWORK_CPE_OS = 'cpe:2.3:o:espressif:esp32_firmware:{ver}:*:*:*:*:*:*:*'
+IDF_FRAMEWORK_CPE_OS_NA = 'cpe:2.3:o:espressif:esp32_firmware:-:*:*:*:*:*:*:*'
+
 
 def pjoin(*paths: str) -> str:
     """Join input paths and return resulting path with forward slashes."""
@@ -206,3 +219,58 @@ def run(
         err = err.strip()
 
     return (p.returncode, out, err)  # type: ignore
+
+
+_IDF_VERSION_SET_RE = re.compile(r'set\s*\(\s*IDF_VERSION_(MAJOR|MINOR|PATCH)\s+(\d+)\s*\)')
+
+
+def is_idf_root(path: str) -> bool:
+    """Return True if `path` looks like the root of an ESP-IDF tree.
+
+    The check is a single file probe: an ESP-IDF root carries
+    ``tools/cmake/version.cmake``. The file is specific to ESP-IDF and has been
+    present in every release for years, so its presence is a reliable marker.
+    """
+    return os.path.isfile(pjoin(path, IDF_VERSION_CMAKE))
+
+
+def read_idf_version(idf_path: str) -> Optional[str]:
+    """Read ESP-IDF major.minor.patch version from ``tools/cmake/version.cmake``.
+
+    Returns the version string (e.g. ``"6.1.0"``) or None when the file is
+    absent or unparseable. The value is intended for use in CPE construction,
+    so it tracks the release-line version rather than ``git describe`` output;
+    the latter can be obtained separately via :func:`git.get_remote_location`.
+    """
+    path = pjoin(idf_path, IDF_VERSION_CMAKE)
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError:
+        return None
+
+    parts = {}
+    for m in _IDF_VERSION_SET_RE.finditer(text):
+        parts[m.group(1)] = m.group(2)
+
+    if not all(k in parts for k in ('MAJOR', 'MINOR', 'PATCH')):
+        return None
+
+    return f'{parts["MAJOR"]}.{parts["MINOR"]}.{parts["PATCH"]}'
+
+
+def build_idf_framework_cpes(version: str) -> List[str]:
+    """Return the list of CPEs to attach to the ESP-IDF framework package.
+
+    The three CPEs are emitted unconditionally; the ``hw`` and ``os`` ones are
+    Espressif's NVD catch-alls and apply to any ESP-IDF build regardless of
+    target chip (NVD has not registered variant-specific CPEs).
+    """
+    if not version:
+        return []
+    return [
+        IDF_FRAMEWORK_CPE_APP.format(ver=version),
+        IDF_FRAMEWORK_CPE_HW_NA,
+        IDF_FRAMEWORK_CPE_OS.format(ver=version),
+        IDF_FRAMEWORK_CPE_OS_NA,
+    ]

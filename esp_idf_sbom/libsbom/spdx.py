@@ -30,6 +30,7 @@ from esp_idf_sbom.libsbom import expr
 from esp_idf_sbom.libsbom import git
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import mft
+from esp_idf_sbom.libsbom import nvd
 from esp_idf_sbom.libsbom import utils
 
 
@@ -705,8 +706,20 @@ class SPDXPackage(SPDXObject):
 
         comment = ''
 
-        if self.manifest['cve-exclude-list']:
-            cve_info = {'cve-exclude-list': self.manifest['cve-exclude-list']}
+        # Merge manifest-level cve-exclude-list with globally-applicable exclusions
+        # from excluded_cves.yaml for any of this package's CPEs. Manifest entries
+        # take precedence over global ones for the same CVE (more specific).
+        merged_excludes: Dict[str, str] = {}
+        for cpe in self.manifest['cpe']:
+            for cve_id, reason in nvd.get_excluded_cves_for_cpe(cpe).items():
+                merged_excludes.setdefault(cve_id, reason)
+        for entry in self.manifest['cve-exclude-list']:
+            merged_excludes[entry['cve']] = entry['reason']
+
+        if merged_excludes:
+            cve_info = {
+                'cve-exclude-list': [{'cve': cve_id, 'reason': reason} for cve_id, reason in merged_excludes.items()]
+            }
             cve_info_yaml = yaml.dump(cve_info, indent=4)
             cve_info_desc = (
                 '# The cve-exclude-list list contains CVEs, which were '
@@ -895,6 +908,7 @@ class SPDXProject(SPDXPackage):
         self._resolve_req_aliases()
         self.linked_libs = self._get_linked_libs()
         self.components = self._get_components()
+        self.framework = SPDXFramework(args, proj_desc)
         self.toolchain = SPDXToolchain(args, proj_desc)
 
         name = proj_desc['project_name']
@@ -1120,13 +1134,14 @@ class SPDXProject(SPDXPackage):
         return reachable
 
     def add_relationships(self) -> None:
-        if not self.manifest['cpe']:
-            # CPE for whole espressif:esp-idf.
-            ver = self.proj_desc['git_revision']
-            if ver[0] == 'v':
-                ver = ver[1:]
-            cpe = f'cpe:2.3:a:espressif:esp-idf:{ver}:*:*:*:*:*:*:*'
-            self['ExternalRef'] += [f'SECURITY cpe23Type {cpe}']
+        # The project package no longer carries the espressif:esp-idf CPE
+        # itself; instead it DEPENDS_ON the dedicated framework package, which
+        # owns the application / hardware / firmware CPEs for the ESP-IDF
+        # version + target this build was made against. The framework may
+        # opt out of being emitted when version.cmake cannot be read; only
+        # add the relationship when the package is actually in the SBOM.
+        if self.framework.include:
+            self['Relationship'] += [f'{self["SPDXID"][0]} DEPENDS_ON {self.framework["SPDXID"][0]}']
 
         # Dependency on toolchain if toolchain info is available
         if self.toolchain.info:
@@ -1197,6 +1212,11 @@ class SPDXProject(SPDXPackage):
     def dump(self) -> str:
         out = super().dump()
 
+        if self.framework.include:
+            out += '\n'
+            out += f'[blue]# {self.framework.name} framework[/blue]\n'
+            out += self.framework.dump()
+
         if self.toolchain.info:
             out += '\n'
             out += f'[blue]# {self.toolchain.name} toolchain[/blue]\n'
@@ -1208,6 +1228,55 @@ class SPDXProject(SPDXPackage):
             out += comp.dump()
 
         return out
+
+
+class SPDXFramework(SPDXPackage):
+    """SPDX Package Information for the ESP-IDF framework itself.
+
+    Emitted as a separate SPDX package so the application/project package can
+    DEPENDS_ON it instead of carrying the espressif:esp-idf CPE directly. The
+    framework's version is read from ``tools/cmake/version.cmake`` inside the
+    IDF tree (so it matches what NVD has registered, e.g. ``6.1.0`` rather
+    than ``git describe`` output); the download location is composed from the
+    IDF checkout's git remote and HEAD, so a fork at a non-GitHub location
+    gets attributed to the customer's actual repository.
+
+    When the IDF version cannot be read the framework package is omitted
+    rather than emitted with empty fields -- matching the manifest-check
+    injection path's behavior.
+    """
+
+    def __init__(self, args: Namespace, proj_desc: Dict[str, Any]):
+        self.proj_desc = proj_desc
+        super().__init__(args, proj_desc, proj_desc.get('idf_path', ''), 'esp-idf', 'framework')
+
+    def get_manifest(self, path: str) -> Dict[str, Any]:
+        manifest = self.EMPTY_MANIFEST.copy()
+        manifest.update(mft.build_idf_framework_manifest(path))
+        return manifest
+
+    def include_package(self):
+        # Emit the framework package only when version.cmake was read
+        # successfully. Otherwise we'd ship a meaningless package with no CPEs
+        # for the project to DEPENDS_ON.
+        if not self.manifest.get('version'):
+            log.warn(f'cannot read ESP-IDF version from {self.dir}; framework package not added to the SBOM')
+            return False
+        return True
+
+    def get_subpackages(self):
+        return []
+
+    def get_files(self, path: str, prefix: str, exclude_dirs: Optional[List[str]] = None) -> List['SPDXFile']:
+        # The framework package is a meta-package; it does not own files.
+        return []
+
+    def get_tags(self, exclude_dirs: Optional[List[str]] = None) -> SPDXTags:
+        # No files to scan, no tags to aggregate.
+        return SPDXTags()
+
+    def add_relationships(self):
+        return
 
 
 class SPDXToolchain(SPDXPackage):

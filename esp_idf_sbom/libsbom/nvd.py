@@ -33,6 +33,25 @@ WARNED = False
 
 NVD_MIRROR_URL = 'https://github.com/espressif/esp-nvd-mirror.git'
 
+# On-disk cache for excluded_cves.yaml. The file is refreshed from the upstream
+# repository at most once per EXCLUDED_CVES_TTL_SECONDS; within that window the
+# cached copy is used directly. On fetch failure we fall back to the cached
+# copy (even if stale) so offline scans don't lose previously-known exclusions.
+EXCLUDED_CVES_URL = 'https://raw.githubusercontent.com/espressif/esp-idf-sbom/master/excluded_cves.yaml'
+EXCLUDED_CVES_CACHE_PATH = Path.home() / '.esp-idf-sbom' / 'excluded_cves.yaml'
+EXCLUDED_CVES_TTL_SECONDS = 3600
+
+# When True, get_excluded_cves() skips the upstream fetch and uses only the
+# on-disk cache (returning an empty mapping if the cache does not exist). Set
+# from the --no-sync-excluded-cves CLI flag for fully air-gapped runs.
+EXCLUDED_CVES_NO_SYNC = False
+
+# Environment variable that, when set, forces get_excluded_cves() to load the
+# file from the named path. Bypasses both the upstream fetch and the on-disk
+# cache. Useful for tests and for users maintaining their own exclusion list
+# outside the upstream repository.
+EXCLUDED_CVES_FILE_ENV = 'SBOM_EXCLUDED_CVES_FILE'
+
 
 def nvd_request(params: str) -> List[Dict[str, Any]]:
     """When NVD API key is not provided, sleeps for 30 seconds to
@@ -102,62 +121,192 @@ def nvd_request(params: str) -> List[Dict[str, Any]]:
 
 
 def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}) -> Dict[str, Any]:
-    """Retrieve the YAML file from the esp-idf-sbom repository, which includes a list of excluded CVEs."""
+    """Retrieve the YAML file from the esp-idf-sbom repository, which includes a list of excluded CVEs.
+
+    The file is a top-level mapping keyed by CVE ID. The value can be either:
+
+    * a string -- the CVE is unrelated to any Espressif product. The string is
+      the reason. Filtered at the NVD-query layer in :func:`check_cpe` and
+      :func:`check_keyword`; never appears in scan output. See
+      :func:`get_globally_excluded_cves`.
+
+    * a mapping with ``cpes`` and ``reason`` -- the CVE does apply to an
+      Espressif product but is considered handled (e.g. patched) for the CPEs
+      in ``cpes``. The scan still reports the CVE for matching CPEs but marks
+      it as EXCLUDED with the given reason. Each entry in ``cpes`` carries a
+      ``cpe`` plus optional ``versionStartIncluding`` / ``versionStartExcluding``
+      / ``versionEndIncluding`` / ``versionEndExcluding`` fields, mirroring
+      NVD's own ``cpeMatch`` shape. See :func:`get_excluded_cves_for_cpe`.
+    """
 
     if 'cves' in cache:
-        # Download the excluded CVEs once per script run, not for each check.
+        # Read the excluded CVEs once per script run.
         return cache['cves']
 
     cves: Dict[str, Any] = {}
-    url = 'https://raw.githubusercontent.com/espressif/esp-idf-sbom/master/excluded_cves.yaml'
-    req = urllib.request.Request(url)
 
-    for retry in range(1, 4):
+    # 0) Optional override: when SBOM_EXCLUDED_CVES_FILE is set, load the file
+    #    from that path directly and skip both the disk cache and the upstream
+    #    fetch. This is the data source for tests and for users keeping their
+    #    own exclusion list outside the upstream repository.
+    override = os.environ.get(EXCLUDED_CVES_FILE_ENV)
+    if override:
         try:
-            with urllib.request.urlopen(req, timeout=30) as res:
-                cves = yaml.safe_load(res.read().decode())
-            break
+            with open(override) as f:
+                cves = yaml.safe_load(f) or {}
+        except (yaml.YAMLError, OSError) as e:
+            log.warn(f'Cannot read excluded CVEs from {override}: {e}')
+        cache['cves'] = cves
+        return cves
 
-        except urllib.error.HTTPError as e:
-            log.warn(f'Cannot download list of excluded CVEs: {e}. Retrying({retry}) ...')
+    cache_path = EXCLUDED_CVES_CACHE_PATH
 
-        except yaml.YAMLError as e:
-            log.warn(f'Cannot load list of excluded CVEs: {e}')
-            break
-    else:
-        log.warn('Failed to download list of excluded CVEs')
+    # 1) On-disk cache is fresh -- use it directly without hitting the network.
+    if cache_path.is_file():
+        age = time.time() - cache_path.stat().st_mtime
+        if age < EXCLUDED_CVES_TTL_SECONDS:
+            try:
+                with open(cache_path) as f:
+                    cves = yaml.safe_load(f) or {}
+                cache['cves'] = cves
+                return cves
+            except (yaml.YAMLError, OSError) as e:
+                log.warn(f'Cannot read cached excluded CVEs from {cache_path}: {e}')
+
+    # 2) Cache stale or missing -- fetch from upstream and refresh the cache.
+    #    Skipped entirely when sync is disabled (--no-sync-excluded-cves), so
+    #    the code falls through to step 3 and uses whatever is on disk.
+    fetched = False
+    if not EXCLUDED_CVES_NO_SYNC:
+        req = urllib.request.Request(EXCLUDED_CVES_URL)
+        for retry in range(1, 4):
+            try:
+                with urllib.request.urlopen(req, timeout=30) as res:
+                    data = res.read()
+                cves = yaml.safe_load(data.decode()) or {}
+                try:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    cache_path.write_bytes(data)
+                except OSError as e:
+                    log.warn(f'Cannot write cached excluded CVEs to {cache_path}: {e}')
+                fetched = True
+                break
+
+            except urllib.error.HTTPError as e:
+                log.warn(f'Cannot download list of excluded CVEs: {e}. Retrying({retry}) ...')
+
+            except yaml.YAMLError as e:
+                log.warn(f'Cannot load list of excluded CVEs: {e}')
+                fetched = True
+                break
+        else:
+            log.warn('Failed to download list of excluded CVEs')
+
+    # 3) Fetch failed or was skipped -- fall back to the on-disk cache even if
+    #    it's stale. When sync is disabled the warning is suppressed since the
+    #    user explicitly opted into using whatever is on disk.
+    if not fetched and cache_path.is_file():
+        try:
+            with open(cache_path) as f:
+                cves = yaml.safe_load(f) or {}
+            if not EXCLUDED_CVES_NO_SYNC:
+                log.warn(f'Using stale on-disk cache for excluded CVEs at {cache_path}')
+        except (yaml.YAMLError, OSError) as e:
+            log.warn(f'Cannot read cached excluded CVEs from {cache_path}: {e}')
 
     cache['cves'] = cves
     return cves
+
+
+def get_excluded_cves_for_cpe(cpe: str) -> Dict[str, str]:
+    """Return ``{cve_id: reason}`` for CPE-scoped exclusions matching ``cpe``.
+
+    These are dict-valued entries in ``excluded_cves.yaml`` whose ``cpes`` list
+    contains a match for the given CPE (OR semantics, NVD ``cpeMatch`` version
+    range semantics). They represent CVEs that do apply to an Espressif product
+    but have been patched in specific versions -- so the scan should mark them
+    as EXCLUDED for the patched (and later) versions while still reporting them
+    on affected versions.
+
+    Globally-excluded (string-valued) entries are intentionally not returned
+    here; they are filtered at the NVD-query level instead.
+    """
+    result: Dict[str, str] = {}
+    cves = get_excluded_cves()
+    if not isinstance(cves, dict):
+        return result
+
+    for cve_id, value in cves.items():
+        if not isinstance(value, dict):
+            continue
+        for entry in value.get('cpes', []) or []:
+            if not isinstance(entry, dict) or 'cpe' not in entry:
+                continue
+            # Wrap into an NVD-shaped configuration so we can reuse is_version_vulnerable.
+            cpe_match: Dict[str, Any] = {'vulnerable': True, 'criteria': entry['cpe']}
+            for key in ('versionStartIncluding', 'versionStartExcluding', 'versionEndIncluding', 'versionEndExcluding'):
+                if key in entry:
+                    cpe_match[key] = entry[key]
+            synth_cfg = {'nodes': [{'cpeMatch': [cpe_match]}]}
+            if is_version_vulnerable(cpe, synth_cfg):
+                result[cve_id] = value.get('reason', '')
+                break
+
+    return result
+
+
+def get_globally_excluded_cves() -> Dict[str, str]:
+    """Return ``{cve_id: reason}`` for CVEs that are unrelated to any Espressif product.
+
+    These are the entries in ``excluded_cves.yaml`` whose value is a plain
+    string. They are filtered at the NVD-query layer in :func:`check_cpe` and
+    :func:`check_keyword` and never propagate to the report, regardless of how
+    NVD matched them. Used for cases such as a Linux kernel CVE that mentions
+    ``zlib`` or ``fmt`` in its description and gets returned by keyword search,
+    or a CVE that NVD has (incorrectly) attributed to an Espressif CPE.
+    """
+    result: Dict[str, str] = {}
+    cves = get_excluded_cves()
+    if not isinstance(cves, dict):
+        return result
+    for cve_id, value in cves.items():
+        if isinstance(value, str):
+            result[cve_id] = value
+    return result
 
 
 # https://nvd.nist.gov/developers/vulnerabilities
 def check_cpe(cpe: str, localdb: bool = False) -> List[Dict[str, Any]]:
     """Check given CPE against NVD data."""
 
+    globally_excluded = get_globally_excluded_cves()
+
     # Check vulnerabilities that have already been processed in the NVD and have an assigned CPE.
     if localdb:
-        return repo_check(cpe)
+        vulns = repo_check(cpe)
+    else:
+        cpe_quoted = urllib.parse.quote(cpe)
+        cpe_vulns = nvd_request(f'cpeName={cpe_quoted}')
 
-    cpe_quoted = urllib.parse.quote(cpe)
-    cpe_vulns = nvd_request(f'cpeName={cpe_quoted}')
+        # The NVD REST API returns every CVE that references this CPE name in any
+        # configuration, regardless of the per-cpeMatch "vulnerable" flag or version
+        # range. That includes CVEs where our CPE appears only as a runtime
+        # requirement (vulnerable=false, the "Running on/with" entries in the NVD
+        # UI), e.g. CVE-2021-32921 listing lua under an AND with Prosody. Filter
+        # these out using is_version_vulnerable, which honors cpeMatch[vulnerable]
+        # and the version-range keys carried inline in the response. The local-db
+        # path applies equivalent filtering through repo_check.
+        vulns = []
+        for cve in cpe_vulns:
+            for cfg in cve['cve'].get('configurations', []):
+                if is_version_vulnerable(cpe, cfg):
+                    vulns.append(cve)
+                    break
 
-    # The NVD REST API returns every CVE that references this CPE name in any
-    # configuration, regardless of the per-cpeMatch "vulnerable" flag or version
-    # range. That includes CVEs where our CPE appears only as a runtime
-    # requirement (vulnerable=false, the "Running on/with" entries in the NVD
-    # UI), e.g. CVE-2021-32921 listing lua under an AND with Prosody. Filter
-    # these out using is_version_vulnerable, which honors cpeMatch[vulnerable]
-    # and the version-range keys carried inline in the response. The local-db
-    # path applies equivalent filtering through repo_check.
-    filtered = []
-    for cve in cpe_vulns:
-        for cfg in cve['cve'].get('configurations', []):
-            if is_version_vulnerable(cpe, cfg):
-                filtered.append(cve)
-                break
-
-    return filtered
+    # Drop CVEs that are unrelated to any Espressif product. These are listed in
+    # excluded_cves.yaml as plain string entries and must never appear in scan
+    # output, regardless of how NVD attributed them.
+    return [v for v in vulns if v['cve']['id'] not in globally_excluded]
 
 
 def check_keyword(keyword: str, localdb: bool = False) -> List[Dict[str, Any]]:
@@ -165,8 +314,10 @@ def check_keyword(keyword: str, localdb: bool = False) -> List[Dict[str, Any]]:
 
     cpe_vulns: List[Dict[str, Any]] = []
 
-    # Obtain the list of excluded CVEs to filter them out from the unanalyzed CVEs provided by NVD.
-    excluded_cves = get_excluded_cves()
+    # CVEs unrelated to any Espressif product (e.g. a Linux kernel CVE that
+    # happens to mention "zlib" or "fmt"). Filter these out so they never appear
+    # in keyword-search output.
+    globally_excluded = get_globally_excluded_cves()
 
     if localdb:
         keyword_vulns = repo_keyword(keyword)
@@ -176,9 +327,8 @@ def check_keyword(keyword: str, localdb: bool = False) -> List[Dict[str, Any]]:
 
     for vuln in keyword_vulns:
         if vuln['cve']['vulnStatus'] in ['Received', 'Awaiting Analysis', 'Undergoing Analysis']:
-            # CVE not analyzed in NVD, include it in the results.
-            if vuln['cve']['id'] in excluded_cves:
-                # This CVE was previously analyzed and determined to be a false positive, unrelated to ESP-IDF.
+            # CVE not analyzed in NVD yet; include unless it's globally excluded.
+            if vuln['cve']['id'] in globally_excluded:
                 continue
             cpe_vulns.append(vuln)
 
@@ -409,6 +559,8 @@ def is_version_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool:
 
     for node in configuration['nodes']:
         for cpe_match in node['cpeMatch']:
+            criteria_ver = cpe_match['criteria'].split(':')[5]
+
             if not cpe_match['vulnerable']:
                 # skip, cpe_match not vulnerable
                 continue
@@ -422,27 +574,31 @@ def is_version_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool:
             versionEndExcluding = cpe_match.get('versionEndExcluding')
             versionEndIncluding = cpe_match.get('versionEndIncluding')
 
-            if not any((versionStartExcluding, versionStartIncluding, versionEndExcluding, versionEndIncluding)):
+            if any((versionStartExcluding, versionStartIncluding, versionEndExcluding, versionEndIncluding)):
+                if cpe_ver in ['-', '*']:
+                    # NA or ANY in CPE cannot match any cpeMatch criteria with
+                    # version range
+                    continue
+                if versionStartExcluding and vercmp(cpe_ver, versionStartExcluding) <= 0:
+                    continue
+                if versionStartIncluding and vercmp(cpe_ver, versionStartIncluding) < 0:
+                    continue
+                if versionEndExcluding and vercmp(cpe_ver, versionEndExcluding) >= 0:
+                    continue
+                if versionEndIncluding and vercmp(cpe_ver, versionEndIncluding) > 0:
+                    continue
+
+                return True
+            else:
                 # If there is no version range information available, compare
                 # the version from the CPE with the version from cpeMatch
                 # criteria.
-                criteria_ver = cpe_match['criteria'].split(':')[5]
-                if criteria_ver == cpe_ver:
+                if criteria_ver == '*':
+                    # ANY in cpeMatch criteria matches anything
                     return True
 
-                # skip, no version information
-                continue
-
-            if versionStartExcluding and vercmp(cpe_ver, versionStartExcluding) <= 0:
-                continue
-            if versionStartIncluding and vercmp(cpe_ver, versionStartIncluding) < 0:
-                continue
-            if versionEndExcluding and vercmp(cpe_ver, versionEndExcluding) >= 0:
-                continue
-            if versionEndIncluding and vercmp(cpe_ver, versionEndIncluding) > 0:
-                continue
-
-            return True
+                if criteria_ver == cpe_ver:
+                    return True
 
     return False
 

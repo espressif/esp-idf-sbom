@@ -248,6 +248,46 @@ def test_cve_exclude_list() -> None:
     manifest.unlink()
 
 
+def test_global_cve_exclude_list_in_sbom(hello_world_build: Path) -> None:
+    """Test that CPE-scoped entries from the global excluded_cves.yaml are
+    merged into the generated SBOM's per-package cve-exclude-list comment."""
+    manifest = hello_world_build / 'main' / 'sbom.yml'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+
+    # Pin a custom CPE on the main package so the test does not depend on
+    # the IDF version's esp-idf CPE.
+    manifest.write_text(
+        dedent("""
+              cpe: cpe:2.3:a:VENDOR1:PRODUCT1:1.0:*:*:*:*:*:*:*
+              """)
+    )
+
+    with TemporaryDirectory() as tmpdir:
+        excluded_path = Path(tmpdir) / 'excluded_cves.yaml'
+        excluded_path.write_text(
+            dedent("""
+                  CVE-9999-99999:
+                    cpes:
+                      - cpe: cpe:2.3:a:VENDOR1:PRODUCT1:1.0:*:*:*:*:*:*:*
+                    reason: integration test reason
+                  """)
+        )
+
+        env = {**os.environ, 'SBOM_EXCLUDED_CVES_FILE': str(excluded_path)}
+        p = run(
+            [sys.executable, '-m', 'esp_idf_sbom', 'create', proj_desc_path],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    assert 'CVE-9999-99999' in p.stdout
+    assert 'integration test reason' in p.stdout
+
+    manifest.unlink()
+
+
 def test_validate_sbom(hello_world_build: Path) -> None:
     tmpdir = TemporaryDirectory()
     output_fn = Path(tmpdir.name) / 'sbom.spdx'
