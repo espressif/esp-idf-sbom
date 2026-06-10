@@ -1,3 +1,34 @@
+## v1.1.0 (2026-06-09)
+
+### ✨ New Features
+
+- report version-independent esp32_firmware CVEs *(Frantisek Hrbata - 671c08a)*
+- inject ESP-IDF framework manifest in manifest check *(Frantisek Hrbata - a842aa5)*
+- emit ESP-IDF as a separate SPDX package *(Frantisek Hrbata - 87898b1)*
+- support SBOM_EXCLUDED_CVES_FILE env var override *(Frantisek Hrbata - 5aee6db)*
+- add --no-sync-excluded-cves option for air-gapped runs *(Frantisek Hrbata - 5f48799)*
+- include CPE-scoped exclusions in generated SBOM *(Frantisek Hrbata - dd50b89)*
+- apply CPE-scoped exclusions during scan *(Frantisek Hrbata - 3616f3b)*
+- extend excluded_cves.yaml schema with CPE-scoped exclusions *(Frantisek Hrbata - 4951864)*
+- emit Package URLs (PURL) in generated SBOM *(Frantisek Hrbata - 64ab791)*
+- add --version option to CLI *(Frantisek Hrbata - e0ed7dd)*
+
+### 🐛 Bug Fixes
+
+- avoid -128-NOTFOUND version for in-tree ESP-IDF components *(Frantisek Hrbata - 57028e8)*
+- filter globally-excluded CVEs at the NVD layer *(Frantisek Hrbata - 4318407)*
+- restore pyparsing 2.x compatibility in expr.py *(Frantisek Hrbata - e899bde)*
+- support symlinked component directories *(Frantisek Hrbata - 9a42a1d)*
+- filter out CVEs with vulnerable=false CPE matches in REST path *(Frantisek Hrbata - cc3e1ea)*
+- do not crash on malformed SPDX-License-Identifier *(Frantisek Hrbata - 600ac11)*
+- decouple test_validate_report_json from NVD analysis state *(Frantisek Hrbata - b4c4dce)*
+- resolve aliased component requirement names in build_component_info *(Frantisek Hrbata - 07a4b27)*
+
+### 📖 Documentation
+
+- document the ESP-IDF framework SPDX package *(Frantisek Hrbata - dabd9e6)*
+
+
 ## v1.0.1 (2026-01-29)
 
 ## v1.0.0 (2026-01-28)

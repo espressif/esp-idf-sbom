@@ -67,13 +67,13 @@ version = {attr = "esp_idf_sbom.__version__"}
 
 [tool.commitizen]
 name = "czespressif"
-version = "1.0.0"
+version = "1.1.0"
 update_changelog_on_bump = true
 tag_format = "v$version"
 changelog_start_rev = "v0.13.0"
 changelog_merge_prerelease = true
 annotated_tag = true
-bump_message = "change(bump): release $current_version → $new_version [skip-ci]"
+bump_message = "change: Update version to $new_version"
 version_files = [
     "esp_idf_sbom/__init__.py:__version__"
 ]
