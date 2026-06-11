@@ -13,7 +13,6 @@ import os
 import re
 import sys
 import uuid
-from argparse import Namespace
 from typing import Any
 from typing import Dict
 from typing import Iterator
@@ -346,7 +345,7 @@ class SPDXObject:
     # Value is full path to the referenced manifest file or embedded manifest dictionary.
     REFERENCED_MANIFESTS: Dict[str, Any] = {}
 
-    def __init__(self, args: Namespace, proj_desc: Dict[str, Any]) -> None:
+    def __init__(self, args: Dict[str, Any], proj_desc: Dict[str, Any]) -> None:
         self.args = args
         self.proj_desc = proj_desc
         self.spdx: Dict[str, List[str]] = {}
@@ -421,7 +420,7 @@ class SPDXObject:
 
     def guess_version(self, path: str, comp_name: str = '') -> str:
         """Try to find out component/submodule version."""
-        if self.args.no_guess:
+        if self.args['no_guess']:
             return ''
 
         if comp_name == 'main':
@@ -438,7 +437,7 @@ class SPDXObject:
 
     def guess_supplier(self, path: str, url: str = '', repo: str = '') -> str:
         """Try to find out if supplier can be Espressif based on path, url or repository."""
-        if self.args.no_guess:
+        if self.args['no_guess']:
             return ''
 
         if self.is_espressif_url(url) or self.is_espressif_url(repo) or self.is_espressif_path(path):
@@ -512,9 +511,9 @@ class SPDXObject:
         preference or auto decide based on repo or url and version.
         """
 
-        if self.args.files == 'add':
+        if self.args['files'] == 'add':
             return True
-        elif self.args.files == 'rem':
+        elif self.args['files'] == 'rem':
             return False
 
         # Include files only if there is no reference to URL+version or git repository.
@@ -529,7 +528,7 @@ class SPDXObject:
 class SPDXDocument(SPDXObject):
     """Main SPDX Creation Information"""
 
-    def __init__(self, args: Namespace, proj_desc_path: str):
+    def __init__(self, args: Dict[str, Any], proj_desc_path: str):
         proj_desc = self._get_proj_desc(proj_desc_path)
         self._set_expr_variables(proj_desc, args)
 
@@ -588,7 +587,7 @@ class SPDXDocument(SPDXObject):
 
         return proj_desc  # type: ignore
 
-    def _set_expr_variables(self, proj_desc: Dict[str, Any], args: Namespace) -> None:
+    def _set_expr_variables(self, proj_desc: Dict[str, Any], args: Dict[str, Any]) -> None:
         sdkconfig_path = utils.pjoin(proj_desc['build_dir'], 'config', 'sdkconfig.json')
         try:
             with open(sdkconfig_path) as f:
@@ -598,7 +597,7 @@ class SPDXDocument(SPDXObject):
                 f'Unable to read configuration variables from the sdkconfig JSON file: {e}. '
                 'Conditional statements in manifest files will not be considered.'
             )
-            args.disable_conditions = True
+            args['disable_conditions'] = True
         else:
             expr.set_variables(sdkconfig)
 
@@ -637,7 +636,7 @@ class SPDXPackage(SPDXObject):
     dump:              Print package SPDX representation.
     """
 
-    def __init__(self, args: Namespace, proj_desc: Dict[str, Any], path: str, name: str, mark: str):
+    def __init__(self, args: Dict[str, Any], proj_desc: Dict[str, Any], path: str, name: str, mark: str):
         super().__init__(args, proj_desc)
         self.name = name
         self.mark = mark
@@ -705,7 +704,7 @@ class SPDXPackage(SPDXObject):
             self['FilesAnalyzed'] = ['true']
             self['PackageVerificationCode'] = [self.get_verification_code([f.sha1 for f in self.files])]
             if self.tags.licenses:
-                self['PackageLicenseInfoFromFiles'] = list(self.tags.licenses)
+                self['PackageLicenseInfoFromFiles'] = sorted(self.tags.licenses)
             else:
                 self['PackageLicenseInfoFromFiles'] = ['NOASSERTION']
         else:
@@ -713,7 +712,7 @@ class SPDXPackage(SPDXObject):
         self['PackageLicenseConcluded'] = [self.tags.get_license_concluded() or 'NOASSERTION']
         self['PackageLicenseDeclared'] = [self.tags.get_license_declared() or 'NOASSERTION']
         if self.tags.copyrights:
-            self['PackageCopyrightText'] = ['<text>{}</text>'.format('\n'.join(self.tags.copyrights))]
+            self['PackageCopyrightText'] = ['<text>{}</text>'.format('\n'.join(sorted(self.tags.copyrights)))]
         else:
             self['PackageCopyrightText'] = ['NOASSERTION']
 
@@ -784,7 +783,7 @@ class SPDXPackage(SPDXObject):
         caller is then expected to leave manifest['purl'] empty so no
         PACKAGE-MANAGER ExternalRef is emitted.
         """
-        if self.args.no_guess:
+        if self.args['no_guess']:
             return ''
 
         ver = self.manifest['version']
@@ -801,7 +800,7 @@ class SPDXPackage(SPDXObject):
         return utils.derive_purl(self.manifest['repository'].split('@', 1)[0], ver)
 
     def include_package(self) -> bool:
-        if self.args.disable_conditions:
+        if self.args['disable_conditions']:
             # Expressions disregarded due to the --disable-conditions command line option.
             return True
         if not self.manifest['if']:
@@ -848,7 +847,7 @@ class SPDXPackage(SPDXObject):
 
             self.REFERENCED_MANIFESTS[dest] = src
 
-        if self.args.rem_submodules and self.args.rem_subpackages:
+        if self.args['rem_submodules'] and self.args['rem_subpackages']:
             return subpackages
 
         pkg: Optional[SPDXPackage] = None
@@ -860,7 +859,7 @@ class SPDXPackage(SPDXObject):
             subpackages.append(pkg)
 
         submodules_info: List[Dict[str, str]] = []
-        if not self.args.rem_submodules:
+        if not self.args['rem_submodules']:
             git_wdir = git.get_gitwdir(self.dir)
             if git_wdir:
                 submodules_info = git.submodule_foreach_enum(git_wdir)
@@ -869,12 +868,12 @@ class SPDXPackage(SPDXObject):
 
         for root, dirs, files in utils.pwalk(self.dir, [self.dir]):
             pkg = None
-            if not self.args.rem_subpackages and root in submodules_info_dict:
+            if not self.args['rem_subpackages'] and root in submodules_info_dict:
                 submodule_info = submodules_info_dict[root]
                 name = '{}-{}'.format(self.name, utils.prelpath(submodule_info['path'], self.dir))
                 pkg = SPDXSubmodule(self.args, self.proj_desc, name, submodule_info)
                 dirs.clear()
-            elif not self.args.rem_subpackages and ('sbom.yml' in files or root in self.REFERENCED_MANIFESTS):
+            elif not self.args['rem_subpackages'] and ('sbom.yml' in files or root in self.REFERENCED_MANIFESTS):
                 name = f'{self.name}-{utils.prelpath(root, self.dir)}'
                 pkg = SPDXSubpackage(self.args, self.proj_desc, root, name)
                 dirs.clear()
@@ -893,7 +892,7 @@ class SPDXPackage(SPDXObject):
     def get_tags(self, exclude_dirs: Optional[List[str]] = None) -> SPDXTags:
         tags: SPDXTags = SPDXTags()
 
-        if not self.args.file_tags:
+        if not self.args['file_tags']:
             return tags
 
         if self.files:
@@ -923,7 +922,7 @@ class SPDXPackage(SPDXObject):
 class SPDXProject(SPDXPackage):
     """SPDX Package Information for the project binary."""
 
-    def __init__(self, args: Namespace, proj_desc: Dict[str, Any]):
+    def __init__(self, args: Dict[str, Any], proj_desc: Dict[str, Any]):
         self.args = args
         self.proj_desc = proj_desc
 
@@ -974,7 +973,7 @@ class SPDXProject(SPDXPackage):
 
     def _remove_config_only(self, components: Dict[str, Dict]) -> Dict[str, Dict]:
         # Remove configuration only components.
-        if not self.args.rem_config:
+        if not self.args['rem_config']:
             return components
 
         remove = []
@@ -1018,7 +1017,7 @@ class SPDXProject(SPDXPackage):
 
     def _remove_not_linked(self, components: Dict[str, Dict]) -> Dict[str, Dict]:
         # Remove components not linked into the final binary.
-        if not self.args.rem_unused:
+        if not self.args['rem_unused']:
             return components
 
         remove = []
@@ -1042,10 +1041,10 @@ class SPDXProject(SPDXPackage):
         Configuration only components and components not linked into the final binary
         are considered as not used, unless explicitly requested."""
         # Configuration only component.
-        if not self.args.add_config_deps and info['type'] == 'CONFIG_ONLY':
+        if not self.args['add_config_deps'] and info['type'] == 'CONFIG_ONLY':
             return False
         # Components not linked into final binary.
-        if not self.args.add_unused_deps and info['type'] == 'LIBRARY' and info['file'] not in self.linked_libs:
+        if not self.args['add_unused_deps'] and info['type'] == 'LIBRARY' and info['file'] not in self.linked_libs:
             return False
 
         return True
@@ -1064,7 +1063,7 @@ class SPDXProject(SPDXPackage):
         for name, info in build_components.items():
             reqs = set(info['reqs'] + info['priv_reqs'] + info['managed_reqs'] + info['managed_priv_reqs'])
             log.debug(f'component {name} requires: {reqs}')
-            for req in reqs:
+            for req in sorted(reqs):
                 try:
                     if not self._component_used(build_components[req]):
                         continue
@@ -1228,7 +1227,7 @@ class SPDXProject(SPDXPackage):
             proj_reqs.append(name)
             reachable |= self.get_reachable_components([name])
 
-        for req in proj_reqs:
+        for req in sorted(proj_reqs):
             self['Relationship'] += [f'{self["SPDXID"][0]} DEPENDS_ON {self.components[req]["SPDXID"][0]}']
 
     def dump(self) -> str:
@@ -1268,7 +1267,7 @@ class SPDXFramework(SPDXPackage):
     injection path's behavior.
     """
 
-    def __init__(self, args: Namespace, proj_desc: Dict[str, Any]):
+    def __init__(self, args: Dict[str, Any], proj_desc: Dict[str, Any]):
         self.proj_desc = proj_desc
         super().__init__(args, proj_desc, proj_desc.get('idf_path', ''), 'esp-idf', 'framework')
 
@@ -1304,7 +1303,7 @@ class SPDXFramework(SPDXPackage):
 class SPDXToolchain(SPDXPackage):
     """SPDX Package Information for toolchain."""
 
-    def __init__(self, args: Namespace, proj_desc: Dict[str, Any]):
+    def __init__(self, args: Dict[str, Any], proj_desc: Dict[str, Any]):
         self.proj_desc = proj_desc
         self.info = self._get_toolchain_info()
         if self.info:
@@ -1418,7 +1417,7 @@ class SPDXToolchain(SPDXPackage):
 class SPDXComponent(SPDXPackage):
     """SPDX Package Information for component."""
 
-    def __init__(self, args: Namespace, proj_desc: Dict[str, Any], name: str, info: dict):
+    def __init__(self, args: Dict[str, Any], proj_desc: Dict[str, Any], name: str, info: dict):
         self.info = info
         super().__init__(args, proj_desc, info['dir'], name, 'component')
 
@@ -1434,7 +1433,7 @@ class SPDXComponent(SPDXPackage):
 class SPDXVirtpackage(SPDXPackage):
     """SPDX Package Information for virtual package."""
 
-    def __init__(self, args: Namespace, proj_desc: Dict[str, Any], path: str, name: str):
+    def __init__(self, args: Dict[str, Any], proj_desc: Dict[str, Any], path: str, name: str):
         self.manifest_path = path
         super().__init__(args, proj_desc, utils.pdirname(path), name, 'virtpackage')
 
@@ -1468,14 +1467,14 @@ class SPDXVirtpackage(SPDXPackage):
 class SPDXSubpackage(SPDXPackage):
     """SPDX Package Information for subpackage."""
 
-    def __init__(self, args: Namespace, proj_desc: Dict[str, Any], path: str, name: str):
+    def __init__(self, args: Dict[str, Any], proj_desc: Dict[str, Any], path: str, name: str):
         super().__init__(args, proj_desc, path, name, 'subpackage')
 
 
 class SPDXSubmodule(SPDXPackage):
     """SPDX Package Information for submodule."""
 
-    def __init__(self, args: Namespace, proj_desc: Dict[str, Any], name: str, info: dict):
+    def __init__(self, args: Dict[str, Any], proj_desc: Dict[str, Any], name: str, info: dict):
         self.info = info
         super().__init__(args, proj_desc, info['path'], name, 'submodule')
 
@@ -1500,14 +1499,14 @@ class SPDXSubmodule(SPDXPackage):
 class SPDXFile(SPDXObject):
     """SPDX File Information."""
 
-    def __init__(self, args: Namespace, proj_desc: Dict[str, Any], fn: str, basedir: str, prefix: str):
+    def __init__(self, args: Dict[str, Any], proj_desc: Dict[str, Any], fn: str, basedir: str, prefix: str):
         super().__init__(args, proj_desc)
         self.path = fn
         self.sha1 = self.hash_file(fn, 'sha1')
         self.sha256 = self.hash_file(fn, 'sha256')
         relpath = utils.prelpath(fn, basedir)
 
-        if args.file_tags:
+        if args['file_tags']:
             self.tags = SPDXFileTags(self.path)
 
         self['FileName'] = ['./' + relpath]
@@ -1516,7 +1515,7 @@ class SPDXFile(SPDXObject):
         self['FileChecksum'] += [f'SHA256: {self.sha256}']
 
         if self.tags.licenses:
-            self['LicenseInfoInFile'] = list(self.tags.licenses)
+            self['LicenseInfoInFile'] = sorted(self.tags.licenses)
         else:
             self['LicenseInfoInFile'] = ['NOASSERTION']
 
@@ -1526,12 +1525,12 @@ class SPDXFile(SPDXObject):
             self['LicenseConcluded'] = ['NOASSERTION']
 
         if self.tags.copyrights:
-            self['FileCopyrightText'] = ['<text>' + '\n'.join(self.tags.copyrights) + '</text>']
+            self['FileCopyrightText'] = ['<text>' + '\n'.join(sorted(self.tags.copyrights)) + '</text>']
         else:
             self['FileCopyrightText'] = ['NOASSERTION']
 
         if self.tags.contributors:
-            self['FileContributor'] = list(self.tags.contributors)
+            self['FileContributor'] = sorted(self.tags.contributors)
 
     def dump(self) -> str:
         return super().dump()

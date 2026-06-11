@@ -8,9 +8,9 @@ from subprocess import run
 from typing import Any
 
 import click
+from esp_pylib.logger import log
 from idf_py_actions.errors import FatalError
 from idf_py_actions.tools import PropertyDict
-from idf_py_actions.tools import yellow_print
 
 
 def get_proj_desc(proj_desc_path: Path) -> dict:
@@ -56,7 +56,7 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
         except CalledProcessError as e:
             raise FatalError(f'cannot create SBOM file "{spdx_file}": {e}')
 
-        yellow_print(f'SBOM for "{app_bin}" created in "{spdx_file}"')
+        log.note(f'SBOM for "{app_bin}" created in "{spdx_file}"')
 
     def sbom_check(
         subcommand_name: str,
