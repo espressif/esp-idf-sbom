@@ -534,6 +534,13 @@ class SPDXDocument(SPDXObject):
 
         super().__init__(args, proj_desc)
 
+        # Honor a repository-local excluded_cves.yaml at the ESP-IDF root before
+        # any package is built, since package construction bakes the applicable
+        # exclusions into PackageComment.
+        idf_path = self.proj_desc.get('idf_path', '')
+        if idf_path:
+            nvd.merge_local_excluded_cves(idf_path)
+
         self.name = self.proj_desc['project_name']
         self.project = SPDXProject(self.args, self.proj_desc)
 
