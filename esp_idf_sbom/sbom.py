@@ -329,6 +329,12 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
         if args['local_db'] and not args['no_sync_db']:
             nvd.sync()
 
+        # Honor a repository-local excluded_cves.yaml at the root of any scanned
+        # ESP-IDF tree, extending the global exclusion list for this scan only.
+        for source in args['check_paths']:
+            if utils.is_idf_root(source):
+                nvd.merge_local_excluded_cves(source)
+
         log.eprint('Searching for manifest files')
         manifests = mft.get_manifests(args['check_paths'])
 

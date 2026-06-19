@@ -849,3 +849,83 @@ def test_derive_purl() -> None:
     assert derive_purl('https://www.lua.org/', '5.4') == ''
     assert derive_purl('https://github.com/foo/bar', '') == ''
     assert derive_purl('', '1.0') == ''
+
+
+def test_merge_local_excluded_cves(tmp_path: Path) -> None:
+    """nvd.merge_local_excluded_cves merges a repo-local excluded_cves.yaml into
+    the in-memory exclusion set, extending the global list for the scan.
+
+    This is the mechanism that lets a release branch suppress a framework (or
+    component) CVE it has already fixed but cannot distinguish from the affected
+    release by version. The merged set feeds both manifest check and SBOM
+    generation, so testing it here covers both paths.
+    """
+    from esp_idf_sbom.libsbom import nvd
+
+    # Set a known global exclusion set (one unrelated global-drop entry). The
+    # path argument loads it and stores it as the in-memory cache, so the test
+    # needs no internal cache poking and is isolated from any earlier load.
+    global_file = tmp_path / 'global_excluded_cves.yaml'
+    global_file.write_text('CVE-1111-0001: Unrelated to Espressif\n')
+    nvd.get_excluded_cves(path=str(global_file))
+
+    # Repo-local list: a scoped exclusion for the esp-idf framework CPE.
+    root = tmp_path / 'idf'
+    root.mkdir()
+    (root / nvd.LOCAL_EXCLUDED_CVES_FILE).write_text(
+        dedent(
+            """\
+            CVE-2026-45160:
+              cpes:
+                - cpe: cpe:2.3:a:espressif:esp-idf:6.0.1:*:*:*:*:*:*:*
+              reason: Fixed on release/v6.0
+            """
+        )
+    )
+
+    # Before the merge only the global entry is known.
+    assert 'CVE-2026-45160' not in nvd.get_excluded_cves()
+    assert nvd.get_excluded_cves_for_cpe('cpe:2.3:a:espressif:esp-idf:6.0.1:*:*:*:*:*:*:*') == {}
+
+    nvd.merge_local_excluded_cves(str(root))
+
+    # The local scoped entry is honored for the matching CPE/version, but not for
+    # a different version, and the original global entry is untouched.
+    assert nvd.get_excluded_cves_for_cpe('cpe:2.3:a:espressif:esp-idf:6.0.1:*:*:*:*:*:*:*') == {
+        'CVE-2026-45160': 'Fixed on release/v6.0'
+    }
+    assert nvd.get_excluded_cves_for_cpe('cpe:2.3:a:espressif:esp-idf:6.0.2:*:*:*:*:*:*:*') == {}
+    assert nvd.get_globally_excluded_cves() == {'CVE-1111-0001': 'Unrelated to Espressif'}
+
+
+def test_merge_local_excluded_cves_robustness(tmp_path: Path) -> None:
+    """A missing local file is a no-op; on a duplicate CVE id the local entry
+    overrides the global one (it is more specific to the scanned revision)."""
+    from esp_idf_sbom.libsbom import nvd
+
+    global_file = tmp_path / 'global_excluded_cves.yaml'
+    global_file.write_text('CVE-2026-45160: Globally dropped\n')
+    nvd.get_excluded_cves(path=str(global_file))
+
+    # Missing local file leaves the global set unchanged.
+    empty = tmp_path / 'empty'
+    empty.mkdir()
+    nvd.merge_local_excluded_cves(str(empty))
+    assert nvd.get_excluded_cves()['CVE-2026-45160'] == 'Globally dropped'
+
+    # Local entry for the same CVE id wins over the global one.
+    root = tmp_path / 'idf'
+    root.mkdir()
+    (root / nvd.LOCAL_EXCLUDED_CVES_FILE).write_text(
+        dedent(
+            """\
+            CVE-2026-45160:
+              cpes:
+                - cpe: cpe:2.3:a:espressif:esp-idf:6.0.1:*:*:*:*:*:*:*
+              reason: Fixed on release/v6.0
+            """
+        )
+    )
+    nvd.merge_local_excluded_cves(str(root))
+    entry = nvd.get_excluded_cves()['CVE-2026-45160']
+    assert isinstance(entry, dict) and entry['reason'] == 'Fixed on release/v6.0'

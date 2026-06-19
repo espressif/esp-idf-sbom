@@ -12,6 +12,7 @@ the [National Vulnerability Database][4] (NVD) based on the
 - [Installation](#installation)
 - [Creating SBOM](#creating-sbom)
 - [Checking vulnerabilities](#checking-vulnerabilities)
+- [Excluding CVEs](#excluding-cves)
 - [Usage example](#usage-example)
 - [SPDX SBOM layout](#spdx-sbom-layout)
 - [Manifest file](#manifest-file)
@@ -148,6 +149,52 @@ update the NVD mirror manually with the `sync-db` command.
 
     esp-idf-sbom sync-db
     esp-idf-sbom check --local-db --no-sync-db [SBOM file]
+
+
+## Excluding CVEs
+
+esp-idf-sbom maintains a global exclusion list in
+[excluded_cves.yaml](excluded_cves.yaml) in this repository. It is keyed by CVE
+ID, and each value is either:
+
+* a string -- the CVE is unrelated to any Espressif product and is dropped from
+  the report (for example a Linux kernel CVE that merely mentions a library name
+  used by ESP-IDF), or
+* a mapping with `cpes` and `reason` -- the CVE does apply but is considered
+  handled for the listed CPEs and version ranges; the scan still lists it, marked
+  as *excluded* with the given reason.
+
+The same list can be extended per repository and per revision by placing an
+`excluded_cves.yaml` file, in the same format, at the root of the scanned
+ESP-IDF tree. Its entries are merged into the global list for that scan only
+(`manifest check` and SBOM generation alike), and on a duplicate CVE ID the
+local entry wins. The file is read from the scanned tree, so it does not need to
+be the upstream esp-idf-sbom repository.
+
+This is meant for cases where a CVE cannot be distinguished from an affected
+release by version alone. A release branch keeps the version of the last
+released ESP-IDF until the next release is cut (for example `release/v6.0` still
+reports 6.0.1 even though 6.0.1 is out), and NVD lists exactly that version as
+affected. A version-scoped entry in the global file cannot tell the fixed branch
+apart from the genuinely affected release without also hiding the CVE for users
+still on that release. Because the repository-local file lives in the tree, the
+fix and the exclusion ride on the release branch together, while the affected
+release tag predates them and is still reported.
+
+```yaml
+# <ESP-IDF root>/excluded_cves.yaml
+CVE-2026-45160:
+  cpes:
+    - cpe: cpe:2.3:a:espressif:esp-idf:6.0.1:*:*:*:*:*:*:*
+  reason: >-
+    Fixed on release/v6.0. The branch still self-reports 6.0.1 (the version NVD
+    lists as affected) until 6.0.2 is released.
+```
+
+For this use prefer the scoped `cpes` form over the plain-string form: the
+scoped form keeps the CVE visible in the report as *excluded* with a reason,
+while the string form drops it from the scan output entirely. Once the fix ships
+in a bumped version, NVD no longer matches it and the entry can be removed.
 
 
 ## Usage example

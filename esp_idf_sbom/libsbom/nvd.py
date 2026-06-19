@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 
 import yaml
 
@@ -51,6 +52,19 @@ EXCLUDED_CVES_NO_SYNC = False
 # cache. Useful for tests and for users maintaining their own exclusion list
 # outside the upstream repository.
 EXCLUDED_CVES_FILE_ENV = 'SBOM_EXCLUDED_CVES_FILE'
+
+# Basename of an optional, repository-local exclusion file. When a scanned
+# ESP-IDF tree carries this file at its root, merge_local_excluded_cves() loads
+# it (same format as the upstream excluded_cves.yaml) and merges its entries
+# into the in-memory exclusion set for that scan only. Because it lives in the
+# tree, it is scoped to the scanned branch/revision: an exclusion committed on a
+# release branch applies when scanning that branch, while a release tag that
+# predates it is unaffected. This lets a release branch suppress a CVE it has
+# already fixed but cannot distinguish from the affected release by version (the
+# branch still self-reports the last released version, which NVD lists as
+# affected). The basename is not one that manifest discovery treats as a package
+# manifest, so it does not create a duplicate package entry.
+LOCAL_EXCLUDED_CVES_FILE = 'excluded_cves.yaml'
 
 
 def nvd_request(params: str) -> List[Dict[str, Any]]:
@@ -120,7 +134,7 @@ def nvd_request(params: str) -> List[Dict[str, Any]]:
     return vulns
 
 
-def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}) -> Dict[str, Any]:
+def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}, path: Optional[str] = None) -> Dict[str, Any]:
     """Retrieve the YAML file from the esp-idf-sbom repository, which includes a list of excluded CVEs.
 
     The file is a top-level mapping keyed by CVE ID. The value can be either:
@@ -137,13 +151,32 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}) -> Dict[str, Any]:
       ``cpe`` plus optional ``versionStartIncluding`` / ``versionStartExcluding``
       / ``versionEndIncluding`` / ``versionEndExcluding`` fields, mirroring
       NVD's own ``cpeMatch`` shape. See :func:`get_excluded_cves_for_cpe`.
+
+    When ``path`` is given, the file at that path is loaded directly and stored
+    as the in-memory ``cache``, regardless of whether the cache was already
+    populated. This is the programmatic counterpart of the
+    ``SBOM_EXCLUDED_CVES_FILE`` override (which only applies on the first load),
+    and gives tests and callers a clean way to set a known exclusion set before
+    layering local entries on top via :func:`merge_local_excluded_cves`.
     """
+
+    cves: Dict[str, Any] = {}
+
+    # An explicit path overrides the in-memory cache and every other source
+    # (env var, on-disk cache, upstream): load from it and store the result so
+    # later argless callers see it.
+    if path is not None:
+        try:
+            with open(path) as f:
+                cves = yaml.safe_load(f) or {}
+        except (yaml.YAMLError, OSError) as e:
+            log.warn(f'Cannot read excluded CVEs from {path}: {e}')
+        cache['cves'] = cves
+        return cves
 
     if 'cves' in cache:
         # Read the excluded CVEs once per script run.
         return cache['cves']
-
-    cves: Dict[str, Any] = {}
 
     # 0) Optional override: when SBOM_EXCLUDED_CVES_FILE is set, load the file
     #    from that path directly and skip both the disk cache and the upstream
@@ -216,6 +249,47 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}) -> Dict[str, Any]:
 
     cache['cves'] = cves
     return cves
+
+
+def merge_local_excluded_cves(root: str) -> None:
+    """Merge a repository-local ``excluded_cves.yaml`` into the exclusion set.
+
+    Looks for :data:`LOCAL_EXCLUDED_CVES_FILE` at ``root`` and, if present, loads
+    it (same format as the upstream file) and merges its entries into the
+    in-memory mapping returned by :func:`get_excluded_cves`. Both
+    :func:`get_globally_excluded_cves` and :func:`get_excluded_cves_for_cpe` read
+    from that mapping, so the local entries extend the global list for the rest
+    of the scan -- for the ESP-IDF framework package and for any other package
+    whose CPE the local entries scope to.
+
+    On a duplicate CVE ID the local entry overrides the global one, as it is more
+    specific to the scanned revision. A missing file is a no-op; a malformed file
+    degrades to "no local exclusions" with a warning rather than aborting the
+    scan.
+    """
+    path = os.path.join(root, LOCAL_EXCLUDED_CVES_FILE)
+    if not os.path.isfile(path):
+        return
+
+    try:
+        with open(path) as f:
+            local = yaml.safe_load(f) or {}
+    except (yaml.YAMLError, OSError) as e:
+        log.warn(f'Cannot read local excluded CVEs from {path}: {e}')
+        return
+
+    if not isinstance(local, dict):
+        log.warn(f'Local excluded CVEs file {path} must be a mapping keyed by CVE ID; ignoring it')
+        return
+
+    if not local:
+        return
+
+    # get_excluded_cves() returns the cached mapping object, so updating it in
+    # place makes the local entries visible to every later exclusion lookup.
+    cves = get_excluded_cves()
+    cves.update(local)
+    log.eprint(f'Merged {len(local)} local CVE exclusion(s) from {path}')
 
 
 def get_excluded_cves_for_cpe(cpe: str) -> Dict[str, str]:
