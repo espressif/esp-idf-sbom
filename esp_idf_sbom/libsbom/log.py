@@ -35,8 +35,10 @@ class SbomLog(EspLog):
     fatal error.
     """
 
-    # debug() may be called before set_console() runs; default to off.
+    # debug()/hint() may be called before set_console() runs; default to debug
+    # off and hints on, matching the --debug / --no-hint CLI defaults.
     _debug_on: bool = False
+    _hints_off: bool = False
 
     def set_console(
         self,
@@ -45,8 +47,10 @@ class SbomLog(EspLog):
         no_color: bool = False,
         force_terminal: bool = False,
         debug: bool = False,
+        no_hint: bool = False,
     ) -> None:
         self._debug_on = debug
+        self._hints_off = no_hint
         self.set_console_options(
             # A file target (e.g. --output-file) pins stdout and drops
             # force_terminal there so the written report stays ANSI-free; None
@@ -72,6 +76,12 @@ class SbomLog(EspLog):
     def debug(self, *args: Any) -> None:
         if self._debug_on:
             self.stderr.print('[bright_blue]debug: ', *args)
+
+    def hint(self, *args: Any) -> None:
+        # Suppressed by --no-hint/SBOM_NO_HINT; otherwise the base logger renders
+        # it to the info stream, which set_console routes to stderr.
+        if not self._hints_off:
+            super().hint(*args)
 
     def eprint(self, *args: Any, **kwargs: Any) -> None:
         self.stderr.print(*args, **kwargs)
@@ -135,8 +145,9 @@ def set_console(
     no_color: bool = False,
     force_terminal: bool = False,
     debug: bool = False,
+    no_hint: bool = False,
 ) -> None:
-    _sbom_log.set_console(file, quiet, no_color, force_terminal, debug)
+    _sbom_log.set_console(file, quiet, no_color, force_terminal, debug, no_hint)
 
 
 def progress(*args: Any, **kwargs: Any) -> Any:

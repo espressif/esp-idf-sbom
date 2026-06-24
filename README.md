@@ -142,6 +142,11 @@ shortens the delay between requests accordingly, which speeds up the scan
 considerably. A free API key can be requested [here][9]; see the NVD
 [Rate Limits][10] documentation for details.
 
+When the online REST API is used without a key, esp-idf-sbom prints a one-time
+hint to standard error suggesting the `NVDAPIKEY` key or the `--local-db`
+mirror. Set the `SBOM_NO_HINT` environment variable or pass `--no-hint` to
+silence it.
+
     export NVDAPIKEY=YOUR_API_KEY
     esp-idf-sbom check [SBOM file]
 

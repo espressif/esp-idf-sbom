@@ -556,6 +556,7 @@ def _dispatch(ctx: click.Context, func: Any, **params: Any) -> None:
         options['no_color'],
         options['force_terminal'],
         options['debug'],
+        options['no_hint'],
     )
 
     env = {key: value for key, value in os.environ.items() if key.startswith('SBOM_')}
@@ -607,9 +608,23 @@ def _dispatch(ctx: click.Context, func: Any, **params: Any) -> None:
     default=bool(os.environ.get('SBOM_CHECK_NO_PROGRESS')),
     help='Disable progress bar.',
 )
+@click.option(
+    '--no-hint',
+    is_flag=True,
+    default=bool(os.environ.get('SBOM_NO_HINT')),
+    help='Suppress informational hints, such as the NVD API key suggestion printed during online scans.',
+)
 @click.version_option(__version__, '-V', '--version', prog_name='esp-idf-sbom', message='%(prog)s %(version)s')
 @click.pass_context
-def main(ctx: click.Context, quiet: bool, no_color: bool, force_terminal: bool, debug: bool, no_progress: bool) -> None:
+def main(
+    ctx: click.Context,
+    quiet: bool,
+    no_color: bool,
+    force_terminal: bool,
+    debug: bool,
+    no_progress: bool,
+    no_hint: bool,
+) -> None:
     """ESP-IDF SBOM tool"""
     ctx.obj = {
         'quiet': quiet,
@@ -617,6 +632,7 @@ def main(ctx: click.Context, quiet: bool, no_color: bool, force_terminal: bool, 
         'force_terminal': force_terminal,
         'debug': debug,
         'no_progress': no_progress,
+        'no_hint': no_hint,
     }
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help(), err=True)
