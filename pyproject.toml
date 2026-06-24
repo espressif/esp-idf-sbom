@@ -40,7 +40,7 @@ dependencies = [
     "license-expression",
     "rich",
     "pyparsing>=2.2.2",
-    "esp-pylib[cli]>=1.0.0",
+    "esp-pylib[cli]>=1.1.0",
 ]
 
 [project.optional-dependencies]

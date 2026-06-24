@@ -543,25 +543,18 @@ def _dispatch(ctx: click.Context, func: Any, **params: Any) -> None:
     options = ctx.obj
     args = {**options, **params}
 
-    force_terminal_stdout = None
-    force_terminal_stderr = None
-    if options['force_terminal']:
-        force_terminal_stdout = True
-        force_terminal_stderr = True
-
     ofile = sys.stdout
     output_file = params.get('output_file')
     if output_file:
-        # The --force-terminal option is ignored when writing to a file.
-        force_terminal_stdout = False
+        # set_console pins stdout to this file and drops --force-terminal there,
+        # so the written report stays ANSI-free.
         ofile = open(output_file, 'w')
 
     log.set_console(
         ofile,
         options['quiet'],
         options['no_color'],
-        force_terminal_stdout,
-        force_terminal_stderr,
+        options['force_terminal'],
         options['debug'],
     )
 
