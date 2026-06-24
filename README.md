@@ -132,13 +132,25 @@ These reports must be thoroughly analyzed and are included in a separate table
 titled `Packages with Possible Vulnerabilities` in the report.
 
 The vulnerability check typically uses the NVD REST API by default, provided by
-[https://nvd.nist.gov](https://nvd.nist.gov). However, an alternative source of
-information for the vulnerability check can be a local NVD mirror, available
-from the [esp-nvd-mirror][6] repository. The NVD mirror may provide a faster
-and more reliable way to perform vulnerability checks in case there are
-availability issues with NVD API endpoints or when a large number of packages
-need to be scanned quickly. You can enable the use of the local NVD mirror with
-the `--local-db` option.
+[https://nvd.nist.gov](https://nvd.nist.gov).
+
+NVD rate-limits requests to its REST API. Without an API key the limit is 5
+requests in a rolling 30 second window; with an API key it is 50 requests in
+the same window. esp-idf-sbom reads the key from the `NVDAPIKEY` environment
+variable and, when it is set, sends it in the `apikey` request header and
+shortens the delay between requests accordingly, which speeds up the scan
+considerably. A free API key can be requested [here][9]; see the NVD
+[Rate Limits][10] documentation for details.
+
+    export NVDAPIKEY=YOUR_API_KEY
+    esp-idf-sbom check [SBOM file]
+
+An alternative source of information for the vulnerability check can be a local
+NVD mirror, available from the [esp-nvd-mirror][6] repository. The NVD mirror
+may provide a faster and more reliable way to perform vulnerability checks in
+case there are availability issues with NVD API endpoints or when a large
+number of packages need to be scanned quickly. You can enable the use of the
+local NVD mirror with the `--local-db` option.
 
     esp-idf-sbom check --local-db [SBOM file]
 
@@ -638,3 +650,5 @@ given **project**, **component** or **submodule**.
 [6]: https://github.com/espressif/esp-nvd-mirror
 [7]: https://www.youtube.com/watch?v=ODZwxKawVXo
 [8]: https://github.com/package-url/purl-spec
+[9]: https://nvd.nist.gov/developers/request-an-api-key
+[10]: https://nvd.nist.gov/developers/start-here
