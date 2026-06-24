@@ -32,6 +32,14 @@ environmental variable. For more information please see
 https://nvd.nist.gov/developers/start-here, section "Rate Limits"."""
 WARNED = False
 
+# Delay between consecutive NVD REST API requests, in seconds. NVD enforces a
+# rolling 30 second window: 5 requests without an API key and 50 with one. The
+# delays below keep us within those limits (30 / 5 = 6 and 30 / 50 = 0.6), so
+# providing a key via the NVDAPIKEY environment variable speeds scans up by
+# roughly 10x. See https://nvd.nist.gov/developers/start-here, "Rate Limits".
+NVD_REQUEST_DELAY = 6.0
+NVD_REQUEST_DELAY_WITH_APIKEY = 0.6
+
 NVD_MIRROR_URL = 'https://github.com/espressif/esp-nvd-mirror.git'
 
 # On-disk cache for excluded_cves.yaml. The file is refreshed from the upstream
@@ -68,14 +76,20 @@ LOCAL_EXCLUDED_CVES_FILE = 'excluded_cves.yaml'
 
 
 def nvd_request(params: str) -> List[Dict[str, Any]]:
-    """When NVD API key is not provided, sleeps for 30 seconds to
-    meet NVD's 5 requests per rolling 30 seconds windows limit.
+    """Query the NVD REST API and paginate through all results.
+
+    To stay within NVD's rate limits, the function sleeps between requests:
+    NVD_REQUEST_DELAY seconds by default and the shorter
+    NVD_REQUEST_DELAY_WITH_APIKEY when the NVDAPIKEY environment variable is
+    set. The key is also sent in the 'apikey' request header. See
+    https://nvd.nist.gov/developers/start-here, section "Rate Limits".
     """
     base_url = 'https://services.nvd.nist.gov/rest/json/cves/2.0'
     vulns = []
     start_idx = 0
     unavailable_cnt = 0
     apikey = os.environ.get('NVDAPIKEY')
+    delay = NVD_REQUEST_DELAY_WITH_APIKEY if apikey else NVD_REQUEST_DELAY
     global WARNED
 
     while True:
@@ -88,9 +102,9 @@ def nvd_request(params: str) -> List[Dict[str, Any]]:
         log.debug('NVD request headers:')
         log.debug('\n'.join([f'{h}: {v}' for h, v in req.header_items()]))
 
-        # NVD recommends waiting for six seconds between requests.
-        # https://nvd.nist.gov/developers/start-here
-        time.sleep(6)
+        # Throttle requests to stay within NVD's rate limits. The delay is
+        # shorter when an API key is provided. See NVD_REQUEST_DELAY.
+        time.sleep(delay)
         try:
             with urllib.request.urlopen(req, timeout=60) as res:
                 data = json.loads(res.read().decode())
