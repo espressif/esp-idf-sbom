@@ -1,3 +1,16 @@
+## v1.2.0 (2026-06-24)
+
+### ✨ New Features
+
+- speed up NVD queries when an API key is provided *(Frantisek Hrbata - cd90189)*
+- support repository-local excluded_cves.yaml *(Frantisek Hrbata - 9c3938d)*
+- adopt esp-pylib for logging and convert the CLI to rich-click *(Frantisek Hrbata - 43f3e47)*
+
+### 🐛 Bug Fixes
+
+- make SBOM and report output deterministic *(Frantisek Hrbata - 558b93b)*
+
+
 ## v1.1.0 (2026-06-09)
 
 ### ✨ New Features
