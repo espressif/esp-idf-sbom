@@ -31,6 +31,19 @@ IDF_FRAMEWORK_CPE_HW_NA = 'cpe:2.3:h:espressif:esp32:-:*:*:*:*:*:*:*'
 IDF_FRAMEWORK_CPE_OS = 'cpe:2.3:o:espressif:esp32_firmware:{ver}:*:*:*:*:*:*:*'
 IDF_FRAMEWORK_CPE_OS_NA = 'cpe:2.3:o:espressif:esp32_firmware:-:*:*:*:*:*:*:*'
 
+# CPE vendor:product equivalence groups. NVD sometimes files CVEs for the same
+# software under different vendor names. For example, Mbed TLS moved from Arm to
+# the TrustedFirmware project in 2020, and NVD now assigns its CVEs under both
+# 'arm' and 'trustedfirmware'. Each inner list is a set of equivalent CPE bases
+# 'cpe:2.3:<part>:<vendor>:<product>'. expand_cpe_aliases() uses these to add the
+# sibling CPEs to a package's CPE list, so the generated SBOM carries them and
+# 'check' finds CVEs filed under any of the listed vendors. To cover another
+# renamed product, add its CPE bases as a new group here.
+CPE_ALIASES = [
+    ['cpe:2.3:a:arm:mbed_tls', 'cpe:2.3:a:trustedfirmware:mbed_tls'],
+    ['cpe:2.3:a:arm:tf-psa-crypto', 'cpe:2.3:a:trustedfirmware:tf-psa-crypto'],
+]
+
 
 def pjoin(*paths: str) -> str:
     """Join input paths and return resulting path with forward slashes."""
@@ -274,3 +287,33 @@ def build_idf_framework_cpes(version: str) -> List[str]:
         IDF_FRAMEWORK_CPE_OS.format(ver=version),
         IDF_FRAMEWORK_CPE_OS_NA,
     ]
+
+
+def expand_cpe_aliases(cpes: List[str]) -> List[str]:
+    """Add known sibling CPEs for any CPE whose vendor:product has aliases.
+
+    NVD may file CVEs for the same product under different vendor names (see
+    CPE_ALIASES). For every CPE in ``cpes`` this appends the equivalent CPEs from
+    its alias group, reusing the version and the remaining fields, so they are
+    treated exactly like manifest-declared CPEs: emitted into the SBOM and
+    scanned by ``check``. The original CPEs are kept first and duplicates are
+    dropped, so a manifest that already lists both vendors is left unchanged.
+    """
+    result = list(cpes)
+    seen = {cpe.lower() for cpe in result}
+    for cpe in cpes:
+        parts = cpe.split(':')
+        if len(parts) < 5:
+            continue
+        base = ':'.join(parts[:5]).lower()
+        for group in CPE_ALIASES:
+            if base not in [member.lower() for member in group]:
+                continue
+            for member in group:
+                # Rebuild the sibling from the alias base plus this CPE's
+                # version and trailing fields.
+                sibling = ':'.join(member.split(':')[:5] + parts[5:])
+                if sibling.lower() not in seen:
+                    result.append(sibling)
+                    seen.add(sibling.lower())
+    return result

@@ -103,6 +103,10 @@ def cmd_check(args: Dict[str, Any]) -> int:
                 if args['name']:
                     # Include keywords from the SPDX Package comment.
                     keywords += comment.get('cve-keywords', [])
+            # Also scan the sibling CPEs of vendor-renamed products (see
+            # utils.expand_cpe_aliases). Expand before caching so the local
+            # mirror pre-fetch covers them too.
+            cpes = utils.expand_cpe_aliases(cpes)
             nvd.cache_cves(cpes, keywords)
 
         log.eprint('Checking packages')
@@ -138,6 +142,10 @@ def cmd_check(args: Dict[str, Any]) -> int:
                     manifest_exclude_list = {cve['cve']: cve['reason'] for cve in comment['cve-exclude-list']}
                 if args['name']:
                     keywords += comment.get('cve-keywords', [])
+
+                # Also scan the sibling CPEs of vendor-renamed products (see
+                # utils.expand_cpe_aliases).
+                cpes = utils.expand_cpe_aliases(cpes)
 
                 for cpe in cpes:
                     # Merge globally-applicable exclusions for this CPE with manifest excludes.

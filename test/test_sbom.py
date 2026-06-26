@@ -851,6 +851,41 @@ def test_derive_purl() -> None:
     assert derive_purl('', '1.0') == ''
 
 
+def test_expand_cpe_aliases() -> None:
+    """utils.expand_cpe_aliases adds sibling CPEs for vendor-renamed products.
+
+    NVD files CVEs for the same software under more than one vendor name (e.g.
+    Mbed TLS under both 'arm' and 'trustedfirmware'), so a CPE whose base is in
+    utils.CPE_ALIASES must be scanned under every vendor in its group, with the
+    version and remaining fields carried over.
+    """
+    from esp_idf_sbom.libsbom.utils import expand_cpe_aliases
+
+    # An aliased vendor:product gains its sibling, preserving version/fields.
+    assert expand_cpe_aliases(['cpe:2.3:a:arm:mbed_tls:3.6.5:*:*:*:*:*:*:*']) == [
+        'cpe:2.3:a:arm:mbed_tls:3.6.5:*:*:*:*:*:*:*',
+        'cpe:2.3:a:trustedfirmware:mbed_tls:3.6.5:*:*:*:*:*:*:*',
+    ]
+
+    # tf-psa-crypto is aliased the same way.
+    assert expand_cpe_aliases(['cpe:2.3:a:arm:tf-psa-crypto:1.1.0:*:*:*:*:*:*:*']) == [
+        'cpe:2.3:a:arm:tf-psa-crypto:1.1.0:*:*:*:*:*:*:*',
+        'cpe:2.3:a:trustedfirmware:tf-psa-crypto:1.1.0:*:*:*:*:*:*:*',
+    ]
+
+    # A manifest already listing both vendors stays unchanged (no duplicate).
+    both = [
+        'cpe:2.3:a:arm:mbed_tls:4.1.0:*:*:*:*:*:*:*',
+        'cpe:2.3:a:trustedfirmware:mbed_tls:4.1.0:*:*:*:*:*:*:*',
+    ]
+    assert expand_cpe_aliases(both) == both
+
+    # A CPE with no alias is returned unchanged.
+    assert expand_cpe_aliases(['cpe:2.3:a:lwip_project:lwip:2.2.0:*:*:*:*:*:*:*']) == [
+        'cpe:2.3:a:lwip_project:lwip:2.2.0:*:*:*:*:*:*:*',
+    ]
+
+
 def test_merge_local_excluded_cves(tmp_path: Path) -> None:
     """nvd.merge_local_excluded_cves merges a repo-local excluded_cves.yaml into
     the in-memory exclusion set, extending the global list for the scan.
