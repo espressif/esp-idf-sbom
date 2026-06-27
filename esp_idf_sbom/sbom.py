@@ -28,7 +28,10 @@ EXTENDED_SCAN_HELP = (
     'under the cve-keywords key in the manifest or generated SBOM file to '
     'search for potential vulnerabilities. This involves scanning CVE '
     'descriptions for these keywords in CVEs that have not yet been analyzed '
-    'by the NVD. The identified CVEs should be thoroughly examined for false '
+    'by the NVD. It also queries each CPE with its version set to NA (-) to '
+    'surface CVEs that NVD recorded without a specific version; these are '
+    'reported as MAYBE, as their applicability to the scanned version cannot '
+    'be determined. The identified CVEs should be thoroughly examined for false '
     'positives. Using this option may result in a report that includes CVEs '
     'unrelated to the scanned components or CVEs that have already been fixed '
     'in the scanned component versions. Exercise caution when using this option, '
@@ -170,7 +173,31 @@ def cmd_check(args: Dict[str, Any]) -> int:
                                 existing_record['keyword'] += f', {keyword}'
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, manifest_exclude_list, '', keyword, pkg_name, pkg_ver
+                                vuln, manifest_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
+                            )
+                            pkg_records.append(record)
+                            package_added = True
+
+                    # Also query each CPE with the version set to NA (-), which
+                    # surfaces CVEs NVD recorded without a pinned version (e.g.
+                    # against an unreleased development snapshot). Whether such a
+                    # CVE applies to the scanned version cannot be derived from
+                    # the CPE, so it is reported as MAYBE for manual review,
+                    # never asserted as YES.
+                    for cpe in cpes:
+                        parts = cpe.split(':')
+                        if len(parts) < 6 or parts[5] in ('-', '*'):
+                            # Already NA/ANY; the regular scan above covers it.
+                            continue
+                        na_cpe = ':'.join(parts[:5] + ['-'] + parts[6:])
+                        cve_exclude_list = nvd.get_excluded_cves_for_cpe(cpe)
+                        cve_exclude_list.update(manifest_exclude_list)
+                        for vuln in nvd.check_cpe(na_cpe, args['local_db']):
+                            if report.find_record_by_cve(pkg_records, vuln['cve']['id']):
+                                # Already reported by the version or keyword scan.
+                                continue
+                            record = report.create_vulnerable_record(
+                                vuln, cve_exclude_list, na_cpe, '', pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True
@@ -417,7 +444,31 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                                 existing_record['keyword'] += f', {keyword}'
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, manifest_exclude_list, '', keyword, pkg_name, pkg_ver
+                                vuln, manifest_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
+                            )
+                            pkg_records.append(record)
+                            package_added = True
+
+                    # Also query each CPE with the version set to NA (-), which
+                    # surfaces CVEs NVD recorded without a pinned version (e.g.
+                    # against an unreleased development snapshot). Whether such a
+                    # CVE applies to the scanned version cannot be derived from
+                    # the CPE, so it is reported as MAYBE for manual review,
+                    # never asserted as YES.
+                    for cpe in cpes:
+                        parts = cpe.split(':')
+                        if len(parts) < 6 or parts[5] in ('-', '*'):
+                            # Already NA/ANY; the regular scan above covers it.
+                            continue
+                        na_cpe = ':'.join(parts[:5] + ['-'] + parts[6:])
+                        cve_exclude_list = nvd.get_excluded_cves_for_cpe(cpe)
+                        cve_exclude_list.update(manifest_exclude_list)
+                        for vuln in nvd.check_cpe(na_cpe, args['local_db']):
+                            if report.find_record_by_cve(pkg_records, vuln['cve']['id']):
+                                # Already reported by the version or keyword scan.
+                                continue
+                            record = report.create_vulnerable_record(
+                                vuln, cve_exclude_list, na_cpe, '', pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True

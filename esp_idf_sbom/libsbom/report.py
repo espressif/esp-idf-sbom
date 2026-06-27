@@ -403,7 +403,13 @@ def select_cvss_metric(metrics: Optional[Dict[str, List[Dict[str, Any]]]]) -> Op
 
 
 def create_vulnerable_record(
-    vuln: Dict[str, Any], cve_exclude_list: Dict[str, Any], cpe: str, keyword: str, pkg_name: str, pkg_ver: str
+    vuln: Dict[str, Any],
+    cve_exclude_list: Dict[str, Any],
+    cpe: str,
+    keyword: str,
+    pkg_name: str,
+    pkg_ver: str,
+    maybe: bool = False,
 ) -> Dict[str, str]:
     # Helper for creating a record of a discovered vulnerability.
     record = empty_record.copy()
@@ -438,7 +444,10 @@ def create_vulnerable_record(
     if cve_id in cve_exclude_list:
         exclude_reason = cve_exclude_list[cve_id]
         vulnerable = 'EXCLUDED'
-    elif status in ['Received', 'Awaiting Analysis', 'Undergoing Analysis']:
+    elif maybe:
+        # The caller could not confirm the CVE applies to the scanned version (a
+        # keyword-description match, or a match against a CPE whose version is
+        # NA), so report it as MAYBE for manual review rather than asserting YES.
         vulnerable = 'MAYBE'
     else:
         vulnerable = 'YES'

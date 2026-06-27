@@ -563,7 +563,17 @@ def evaluate_cpematch(cpe: str, cpe_match: Dict[str, Any]) -> bool:
         log.warn(f'No CPE Names found for {criteria_id}. CPE {cpe} has not been evaluated.')
         return False
 
+    # NVD enumerates the NA (:-) CPE name among the concrete names of a versioned
+    # or version-ranged match criteria. That NA entry would let an NA-version
+    # query spuriously match such a CVE, whose version bounds are not encoded in
+    # the NA name (e.g. an NA lwip query matching CVE-2014-4883, which only
+    # affects lwip <= 1.4.1). When the criteria itself is not NA, ignore NA
+    # targets so only the real versioned names are matched.
+    criteria_is_na = criteria.split(':')[5] == '-'
+
     for target in targets:
+        if not criteria_is_na and target.split(':')[5] == '-':
+            continue
         try:
             if CPE.match(cpe, target):
                 return True
