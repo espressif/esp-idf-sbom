@@ -310,13 +310,13 @@ def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '
     table.add_column('Package', vertical='middle', justify='center', overflow='fold')
     table.add_column('Version', vertical='middle', justify='center', overflow='fold')
     table.add_column('CPE', vertical='middle', justify='center', overflow='fold')
-    if args['name']:
+    if args['extended_scan']:
         table.add_column('Keyword', vertical='middle', justify='center', overflow='fold')
 
     for r in record_list:
         if r['vulnerable'] != 'NO':
             continue
-        if args['name']:
+        if args['extended_scan']:
             table.add_row(
                 '[bright_blue]' + r['pkg_name'],
                 r['pkg_version'],

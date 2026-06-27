@@ -23,7 +23,7 @@ from esp_idf_sbom.libsbom import report
 from esp_idf_sbom.libsbom import spdx
 from esp_idf_sbom.libsbom import utils
 
-NAME_HELP = (
+EXTENDED_SCAN_HELP = (
     'If available, use the product part of the CPE and the keywords found '
     'under the cve-keywords key in the manifest or generated SBOM file to '
     'search for potential vulnerabilities. This involves scanning CVE '
@@ -45,9 +45,10 @@ NO_SYNC_EXCLUDED_CVES_HELP = (
 )
 
 
-def name_option(func: Any) -> Any:
-    # Shared --extended-scan/-n/--name flag (dest=name); used by check and manifest check.
-    return click.option('--extended-scan', '-n', '--name', 'name', is_flag=True, help=NAME_HELP)(func)
+def extended_scan_option(func: Any) -> Any:
+    # Shared --extended-scan flag (dest=extended_scan); -n/--name are kept as
+    # backward-compatible aliases. Used by check and manifest check.
+    return click.option('--extended-scan', '-n', '--name', 'extended_scan', is_flag=True, help=EXTENDED_SCAN_HELP)(func)
 
 
 def no_sync_excluded_cves_option(func: Any) -> Any:
@@ -95,12 +96,12 @@ def cmd_check(args: Dict[str, Any]) -> int:
                         continue
                     _, _, cpe = cpe_ref.split()
                     cpes.append(cpe)
-                    if args['name']:
+                    if args['extended_scan']:
                         # Include the product (package name) from the CPE in the keywords
                         keywords.append(cpe.split(':')[4])
 
                 comment = spdx.parse_package_comment(pkg)
-                if args['name']:
+                if args['extended_scan']:
                     # Include keywords from the SPDX Package comment.
                     keywords += comment.get('cve-keywords', [])
             # Also scan the sibling CPEs of vendor-renamed products (see
@@ -130,7 +131,7 @@ def cmd_check(args: Dict[str, Any]) -> int:
                         continue
                     _, _, cpe = cpe_ref.split()
                     cpes.append(cpe)
-                    if args['name']:
+                    if args['extended_scan']:
                         # Include the CPE product name in the keywords so it is searched in the CVE description.
                         product = cpe.split(':')[4]
                         keywords.append(product)
@@ -140,7 +141,7 @@ def cmd_check(args: Dict[str, Any]) -> int:
                 if 'cve-exclude-list' in comment:
                     # get information about excluded CVEs
                     manifest_exclude_list = {cve['cve']: cve['reason'] for cve in comment['cve-exclude-list']}
-                if args['name']:
+                if args['extended_scan']:
                     keywords += comment.get('cve-keywords', [])
 
                 # Also scan the sibling CPEs of vendor-renamed products (see
@@ -159,7 +160,7 @@ def cmd_check(args: Dict[str, Any]) -> int:
                         pkg_records.append(record)
                         package_added = True
 
-                if args['name']:
+                if args['extended_scan']:
                     for keyword in keywords:
                         vulns = nvd.check_keyword(keyword, args['local_db'])
                         for vuln in vulns:
@@ -353,9 +354,9 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
             for manifest in manifests:
                 if 'cpe' in manifest:
                     cpes += manifest['cpe']
-                    if args['name']:
+                    if args['extended_scan']:
                         keywords += [cpe.split(':')[4] for cpe in cpes]
-                if args['name']:
+                if args['extended_scan']:
                     keywords += manifest.get('cve-keywords', [])
             nvd.cache_cves(cpes, keywords)
 
@@ -380,7 +381,7 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                     cpe = cpe.format(pkg_ver)
                     cpes.append(cpe)
                     product = cpe.split(':')[4]
-                    if args['name']:
+                    if args['extended_scan']:
                         # Include the CPE product name in the keywords so it is searched in the CVE description.
                         keywords.append(product)
                     if not pkg_name:
@@ -392,7 +393,7 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                     pkg_name = manifest['_src']
 
                 manifest_exclude_list = {cve['cve']: cve['reason'] for cve in manifest.get('cve-exclude-list', [])}
-                if args['name']:
+                if args['extended_scan']:
                     keywords += manifest.get('cve-keywords', [])
                 for cpe in cpes:
                     # Merge globally-applicable exclusions for this CPE with manifest excludes.
@@ -406,7 +407,7 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                         pkg_records.append(record)
                         package_added = True
 
-                if args['name']:
+                if args['extended_scan']:
                     for keyword in keywords:
                         vulns = nvd.check_keyword(keyword, args['local_db'])
                         for vuln in vulns:
@@ -759,7 +760,7 @@ def create(ctx: click.Context, **params: Any) -> None:
     default=None,
     help='Print output to the specified file instead of stdout.',
 )
-@name_option
+@extended_scan_option
 @click.option(
     '--check-all-packages',
     is_flag=True,
@@ -886,7 +887,7 @@ def manifest_validate(ctx: click.Context, **params: Any) -> None:
     default=None,
     help='Print output to the specified file instead of stdout.',
 )
-@name_option
+@extended_scan_option
 @click.option(
     '--local-db',
     is_flag=True,
