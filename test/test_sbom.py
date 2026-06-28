@@ -105,6 +105,22 @@ def test_sbom_subpackages(hello_world_build: Path) -> None:
     shutil.rmtree(subpackage_path)
 
 
+def test_rem_subpackages_keeps_submodules(hello_world_build: Path) -> None:
+    """--rem-subpackages must drop only subpackages, not submodules. They are
+    independent: submodules come from git, subpackages from sbom.yml."""
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    p = run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '--rem-subpackages', proj_desc_path],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    # submodules are still reported as their own packages ...
+    assert 'SPDXRef-SUBMODULE-' in p.stdout
+    # ... while subpackages are removed.
+    assert 'SPDXRef-SUBPACKAGE-' not in p.stdout
+
+
 def test_referenced_manifests(hello_world_build: Path) -> None:
     """This is similar test as test_sbom_subpackages, but this time
     referenced manifests are used to create subpackages. Meaning the
@@ -849,6 +865,27 @@ def test_derive_purl() -> None:
     assert derive_purl('https://www.lua.org/', '5.4') == ''
     assert derive_purl('https://github.com/foo/bar', '') == ''
     assert derive_purl('', '1.0') == ''
+
+
+def test_get_files_deduplicates_symlinks() -> None:
+    """A symlink and its target both surface in the directory walk, and prelpath
+    resolves the symlink to the target, so without deduplication they collapse to
+    the same relative path and the same file SPDXID (the toolchain's
+    xtensa-esp-elf-cc -> -gcc is the real case). get_files keeps one relpath per
+    file so per-file SPDXIDs stay unique."""
+    from esp_idf_sbom.libsbom import sbom
+
+    tmpdir = TemporaryDirectory()
+    base = Path(tmpdir.name)
+    (base / 'real.txt').write_text('content')
+    (base / 'link.txt').symlink_to(base / 'real.txt')
+
+    obj = sbom.SBOMObject({'file_tags': False}, {})
+    files = obj.get_files(str(base))
+    paths = [f.file.path for f in files]
+
+    assert len(paths) == len(set(paths)), f'duplicate file paths: {paths}'
+    assert paths == ['./real.txt']
 
 
 def test_expand_cpe_aliases() -> None:
