@@ -55,7 +55,7 @@ dev = [
 Homepage = "https://github.com/espressif/esp-idf-sbom"
 
 [project.scripts]
-esp-idf-sbom = "esp_idf_sbom.sbom:main"
+esp-idf-sbom = "esp_idf_sbom.main:main"
 
 [project.entry-points.idf_extension]
 esp_idf_sbom_ext = "esp_idf_sbom.idf_ext:action_extensions"

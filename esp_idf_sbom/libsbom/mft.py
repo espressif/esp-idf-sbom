@@ -20,8 +20,8 @@ from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import utils
 
 # Shared text used on the synthesized ESP-IDF framework manifest. Lives here so
-# both the SPDX-generation path (SPDXFramework) and the manifest-check
-# injection path use the same wording.
+# both the SBOM build path (SBOMFramework) and the manifest-check injection path
+# use the same wording.
 IDF_FRAMEWORK_DESCRIPTION = (
     "Espressif IoT Development Framework -- the official development framework for Espressif Systems' chips."
 )
@@ -32,7 +32,7 @@ def build_idf_framework_manifest(idf_path: str) -> Dict[str, Any]:
     """Build the in-memory manifest dict for an ESP-IDF framework package.
 
     Reads the IDF version from ``tools/cmake/version.cmake`` at ``idf_path``,
-    composes the three NVD CPEs, and derives ``PackageDownloadLocation`` from
+    composes the four NVD CPEs, and derives ``PackageDownloadLocation`` from
     the checkout's git remote (so customer forks are attributed correctly).
 
     Returns an empty dict when the version cannot be read; callers should
