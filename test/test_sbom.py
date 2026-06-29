@@ -27,7 +27,10 @@ def hello_world_build(ctx: dict = {'tmpdir': None}) -> Path:
     tmpdir = TemporaryDirectory()
     hello_world_path = Path(os.environ['IDF_PATH']) / 'examples' / 'get-started' / 'hello_world'
     copy_tree(str(hello_world_path), tmpdir.name, verbose=0)
-    run([sys.executable, IDF_PY_PATH, 'fullclean'], cwd=tmpdir.name, check=True)
+    # Build for esp32 explicitly: set-target clears the build dir and regenerates
+    # sdkconfig, so the target does not depend on whatever the source tree carries
+    # (e.g. a manual set-target). Tests like test_manifest_expression assert on it.
+    run([sys.executable, IDF_PY_PATH, 'set-target', 'esp32'], cwd=tmpdir.name, check=True)
     run([sys.executable, IDF_PY_PATH, 'build'], cwd=tmpdir.name, check=True)
     ctx['tmpdir'] = tmpdir
     return Path(tmpdir.name)
