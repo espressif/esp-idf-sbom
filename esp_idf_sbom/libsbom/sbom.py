@@ -1626,6 +1626,8 @@ def load(path: str) -> SBOM:
         obj = None
 
     if isinstance(obj, dict):
+        if 'spdxVersion' in obj:
+            return spdx.parse(text, format='json')
         raise ValueError('unrecognized JSON SBOM format')
 
     if 'SPDXVersion:' in text or 'SPDXID:' in text:
