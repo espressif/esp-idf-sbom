@@ -1614,6 +1614,7 @@ def load(path: str) -> SBOM:
 
     # Late import: the backends import this module, so importing them at module
     # scope would be circular. load() is just a format-sniffing dispatcher.
+    from esp_idf_sbom.libsbom import cyclonedx
     from esp_idf_sbom.libsbom import spdx
 
     # Parse the structure first and dispatch on the top-level keys, rather than
@@ -1626,6 +1627,8 @@ def load(path: str) -> SBOM:
         obj = None
 
     if isinstance(obj, dict):
+        if 'bomFormat' in obj:
+            return cyclonedx.parse(text)
         if 'spdxVersion' in obj:
             return spdx.parse(text, format='json')
         raise ValueError('unrecognized JSON SBOM format')

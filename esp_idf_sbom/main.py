@@ -15,6 +15,7 @@ import yaml
 from rich.table import Table
 
 from esp_idf_sbom import __version__
+from esp_idf_sbom.libsbom import cyclonedx
 from esp_idf_sbom.libsbom import git
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import mft
@@ -76,6 +77,8 @@ SBOM_FORMATS: Dict[str, Any] = {
     'spdx-tag-value@2.2': (spdx, 'tagvalue', '2.2'),
     'spdx-json': (spdx, 'json', '2.2'),
     'spdx-json@2.2': (spdx, 'json', '2.2'),
+    'cyclonedx-json': (cyclonedx, 'json', '1.6'),
+    'cyclonedx-json@1.6': (cyclonedx, 'json', '1.6'),
 }
 
 
@@ -715,7 +718,8 @@ def main(
     help=(
         'Output SBOM format. A bare name selects the latest supported spec version; '
         'pin a specific version with an @version suffix (e.g. spdx-json@2.2). '
-        'spdx-tag-value - SPDX 2.2 tag/value (default). spdx-json - SPDX 2.2 JSON.'
+        'spdx-tag-value - SPDX 2.2 tag/value (default). spdx-json - SPDX 2.2 JSON. '
+        'cyclonedx-json - CycloneDX 1.6 JSON.'
     ),
 )
 @click.option(
