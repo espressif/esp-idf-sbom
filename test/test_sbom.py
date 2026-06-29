@@ -851,6 +851,112 @@ def test_derive_purl() -> None:
     assert derive_purl('', '1.0') == ''
 
 
+def test_expand_cpe_aliases() -> None:
+    """utils.expand_cpe_aliases adds sibling CPEs for vendor-renamed products.
+
+    NVD files CVEs for the same software under more than one vendor name (e.g.
+    Mbed TLS under both 'arm' and 'trustedfirmware'), so a CPE whose base is in
+    utils.CPE_ALIASES must be scanned under every vendor in its group, with the
+    version and remaining fields carried over.
+    """
+    from esp_idf_sbom.libsbom.utils import expand_cpe_aliases
+
+    # An aliased vendor:product gains its sibling, preserving version/fields.
+    assert expand_cpe_aliases(['cpe:2.3:a:arm:mbed_tls:3.6.5:*:*:*:*:*:*:*']) == [
+        'cpe:2.3:a:arm:mbed_tls:3.6.5:*:*:*:*:*:*:*',
+        'cpe:2.3:a:trustedfirmware:mbed_tls:3.6.5:*:*:*:*:*:*:*',
+    ]
+
+    # tf-psa-crypto is aliased the same way.
+    assert expand_cpe_aliases(['cpe:2.3:a:arm:tf-psa-crypto:1.1.0:*:*:*:*:*:*:*']) == [
+        'cpe:2.3:a:arm:tf-psa-crypto:1.1.0:*:*:*:*:*:*:*',
+        'cpe:2.3:a:trustedfirmware:tf-psa-crypto:1.1.0:*:*:*:*:*:*:*',
+    ]
+
+    # A manifest already listing both vendors stays unchanged (no duplicate).
+    both = [
+        'cpe:2.3:a:arm:mbed_tls:4.1.0:*:*:*:*:*:*:*',
+        'cpe:2.3:a:trustedfirmware:mbed_tls:4.1.0:*:*:*:*:*:*:*',
+    ]
+    assert expand_cpe_aliases(both) == both
+
+    # A CPE with no alias is returned unchanged.
+    assert expand_cpe_aliases(['cpe:2.3:a:lwip_project:lwip:2.2.0:*:*:*:*:*:*:*']) == [
+        'cpe:2.3:a:lwip_project:lwip:2.2.0:*:*:*:*:*:*:*',
+    ]
+
+
+def test_create_vulnerable_record_maybe() -> None:
+    """The `maybe` flag drives the MAYBE classification.
+
+    Keyword-search and NA-version hits cannot be confirmed to apply to the
+    scanned version, so callers pass maybe=True to report them as MAYBE rather
+    than YES. The NVD status no longer affects the classification; exclusion
+    still takes precedence.
+    """
+    from esp_idf_sbom.libsbom import report
+
+    cpe = 'cpe:2.3:a:lwip_project:lwip:-:*:*:*:*:*:*:*'
+    vuln = {
+        'cve': {
+            'id': 'CVE-2020-22283',
+            'vulnStatus': 'Analyzed',
+            'descriptions': [{'lang': 'en', 'value': 'buffer overflow'}],
+            'metrics': {},
+        }
+    }
+
+    # Default: asserted as YES.
+    assert report.create_vulnerable_record(vuln, {}, cpe, '', 'lwip', '2.2.0')['vulnerable'] == 'YES'
+
+    # maybe=True downgrades to MAYBE.
+    assert report.create_vulnerable_record(vuln, {}, cpe, '', 'lwip', '2.2.0', maybe=True)['vulnerable'] == 'MAYBE'
+
+    # The NVD status alone no longer forces MAYBE; only the maybe flag does.
+    awaiting = {'cve': dict(vuln['cve'], vulnStatus='Awaiting Analysis')}
+    assert report.create_vulnerable_record(awaiting, {}, cpe, '', 'lwip', '2.2.0')['vulnerable'] == 'YES'
+
+    # Exclusion still wins over maybe.
+    rec = report.create_vulnerable_record(vuln, {'CVE-2020-22283': 'fixed'}, cpe, '', 'lwip', '2.2.0', maybe=True)
+    assert rec['vulnerable'] == 'EXCLUDED'
+
+
+def test_evaluate_cpematch_ignores_na_target_for_versioned_criteria(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An NA (-) source must not match a versioned/ranged criteria via the :- name.
+
+    NVD enumerates the NA CPE name among the concrete names of a version range,
+    so without this guard an NA-version query would match a range CVE that does
+    not apply (e.g. lwip <= 1.4.1 against lwip 2.2.0). A genuine NA criteria must
+    still match an NA query.
+    """
+    from esp_idf_sbom.libsbom import nvd
+
+    na_cpe = 'cpe:2.3:a:lwip_project:lwip:-:*:*:*:*:*:*:*'
+
+    # Version-ranged criteria whose matchString includes the spurious :- name.
+    monkeypatch.setattr(
+        nvd,
+        'get_match_criteria',
+        lambda cid: [na_cpe, 'cpe:2.3:a:lwip_project:lwip:1.4.1:*:*:*:*:*:*:*'],
+    )
+    ranged = {
+        'vulnerable': True,
+        'criteria': 'cpe:2.3:a:lwip_project:lwip:*:*:*:*:*:*:*:*',
+        'matchCriteriaId': 'RANGED',
+        'versionEndIncluding': '1.4.1',
+    }
+    assert nvd.evaluate_cpematch(na_cpe, ranged) is False
+
+    # A genuine NA criteria still matches the NA query.
+    monkeypatch.setattr(nvd, 'get_match_criteria', lambda cid: [na_cpe])
+    na = {
+        'vulnerable': True,
+        'criteria': 'cpe:2.3:a:lwip_project:lwip:-:*:*:*:*:*:*:*',
+        'matchCriteriaId': 'NA',
+    }
+    assert nvd.evaluate_cpematch(na_cpe, na) is True
+
+
 def test_merge_local_excluded_cves(tmp_path: Path) -> None:
     """nvd.merge_local_excluded_cves merges a repo-local excluded_cves.yaml into
     the in-memory exclusion set, extending the global list for the scan.

@@ -310,13 +310,13 @@ def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '
     table.add_column('Package', vertical='middle', justify='center', overflow='fold')
     table.add_column('Version', vertical='middle', justify='center', overflow='fold')
     table.add_column('CPE', vertical='middle', justify='center', overflow='fold')
-    if args['name']:
+    if args['extended_scan']:
         table.add_column('Keyword', vertical='middle', justify='center', overflow='fold')
 
     for r in record_list:
         if r['vulnerable'] != 'NO':
             continue
-        if args['name']:
+        if args['extended_scan']:
             table.add_row(
                 '[bright_blue]' + r['pkg_name'],
                 r['pkg_version'],
@@ -365,8 +365,51 @@ def create_non_vulnerable_record(cpes: List[str], keywords: List[str], pkg_name:
     return record
 
 
+def select_cvss_metric(metrics: Optional[Dict[str, List[Dict[str, Any]]]]) -> Optional[Dict[str, Any]]:
+    """Select the CVSS metric that best matches what NVD shows for a CVE.
+
+    NVD groups CVSS metrics by version (cvssMetricV40/V31/V30/V2). Each group is
+    a list that may contain an NVD ``Primary`` score together with one or more
+    CNA-provided ``Secondary`` scores. NVD displays the Primary score on the CVE
+    page, so we prefer it; otherwise the report can pick a Secondary score with a
+    different severity (e.g. CVE-2026-25532, where a Secondary scored 6.3/MEDIUM
+    while NVD's Primary is 8.0/HIGH).
+
+    Selection rule: the highest-version Primary metric, falling back to the first
+    metric of the highest available version when no Primary is present. The
+    ``type`` field is required by the NVD schema, but ``.get()`` is used
+    defensively so a missing value simply degrades to the fallback.
+    """
+    if not metrics:
+        return None
+
+    version_order = ('cvssMetricV40', 'cvssMetricV31', 'cvssMetricV30', 'cvssMetricV2')
+    ordered_keys = [k for k in version_order if k in metrics]
+    # Keep any unexpected keys as a last resort, preserving their original order.
+    ordered_keys += [k for k in metrics if k not in version_order]
+
+    # Prefer NVD's Primary metric, scanning from the highest CVSS version down.
+    for key in ordered_keys:
+        primary = next((m for m in metrics[key] if m.get('type') == 'Primary'), None)
+        if primary is not None:
+            return primary
+
+    # No Primary present: use the first metric of the highest available version.
+    for key in ordered_keys:
+        if metrics[key]:
+            return metrics[key][0]
+
+    return None
+
+
 def create_vulnerable_record(
-    vuln: Dict[str, Any], cve_exclude_list: Dict[str, Any], cpe: str, keyword: str, pkg_name: str, pkg_ver: str
+    vuln: Dict[str, Any],
+    cve_exclude_list: Dict[str, Any],
+    cpe: str,
+    keyword: str,
+    pkg_name: str,
+    pkg_ver: str,
+    maybe: bool = False,
 ) -> Dict[str, str]:
     # Helper for creating a record of a discovered vulnerability.
     record = empty_record.copy()
@@ -388,12 +431,9 @@ def create_vulnerable_record(
     cvss_base_score = ''
     cvss_base_severity = ''
 
-    metrics = vuln['cve'].get('metrics')
-    cvss = None
-    if metrics:
-        # get the first CVSS
-        first_cvss = next(iter(metrics), None)
-        cvss = metrics[first_cvss][0] if first_cvss else None
+    # Prefer NVD's Primary metric (see select_cvss_metric) so the reported
+    # severity matches what NVD shows, rather than a CNA-provided Secondary score.
+    cvss = select_cvss_metric(vuln['cve'].get('metrics'))
 
     if cvss:
         cvss_version = cvss['cvssData'].get('version', '')
@@ -404,7 +444,10 @@ def create_vulnerable_record(
     if cve_id in cve_exclude_list:
         exclude_reason = cve_exclude_list[cve_id]
         vulnerable = 'EXCLUDED'
-    elif status in ['Received', 'Awaiting Analysis', 'Undergoing Analysis']:
+    elif maybe:
+        # The caller could not confirm the CVE applies to the scanned version (a
+        # keyword-description match, or a match against a CPE whose version is
+        # NA), so report it as MAYBE for manual review rather than asserting YES.
         vulnerable = 'MAYBE'
     else:
         vulnerable = 'YES'

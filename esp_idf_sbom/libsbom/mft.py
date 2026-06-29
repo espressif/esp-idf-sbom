@@ -83,7 +83,10 @@ def fix(manifest: Dict[str, Any]) -> None:
         # Expand cpes with version value
         ver = manifest.get('version', '')
         cpes_expanded = [cpe.format(ver) for cpe in manifest['cpe']]
-        manifest['cpe'] = cpes_expanded
+        # Add sibling CPEs for products NVD files under more than one vendor name
+        # (see utils.CPE_ALIASES), so they appear in the SBOM and are scanned
+        # just like the manifest-declared CPEs.
+        manifest['cpe'] = utils.expand_cpe_aliases(cpes_expanded)
 
     if 'purl' in manifest and manifest['purl']:
         # Expand purl with version value, mirroring the {} substitution
