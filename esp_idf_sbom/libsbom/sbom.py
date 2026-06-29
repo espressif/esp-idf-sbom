@@ -1629,6 +1629,8 @@ def load(path: str) -> SBOM:
     if isinstance(obj, dict):
         if 'bomFormat' in obj:
             return cyclonedx.parse(text)
+        if '@context' in obj or '@graph' in obj:
+            return spdx.parse(text, format='json-ld')
         if 'spdxVersion' in obj:
             return spdx.parse(text, format='json')
         raise ValueError('unrecognized JSON SBOM format')

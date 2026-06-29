@@ -332,11 +332,248 @@ def _render_json(sbom: SBOM, version: str) -> str:
     return json.dumps(document, indent=2)
 
 
+def _render_jsonld(sbom: SBOM, version: str) -> str:
+    """Render the model as SPDX 3.0 JSON-LD.
+
+    Unlike SPDX 2.x, SPDX 3.0 has no tag/value form -- JSON-LD is the only
+    serialization. The output validates against the official schema at
+    https://spdx.org/schema/<version>/spdx-json-schema.json. The model maps to
+    SPDX 3.0 elements: a software_Package per package (every CPE as a cpe23
+    externalIdentifier, the PURL as software_packageUrl), suppliers/originators
+    as Agent elements, the depends_on graph as dependsOn Relationships, and each
+    excluded CVE as a security_Vulnerability plus a not-affected VEX relationship.
+    """
+    context = f'https://spdx.org/rdf/{version}/spdx-context.jsonld'
+    docns = f'https://spdx.org/spdxdocs/{_sanitize_spdxid(sbom.name or "document")}-{uuid.uuid4()}'
+
+    def sid(suffix: str) -> str:
+        return f'{docns}#{suffix}'
+
+    created = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    ci = '_:creationInfo'
+    graph: List[Dict[str, Any]] = []
+    element_ids: List[str] = []
+
+    tool = sid('Agent-esp-idf-sbom')
+    graph.append({'type': 'SoftwareAgent', 'spdxId': tool, 'creationInfo': ci, 'name': 'esp-idf-sbom'})
+    element_ids.append(tool)
+    graph.append({'type': 'CreationInfo', '@id': ci, 'specVersion': version, 'created': created, 'createdBy': [tool]})
+
+    agents: Dict[str, str] = {}
+
+    def agent_id(supplier: str) -> Any:
+        if not supplier:
+            return None
+        atype, name = 'Organization', supplier
+        for prefix, kind in (('Person:', 'Person'), ('Organization:', 'Organization')):
+            if supplier.startswith(prefix):
+                atype, name = kind, supplier[len(prefix) :].strip()
+                break
+        if name not in agents:
+            aid = sid('Agent-' + (_sanitize_spdxid(name) or 'x'))
+            agents[name] = aid
+            graph.append({'type': atype, 'spdxId': aid, 'creationInfo': ci, 'name': name})
+            element_ids.append(aid)
+        return agents[name]
+
+    licenses: Dict[str, str] = {}
+
+    def license_id(expr: str) -> str:
+        if expr not in licenses:
+            lid = sid(f'License-{len(licenses)}')
+            licenses[expr] = lid
+            graph.append(
+                {
+                    'type': 'simplelicensing_LicenseExpression',
+                    'spdxId': lid,
+                    'creationInfo': ci,
+                    'simplelicensing_licenseExpression': expr,
+                }
+            )
+            element_ids.append(lid)
+        return licenses[expr]
+
+    for pkg in sbom.packages:
+        pid = sid(pkg.ref)
+        comp: Dict[str, Any] = {'type': 'software_Package', 'spdxId': pid, 'creationInfo': ci, 'name': pkg.package_name}
+        if pkg.version:
+            comp['software_packageVersion'] = pkg.version
+        if pkg.description:
+            comp['description'] = pkg.description
+        if pkg.download_url:
+            comp['software_downloadLocation'] = pkg.download_url
+        if pkg.purl:
+            comp['software_packageUrl'] = pkg.purl
+        if pkg.copyrights:
+            comp['software_copyrightText'] = '\n'.join(sorted(pkg.copyrights))
+        if pkg.cpes:
+            comp['externalIdentifier'] = [
+                {'type': 'ExternalIdentifier', 'externalIdentifierType': 'cpe23', 'identifier': cpe} for cpe in pkg.cpes
+            ]
+        supplier = agent_id(pkg.supplier)
+        if supplier:
+            comp['suppliedBy'] = supplier
+        originator = agent_id(pkg.originator)
+        if originator:
+            comp['originatedBy'] = [originator]
+        if pkg.checksum_sha256:
+            comp['verifiedUsing'] = [{'type': 'Hash', 'algorithm': 'sha256', 'hashValue': pkg.checksum_sha256}]
+        if pkg.repository:
+            comp['externalRef'] = [{'type': 'ExternalRef', 'externalRefType': 'vcs', 'locator': [pkg.repository]}]
+        if pkg.cve_keywords:
+            # SPDX 3.0 has no native slot for the cve-keywords search hints (the
+            # cve-exclude-list goes to VEX), so carry them as a YAML comment that
+            # _parse_jsonld reads back, mirroring the SPDX 2.x PackageComment.
+            comp['comment'] = yaml.dump({'cve-keywords': pkg.cve_keywords})
+        graph.append(comp)
+        element_ids.append(pid)
+
+    rel_n = 0
+    for pkg in sbom.packages:
+        if pkg.depends_on:
+            rid = sid(f'Relationship-{rel_n}')
+            rel_n += 1
+            graph.append(
+                {
+                    'type': 'Relationship',
+                    'spdxId': rid,
+                    'creationInfo': ci,
+                    'from': sid(pkg.ref),
+                    'relationshipType': 'dependsOn',
+                    'to': [sid(dep) for dep in pkg.depends_on],
+                }
+            )
+            element_ids.append(rid)
+
+    has_licensing = False
+    lic_rel_n = 0
+    for pkg in sbom.packages:
+        license_rels = (
+            ('hasConcludedLicense', pkg.licenses_concluded),
+            ('hasDeclaredLicense', pkg.licenses_declared),
+        )
+        for reltype, exprs in license_rels:
+            expr = simplify_licenses(exprs)
+            if not expr:
+                continue
+            has_licensing = True
+            lrid = sid(f'LicenseRel-{lic_rel_n}')
+            lic_rel_n += 1
+            graph.append(
+                {
+                    'type': 'Relationship',
+                    'spdxId': lrid,
+                    'creationInfo': ci,
+                    'from': sid(pkg.ref),
+                    'relationshipType': reltype,
+                    'to': [license_id(expr)],
+                }
+            )
+            element_ids.append(lrid)
+
+    for pkg in sbom.packages:
+        if not pkg.files:
+            continue
+        file_ids = []
+        for i, f in enumerate(pkg.files):
+            fid = sid(f'{pkg.ref}-File-{i}')
+            felem: Dict[str, Any] = {
+                'type': 'software_File',
+                'spdxId': fid,
+                'creationInfo': ci,
+                'name': f.path,
+                'verifiedUsing': [
+                    {'type': 'Hash', 'algorithm': 'sha1', 'hashValue': f.sha1},
+                    {'type': 'Hash', 'algorithm': 'sha256', 'hashValue': f.sha256},
+                ],
+            }
+            if f.copyrights:
+                felem['software_copyrightText'] = '\n'.join(sorted(f.copyrights))
+            graph.append(felem)
+            element_ids.append(fid)
+            file_ids.append(fid)
+            if f.license_concluded:
+                has_licensing = True
+                frid = sid(f'{pkg.ref}-File-{i}-License')
+                graph.append(
+                    {
+                        'type': 'Relationship',
+                        'spdxId': frid,
+                        'creationInfo': ci,
+                        'from': fid,
+                        'relationshipType': 'hasConcludedLicense',
+                        'to': [license_id(f.license_concluded)],
+                    }
+                )
+                element_ids.append(frid)
+        crid = sid(f'{pkg.ref}-Contains')
+        graph.append(
+            {
+                'type': 'Relationship',
+                'spdxId': crid,
+                'creationInfo': ci,
+                'from': sid(pkg.ref),
+                'relationshipType': 'contains',
+                'to': file_ids,
+            }
+        )
+        element_ids.append(crid)
+
+    has_security = False
+    for pkg in sbom.packages:
+        for entry in pkg.cve_exclude_list:
+            has_security = True
+            vid = sid(f'Vuln-{pkg.ref}-{entry["cve"]}')
+            graph.append(
+                {
+                    'type': 'security_Vulnerability',
+                    'spdxId': vid,
+                    'creationInfo': ci,
+                    'externalIdentifier': [
+                        {'type': 'ExternalIdentifier', 'externalIdentifierType': 'cve', 'identifier': entry['cve']}
+                    ],
+                }
+            )
+            element_ids.append(vid)
+            xid = sid(f'Vex-{pkg.ref}-{entry["cve"]}')
+            graph.append(
+                {
+                    'type': 'security_VexNotAffectedVulnAssessmentRelationship',
+                    'spdxId': xid,
+                    'creationInfo': ci,
+                    'from': vid,
+                    'relationshipType': 'doesNotAffect',
+                    'to': [sid(pkg.ref)],
+                    'security_impactStatement': entry['reason'],
+                }
+            )
+            element_ids.append(xid)
+
+    profiles = ['core', 'software']
+    if has_licensing:
+        profiles.append('simpleLicensing')
+    if has_security:
+        profiles.append('security')
+    graph.append(
+        {
+            'type': 'SpdxDocument',
+            'spdxId': sid('SPDXRef-DOCUMENT'),
+            'creationInfo': ci,
+            'name': sbom.name,
+            'profileConformance': profiles,
+            'dataLicense': 'https://spdx.org/licenses/CC0-1.0',
+            'rootElement': [sid(sbom.root)],
+            'element': element_ids,
+        }
+    )
+    return json.dumps({'@context': context, '@graph': graph}, indent=2)
+
+
 def render(sbom: SBOM, format: str = 'tagvalue', version: str = '2.2') -> str:
     """Render a format-neutral SBOM as an SPDX document.
 
     :param sbom: the SBOM model to serialize
-    :param format: 'tagvalue' or 'json' for SPDX 2.x
+    :param format: 'tagvalue' or 'json' for SPDX 2.x, 'json-ld' for SPDX 3.0 JSON-LD
     :param version: the SPDX spec version to emit
     :returns: the serialized SPDX document
     """
@@ -344,6 +581,8 @@ def render(sbom: SBOM, format: str = 'tagvalue', version: str = '2.2') -> str:
         return _render_tagvalue(sbom, version)
     if format == 'json':
         return _render_json(sbom, version)
+    if format == 'json-ld':
+        return _render_jsonld(sbom, version)
     raise ValueError(f'unsupported SPDX format: {format!r}')
 
 
@@ -544,17 +783,121 @@ def _parse_json(text: str) -> SBOM:
     return SBOM(name=name, root=root, packages=packages, creator=creator)
 
 
+def _parse_jsonld(text: str) -> SBOM:
+    """Recover the scan-relevant parts of an SPDX 3.0 JSON-LD document: the
+    packages with their CPEs, the dependsOn graph and the not-affected VEX
+    statements (the inverse of _render_jsonld; like the other parsers it does not
+    recover everything, only what check needs)."""
+    graph = json.loads(text).get('@graph', [])
+
+    def _id(x: Any) -> str:
+        # A JSON-LD reference is the target element's spdxId (its @id). Conformant
+        # SPDX 3.0 writes it as a bare IRI string; tolerate the expanded
+        # {'@id': ...} object form too. The full id is what we key on -- no
+        # fragment stripping, so ids from a foreign namespace stay unique and
+        # cannot collide, and a 'to' that points at us matches our spdxId exactly.
+        if isinstance(x, str):
+            return x
+        if isinstance(x, dict):
+            return str(x.get('@id', '') or x.get('spdxId', ''))
+        return ''
+
+    def _as_list(x: Any) -> List[Any]:
+        # Relationship 'to'/'rootElement' are lists of references; tolerate a tool
+        # that serialized a single target as a bare value instead of a 1-item list.
+        if isinstance(x, list):
+            return x
+        return [] if x is None else [x]
+
+    def ids_of(element: Dict[str, Any], idtype: str) -> List[str]:
+        return [
+            x.get('identifier', '')
+            for x in element.get('externalIdentifier', [])
+            if x.get('externalIdentifierType') == idtype
+        ]
+
+    # vulnerability spdxId -> CVE id
+    vuln_cve: Dict[str, str] = {}
+    for e in graph:
+        if e.get('type') == 'security_Vulnerability':
+            vuln_cve[_id(e.get('spdxId'))] = next(iter(ids_of(e, 'cve')), '')
+
+    depends: Dict[str, List[str]] = {}
+    excludes: Dict[str, List[Dict[str, str]]] = {}
+    doc_name = ''
+    creator = ''
+    root = ''
+    for e in graph:
+        t = e.get('type')
+        if t == 'Relationship' and e.get('relationshipType') == 'dependsOn':
+            depends.setdefault(_id(e.get('from')), []).extend(_id(d) for d in _as_list(e.get('to')))
+        elif t == 'security_VexNotAffectedVulnAssessmentRelationship':
+            entry = {'cve': vuln_cve.get(_id(e.get('from')), ''), 'reason': e.get('security_impactStatement', '')}
+            for to in _as_list(e.get('to')):
+                excludes.setdefault(_id(to), []).append(entry)
+        elif t == 'SpdxDocument':
+            doc_name = e.get('name', '')
+            roots = _as_list(e.get('rootElement'))
+            if roots:
+                root = _id(roots[0])
+        elif t in ('SoftwareAgent', 'Tool') and not creator:
+            # The producing tool; used only to tell whether this SBOM came from
+            # esp-idf-sbom (see the provenance note in cmd_check).
+            creator = e.get('name', '')
+
+    packages: List[Package] = []
+    for e in graph:
+        if e.get('type') != 'software_Package':
+            continue
+        ref = _id(e.get('spdxId'))
+        # kind/name are cosmetic on the load path (check keys on
+        # package_name/cpes/version); derive them best-effort from the id
+        # fragment of our own KIND-name scheme, defaulting to COMPONENT.
+        kind, name = kind_and_name(ref.rsplit('#', 1)[-1])
+        cpes = ids_of(e, 'cpe23')
+        cve_keywords: List[str] = []
+        comment = e.get('comment', '')
+        if comment:
+            try:
+                data = yaml.safe_load(comment)
+            except yaml.YAMLError:
+                data = None
+            if isinstance(data, dict):
+                cve_keywords = data.get('cve-keywords', []) or []
+        packages.append(
+            Package(
+                ref=ref,
+                name=name,
+                package_name=e.get('name', ''),
+                kind=kind,
+                version=e.get('software_packageVersion', ''),
+                purl=e.get('software_packageUrl', ''),
+                cpes=cpes,
+                cve_exclude_list=excludes.get(ref, []),
+                cve_keywords=cve_keywords,
+                depends_on=depends.get(ref, []),
+            )
+        )
+
+    if not root and packages:
+        root = packages[0].ref
+    if not doc_name and packages:
+        doc_name = packages[0].package_name
+    return SBOM(name=doc_name, root=root, packages=packages, creator=creator)
+
+
 def parse(text: str, format: str = 'tagvalue') -> SBOM:
     """Parse an SPDX document into the format-neutral SBOM model.
 
     :param text: the SPDX document
-    :param format: 'tagvalue' for SPDX 2.2 tag/value (default) or 'json' for SPDX
-        2.2 JSON
+    :param format: 'tagvalue'/'json' for SPDX 2.x, 'json-ld' for SPDX 3.0 JSON-LD
     """
     if format == 'tagvalue':
         return _parse_tagvalue(text)
     if format == 'json':
         return _parse_json(text)
+    if format == 'json-ld':
+        return _parse_jsonld(text)
     raise ValueError(f'unsupported SPDX format: {format!r}')
 
 

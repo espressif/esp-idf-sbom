@@ -77,6 +77,8 @@ SBOM_FORMATS: Dict[str, Any] = {
     'spdx-tag-value@2.2': (spdx, 'tagvalue', '2.2'),
     'spdx-json': (spdx, 'json', '2.2'),
     'spdx-json@2.2': (spdx, 'json', '2.2'),
+    'spdx-json-ld': (spdx, 'json-ld', '3.0.1'),
+    'spdx-json-ld@3.0.1': (spdx, 'json-ld', '3.0.1'),
     'cyclonedx-json': (cyclonedx, 'json', '1.6'),
     'cyclonedx-json@1.6': (cyclonedx, 'json', '1.6'),
 }
@@ -719,7 +721,7 @@ def main(
         'Output SBOM format. A bare name selects the latest supported spec version; '
         'pin a specific version with an @version suffix (e.g. spdx-json@2.2). '
         'spdx-tag-value - SPDX 2.2 tag/value (default). spdx-json - SPDX 2.2 JSON. '
-        'cyclonedx-json - CycloneDX 1.6 JSON.'
+        'spdx-json-ld - SPDX 3.0 JSON-LD. cyclonedx-json - CycloneDX 1.6 JSON.'
     ),
 )
 @click.option(
