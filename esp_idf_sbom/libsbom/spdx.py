@@ -80,21 +80,22 @@ def _package_comment(pkg: Package) -> str:
     return comment
 
 
+def _file_spdxid(pkg: Package, file: File) -> str:
+    """The SPDXID of a file. Per-file SPDXIDs are prefixed to avoid collisions:
+    the project binary with the project name alone, every other package with its
+    name doubled. file.path is './' + relpath; the SPDXID is built from the bare
+    relpath.
+    """
+    relpath = file.path[2:] if file.path.startswith('./') else file.path
+    prefix = pkg.name if pkg.kind is PackageKind.PROJECT else f'{pkg.name}-{pkg.name}'
+    return 'SPDXRef-FILE-' + _sanitize_spdxid(f'{prefix}-{relpath}')
+
+
 def _render_file(pkg: Package, file: File) -> str:
     """Render a single File as SPDX File Information tag/values."""
-    # file.path is './' + relpath; the SPDXID is built from the bare relpath.
-    relpath = file.path[2:] if file.path.startswith('./') else file.path
-    # The builder prefixes per-file SPDXIDs to avoid collisions: the project
-    # binary with the project name alone, every other package with its name
-    # doubled (SBOMPackage.get_files passes f'{name}-{name}').
-    if pkg.kind is PackageKind.PROJECT:
-        prefix = pkg.name
-    else:
-        prefix = f'{pkg.name}-{pkg.name}'
-
     out = ''
     out += f'FileName: {file.path}\n'
-    out += f'SPDXID: SPDXRef-FILE-{_sanitize_spdxid(f"{prefix}-{relpath}")}\n'
+    out += f'SPDXID: {_file_spdxid(pkg, file)}\n'
     out += f'FileChecksum: SHA1: {file.sha1}\n'
     out += f'FileChecksum: SHA256: {file.sha256}\n'
 
@@ -214,16 +215,135 @@ def _render_tagvalue(sbom: SBOM, version: str) -> str:
     return out
 
 
+def _file_json(pkg: Package, file: File) -> Dict[str, Any]:
+    """Render a single File as an SPDX 2.2 JSON file object."""
+    file_obj: Dict[str, Any] = {
+        'SPDXID': _file_spdxid(pkg, file),
+        'fileName': file.path,
+        'checksums': [
+            {'algorithm': 'SHA1', 'checksumValue': file.sha1},
+            {'algorithm': 'SHA256', 'checksumValue': file.sha256},
+        ],
+        'licenseConcluded': file.license_concluded or 'NOASSERTION',
+        'licenseInfoInFiles': sorted(file.licenses_in_file) or ['NOASSERTION'],
+        'copyrightText': '\n'.join(sorted(file.copyrights)) or 'NOASSERTION',
+    }
+    if file.contributors:
+        file_obj['fileContributors'] = sorted(file.contributors)
+    return file_obj
+
+
+def _package_json(pkg: Package) -> Dict[str, Any]:
+    """Render a single Package as an SPDX 2.2 JSON package object."""
+    pkg_obj: Dict[str, Any] = {
+        'SPDXID': f'SPDXRef-{pkg.ref}',
+        'name': pkg.package_name,
+        'downloadLocation': pkg.download_url or 'NOASSERTION',
+        'filesAnalyzed': bool(pkg.files),
+        'supplier': pkg.supplier or 'NOASSERTION',
+        'licenseConcluded': simplify_licenses(pkg.licenses_concluded) or 'NOASSERTION',
+        'licenseDeclared': simplify_licenses(pkg.licenses_declared) or 'NOASSERTION',
+        'copyrightText': '\n'.join(sorted(pkg.copyrights)) or 'NOASSERTION',
+    }
+    if pkg.description:
+        pkg_obj['summary'] = pkg.description
+    if pkg.version:
+        pkg_obj['versionInfo'] = pkg.version
+    if pkg.originator:
+        pkg_obj['originator'] = pkg.originator
+
+    if pkg.files:
+        pkg_obj['packageVerificationCode'] = {
+            'packageVerificationCodeValue': _verification_code([f.sha1 for f in pkg.files])
+        }
+        pkg_obj['licenseInfoFromFiles'] = sorted(pkg.licenses_from_files) or ['NOASSERTION']
+        pkg_obj['hasFiles'] = [_file_spdxid(pkg, f) for f in pkg.files]
+
+    external_refs: List[Dict[str, str]] = []
+    if pkg.repository:
+        external_refs.append(
+            {'referenceCategory': 'OTHER', 'referenceType': 'repository', 'referenceLocator': pkg.repository}
+        )
+    for cpe in pkg.cpes:
+        external_refs.append({'referenceCategory': 'SECURITY', 'referenceType': 'cpe23Type', 'referenceLocator': cpe})
+    if pkg.purl:
+        external_refs.append(
+            {'referenceCategory': 'PACKAGE-MANAGER', 'referenceType': 'purl', 'referenceLocator': pkg.purl}
+        )
+    if external_refs:
+        pkg_obj['externalRefs'] = external_refs
+
+    comment = _package_comment(pkg)
+    if comment:
+        pkg_obj['comment'] = comment
+
+    if pkg.checksum_sha256:
+        pkg_obj['checksums'] = [{'algorithm': 'SHA256', 'checksumValue': pkg.checksum_sha256}]
+
+    return pkg_obj
+
+
+def _render_json(sbom: SBOM, version: str) -> str:
+    """Render the SBOM as an SPDX 2.2 JSON document.
+
+    The same data as the tag/value form, in the schema's canonical JSON shape:
+    relationships and files are top-level arrays (not nested under packages).
+    """
+    namespace = 'http://spdx.org/spdxdocs/' + _sanitize_spdxid(sbom.name) + '-' + str(uuid.uuid4())
+    created = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    relationships: List[Dict[str, str]] = [
+        {
+            'spdxElementId': 'SPDXRef-DOCUMENT',
+            'relationshipType': 'DESCRIBES',
+            'relatedSpdxElement': f'SPDXRef-{sbom.root}',
+        }
+    ]
+    files: List[Dict[str, Any]] = []
+    for pkg in sbom.packages:
+        for dep in pkg.depends_on:
+            relationships.append(
+                {
+                    'spdxElementId': f'SPDXRef-{pkg.ref}',
+                    'relationshipType': 'DEPENDS_ON',
+                    'relatedSpdxElement': f'SPDXRef-{dep}',
+                }
+            )
+        for file in pkg.files:
+            files.append(_file_json(pkg, file))
+
+    document: Dict[str, Any] = {
+        'spdxVersion': f'SPDX-{version}',
+        'dataLicense': 'CC0-1.0',
+        'SPDXID': 'SPDXRef-DOCUMENT',
+        'name': sbom.name,
+        'documentNamespace': namespace,
+        'creationInfo': {
+            'creators': [f'Tool: {sbom.creator}'],
+            'created': created,
+            'comment': 'ESP-IDF SBOM document in SPDX format',
+        },
+        'packages': [_package_json(pkg) for pkg in sbom.packages],
+        'relationships': relationships,
+    }
+    if files:
+        document['files'] = files
+
+    return json.dumps(document, indent=2)
+
+
 def render(sbom: SBOM, format: str = 'tagvalue', version: str = '2.2') -> str:
     """Render a format-neutral SBOM as an SPDX document.
 
     :param sbom: the SBOM model to serialize
-    :param format: 'tagvalue' for SPDX 2.x tag/value
+    :param format: 'tagvalue' or 'json' for SPDX 2.x
     :param version: the SPDX spec version to emit
     :returns: the serialized SPDX document
     """
     if format == 'tagvalue':
         return _render_tagvalue(sbom, version)
+    if format == 'json':
+        return _render_json(sbom, version)
     raise ValueError(f'unsupported SPDX format: {format!r}')
 
 
@@ -297,24 +417,24 @@ def _package_from_tags(spdxid: str, tags: Dict[str, List[str]]) -> Package:
     )
 
 
-def parse(text: str, format: str = 'tagvalue') -> SBOM:
-    """Parse an SPDX document into the format-neutral SBOM model."""
-    if format != 'tagvalue':
-        raise NotImplementedError('only SPDX tag/value parsing is implemented')
-
+def _parse_tagvalue(text: str) -> SBOM:
     raw = parse_packages(text)
     packages = [_package_from_tags(spdxid, tags) for spdxid, tags in raw.items()]
 
-    # Recover the document name and the DESCRIBES root ref from the header.
+    # Recover the document name, the DESCRIBES root ref and the producing tool
+    # from the header.
     name = ''
     root = ''
+    creator = ''
     for line in text.splitlines():
         line = line.strip()
         if not name and line.startswith('DocumentName:'):
             name = line.split(':', 1)[1].strip()
         elif not root and line.startswith('Relationship:') and ' DESCRIBES ' in line:
             root = _unref(line.split(' DESCRIBES ', 1)[1].strip())
-        if name and root:
+        elif not creator and line.startswith('Creator: Tool:'):
+            creator = line[len('Creator: Tool:') :].strip()
+        if name and root and creator:
             break
     # The project package is emitted first and is the DESCRIBES target; fall back
     # to it if the header did not carry the information.
@@ -323,7 +443,119 @@ def parse(text: str, format: str = 'tagvalue') -> SBOM:
     if not name and packages:
         name = packages[0].package_name
 
-    return SBOM(name=name, root=root, packages=packages)
+    return SBOM(name=name, root=root, packages=packages, creator=creator)
+
+
+def _comment_to_dict(comment: str) -> Dict[str, Any]:
+    """Parse a package comment into the cve-exclude-list / cve-keywords dict.
+    esp-idf-sbom stores that data as bare YAML in the comment; a comment from
+    another tool is ordinary prose, so anything that is not a YAML mapping is
+    treated as no data rather than allowed to raise. Tolerates a <text>...</text>
+    wrapper just in case."""
+    if not comment:
+        return {}
+    if comment.startswith('<text>') and comment.endswith('</text>'):
+        comment = comment[len('<text>') : -len('</text>')]
+    try:
+        data = yaml.safe_load(comment)
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _package_from_json(obj: Dict[str, Any], depends_on: List[str]) -> Package:
+    ref = _unref(obj.get('SPDXID', ''))
+    kind, name = kind_and_name(ref)
+
+    cpes: List[str] = []
+    purl = ''
+    repository = ''
+    for ext in obj.get('externalRefs', []):
+        category = ext.get('referenceCategory')
+        ref_type = ext.get('referenceType')
+        locator = ext.get('referenceLocator', '')
+        if category == 'SECURITY' and ref_type == 'cpe23Type':
+            cpes.append(locator)
+        elif ref_type == 'purl':
+            purl = locator
+        elif ref_type == 'repository':
+            repository = locator
+
+    checksum = ''
+    for entry in obj.get('checksums', []):
+        if entry.get('algorithm') == 'SHA256':
+            checksum = entry.get('checksumValue', '')
+
+    comment = _comment_to_dict(obj.get('comment', ''))
+    supplier = obj.get('supplier', '')
+    download_url = obj.get('downloadLocation', '')
+
+    return Package(
+        ref=ref,
+        name=name,
+        package_name=obj.get('name', ''),
+        kind=kind,
+        version=obj.get('versionInfo', ''),
+        description=obj.get('summary', ''),
+        supplier='' if supplier == 'NOASSERTION' else supplier,
+        originator=obj.get('originator', ''),
+        download_url='' if download_url == 'NOASSERTION' else download_url,
+        repository=repository,
+        purl=purl,
+        cpes=cpes,
+        checksum_sha256=checksum,
+        cve_exclude_list=comment.get('cve-exclude-list') or [],
+        cve_keywords=comment.get('cve-keywords') or [],
+        depends_on=depends_on,
+    )
+
+
+def _parse_json(text: str) -> SBOM:
+    document = json.loads(text)
+
+    root = ''
+    depends_on: Dict[str, List[str]] = {}
+    for rel in document.get('relationships', []):
+        rel_type = rel.get('relationshipType')
+        src = rel.get('spdxElementId', '')
+        dst = rel.get('relatedSpdxElement', '')
+        if rel_type == 'DESCRIBES' and src == 'SPDXRef-DOCUMENT':
+            root = _unref(dst)
+        elif rel_type == 'DEPENDS_ON':
+            depends_on.setdefault(src, []).append(_unref(dst))
+
+    packages = [
+        _package_from_json(obj, depends_on.get(obj.get('SPDXID', ''), [])) for obj in document.get('packages', [])
+    ]
+
+    # The producing tool, used only for the provenance note in cmd_check.
+    creator = ''
+    for c in document.get('creationInfo', {}).get('creators', []):
+        if isinstance(c, str) and c.startswith('Tool:'):
+            creator = c[len('Tool:') :].strip()
+            break
+
+    name = document.get('name', '')
+    if not root and packages:
+        root = packages[0].ref
+    if not name and packages:
+        name = packages[0].package_name
+
+    return SBOM(name=name, root=root, packages=packages, creator=creator)
+
+
+def parse(text: str, format: str = 'tagvalue') -> SBOM:
+    """Parse an SPDX document into the format-neutral SBOM model.
+
+    :param text: the SPDX document
+    :param format: 'tagvalue' for SPDX 2.2 tag/value (default) or 'json' for SPDX
+        2.2 JSON
+    """
+    if format == 'tagvalue':
+        return _parse_tagvalue(text)
+    if format == 'json':
+        return _parse_json(text)
+    raise ValueError(f'unsupported SPDX format: {format!r}')
 
 
 def parse_packages(buf: str) -> Dict[str, Dict[str, List[str]]]:
@@ -395,11 +627,7 @@ def parse_packages(buf: str) -> Dict[str, Dict[str, List[str]]]:
 
 
 def parse_package_comment(pkg: Dict[str, List[str]]) -> Dict[str, Any]:
-    comment_dict: Dict[str, Any] = {}
     if 'PackageComment' not in pkg:
-        return comment_dict
-
-    comment = pkg['PackageComment'][0]
-    comment = comment[len('<text>') : -len('</text>')]
-    comment_dict = yaml.safe_load(comment)
-    return comment_dict
+        return {}
+    # _comment_to_dict strips the <text> wrapper and tolerates non-YAML prose.
+    return _comment_to_dict(pkg['PackageComment'][0])

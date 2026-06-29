@@ -74,6 +74,8 @@ def no_sync_excluded_cves_option(func: Any) -> Any:
 SBOM_FORMATS: Dict[str, Any] = {
     'spdx-tag-value': (spdx, 'tagvalue', '2.2'),
     'spdx-tag-value@2.2': (spdx, 'tagvalue', '2.2'),
+    'spdx-json': (spdx, 'json', '2.2'),
+    'spdx-json@2.2': (spdx, 'json', '2.2'),
 }
 
 
@@ -713,7 +715,7 @@ def main(
     help=(
         'Output SBOM format. A bare name selects the latest supported spec version; '
         'pin a specific version with an @version suffix (e.g. spdx-json@2.2). '
-        'spdx-tag-value - SPDX 2.2 tag/value (default).'
+        'spdx-tag-value - SPDX 2.2 tag/value (default). spdx-json - SPDX 2.2 JSON.'
     ),
 )
 @click.option(

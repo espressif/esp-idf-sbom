@@ -312,6 +312,42 @@ def test_validate_sbom(hello_world_build: Path) -> None:
     run(['pyspdxtools', '-i', output_fn], check=True)
 
 
+def test_validate_sbom_json(hello_world_build: Path) -> None:
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.spdx.json'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    run(
+        [
+            sys.executable,
+            '-m',
+            'esp_idf_sbom',
+            'create',
+            '--format',
+            'spdx-json',
+            '--files',
+            'rem',
+            '-o',
+            output_fn,
+            proj_desc_path,
+        ],
+        check=True,
+    )
+    run(['pyspdxtools', '-i', output_fn], check=True)
+
+
+def test_check_sbom_json(hello_world_build: Path) -> None:
+    """check must accept an SPDX JSON SBOM (sbom.load auto-detects the format)."""
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.spdx.json'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', 'spdx-json', '-o', output_fn, proj_desc_path],
+        check=True,
+    )
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', '--local-db', output_fn])
+    assert p.returncode in [0, 1]
+
+
 def test_multiple_cpes(hello_world_build: Path) -> None:
     """Test that multiple CPE values can be specified in manifest file."""
     manifest = hello_world_build / 'main' / 'sbom.yml'
