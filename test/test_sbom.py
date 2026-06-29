@@ -348,6 +348,62 @@ def test_check_sbom_json(hello_world_build: Path) -> None:
     assert p.returncode in [0, 1]
 
 
+def test_validate_sbom_cyclonedx(hello_world_build: Path) -> None:
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.cdx.json'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', 'cyclonedx-json', '-o', output_fn, proj_desc_path],
+        check=True,
+    )
+    errors = JsonStrictValidator(SchemaVersion.V1_6).validate_str(output_fn.read_text())
+    assert errors is None, f'CycloneDX validation failed: {errors}'
+
+
+def test_check_sbom_cyclonedx(hello_world_build: Path) -> None:
+    """check must accept a CycloneDX SBOM (sbom.load auto-detects the format)."""
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.cdx.json'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', 'cyclonedx-json', '-o', output_fn, proj_desc_path],
+        check=True,
+    )
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', '--local-db', output_fn])
+    assert p.returncode in [0, 1]
+
+
+def _sbom_with_file():
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import File
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    f = File(path='./main/foo.c', sha1='a' * 40, sha256='b' * 64, license_concluded='MIT', copyrights={'Copyright X'})
+    proj = Package(
+        ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT, depends_on=['COMPONENT-lib']
+    )
+    lib = Package(
+        ref='COMPONENT-lib', name='lib', package_name='lib', kind=PackageKind.COMPONENT, version='2.0', files=[f]
+    )
+    return SBOM(name='app', root='PROJECT-app', packages=[proj, lib])
+
+
+def test_cyclonedx_renders_files() -> None:
+    """--files add: files must be emitted as nested CycloneDX components and validate."""
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    from esp_idf_sbom.libsbom import cyclonedx
+
+    text = cyclonedx.render(_sbom_with_file(), version='1.6')
+    assert '"type": "file"' in text
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+
+
 def test_multiple_cpes(hello_world_build: Path) -> None:
     """Test that multiple CPE values can be specified in manifest file."""
     manifest = hello_world_build / 'main' / 'sbom.yml'

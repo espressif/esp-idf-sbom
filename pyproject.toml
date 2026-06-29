@@ -48,6 +48,7 @@ dev = [
     "pytest",
     "czespressif",
     "spdx-tools>=0.8.0rc1",
+    "cyclonedx-python-lib",
     "jsonschema",
 ]
 
