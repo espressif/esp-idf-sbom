@@ -404,6 +404,61 @@ def test_cyclonedx_renders_files() -> None:
     assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
 
 
+def test_validate_sbom_spdx_jsonld(hello_world_build: Path) -> None:
+    """create --format spdx-json-ld must validate against the official SPDX 3.0.1 JSON schema."""
+    import urllib.request
+
+    import jsonschema
+
+    try:
+        with urllib.request.urlopen('https://spdx.org/schema/3.0.1/spdx-json-schema.json', timeout=30) as resp:
+            schema = json.loads(resp.read())
+    except Exception as e:
+        pytest.skip(f'cannot fetch the SPDX 3.0.1 schema: {e}')
+
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.spdx3.json'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', 'spdx-json-ld', '-o', output_fn, proj_desc_path],
+        check=True,
+    )
+    errors = list(jsonschema.Draft202012Validator(schema).iter_errors(json.loads(output_fn.read_text())))
+    assert not errors, f'SPDX 3.0 validation failed: {errors[:3]}'
+
+
+def test_check_sbom_spdx_jsonld(hello_world_build: Path) -> None:
+    """check must accept an SPDX 3.0 JSON-LD SBOM (sbom.load auto-detects the format)."""
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.spdx3.json'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', 'spdx-json-ld', '-o', output_fn, proj_desc_path],
+        check=True,
+    )
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', '--local-db', output_fn])
+    assert p.returncode in [0, 1]
+
+
+def test_spdx_jsonld_renders_files() -> None:
+    """--files add: files must be emitted as software_File elements and validate."""
+    import urllib.request
+
+    import jsonschema
+
+    from esp_idf_sbom.libsbom import spdx
+
+    text = spdx.render(_sbom_with_file(), format='json-ld', version='3.0.1')
+    assert '"software_File"' in text
+    try:
+        with urllib.request.urlopen('https://spdx.org/schema/3.0.1/spdx-json-schema.json', timeout=30) as resp:
+            schema = json.loads(resp.read())
+    except Exception as e:
+        pytest.skip(f'cannot fetch the SPDX 3.0.1 schema: {e}')
+    errors = list(jsonschema.Draft202012Validator(schema).iter_errors(json.loads(text)))
+    assert not errors, f'SPDX 3.0 file validation failed: {errors[:2]}'
+
+
 def test_multiple_cpes(hello_world_build: Path) -> None:
     """Test that multiple CPE values can be specified in manifest file."""
     manifest = hello_world_build / 'main' / 'sbom.yml'
