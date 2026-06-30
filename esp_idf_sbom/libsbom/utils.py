@@ -104,6 +104,12 @@ def pwalk(path: str, exclude_dirs: Optional[List[str]] = None) -> Iterator[Tuple
     exclude_dirs = ppaths(exclude_dirs)
 
     for root, dirs, files in os.walk(path):
+        # Sort in place so the walk is deterministic: dirs.sort() fixes the
+        # recursion order, files.sort() the per-directory file order. This keeps
+        # file and subpackage ordering byte-stable across runs, regardless of the
+        # order the filesystem happens to return entries in.
+        dirs.sort()
+        files.sort()
         root = ppath(root)
         if exclude_dirs and root in exclude_dirs:
             continue
