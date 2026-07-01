@@ -146,6 +146,11 @@ def cmd_check(args: Dict[str, Any]) -> int:
             cpes = utils.expand_cpe_aliases(cpes)
             nvd.cache_cves(cpes, keywords)
 
+        # Nudge about slow keyless online scanning once, before the progress bar,
+        # so the hint is not drawn over the bar (which redraws in place on stderr).
+        if not args['local_db'] and not os.environ.get('NVDAPIKEY'):
+            log.hint(nvd.APIKEY_HINT)
+
         log.eprint('Checking packages')
         with log.progress(
             total=len(packages),
@@ -400,6 +405,11 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                 if args['extended_scan']:
                     keywords += manifest.get('cve-keywords', [])
             nvd.cache_cves(cpes, keywords)
+
+        # Nudge about slow keyless online scanning once, before the progress bar,
+        # so the hint is not drawn over the bar (which redraws in place on stderr).
+        if not args['local_db'] and not os.environ.get('NVDAPIKEY'):
+            log.hint(nvd.APIKEY_HINT)
 
         log.eprint('Checking manifest files for vulnerabilities')
         with log.progress(
