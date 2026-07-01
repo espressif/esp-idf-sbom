@@ -146,6 +146,10 @@ def cmd_check(args: Dict[str, Any]) -> int:
             cpes = utils.expand_cpe_aliases(cpes)
             nvd.cache_cves(cpes, keywords)
 
+        # Report NVD API-key status once, before the progress bar, so the note and
+        # hint are not drawn over the bar (which redraws in place on stderr).
+        nvd.show_apikey_status(args['local_db'])
+
         log.eprint('Checking packages')
         with log.progress(
             total=len(packages),
@@ -407,6 +411,10 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                 if args['extended_scan']:
                     keywords += manifest.get('cve-keywords', [])
             nvd.cache_cves(cpes, keywords)
+
+        # Report NVD API-key status once, before the progress bar, so the note and
+        # hint are not drawn over the bar (which redraws in place on stderr).
+        nvd.show_apikey_status(args['local_db'])
 
         log.eprint('Checking manifest files for vulnerabilities')
         with log.progress(
