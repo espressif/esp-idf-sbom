@@ -161,36 +161,36 @@ def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '
 
     severity_dict = summary['cves_summary']['critical']
     table.add_row('[red]CRITICAL CVEs found:', ', '.join(severity_dict['cves']))
-    table.add_row('[red]Packages affect by CRITICAL CVEs:', ', '.join(severity_dict['packages']))
+    table.add_row('[red]Packages affected by CRITICAL CVEs:', ', '.join(severity_dict['packages']))
     table.add_row('[red]Number of CRITICAL CVEs:', str(severity_dict['count']), end_section=True)
 
     severity_dict = summary['cves_summary']['high']
     table.add_row('[dark_orange]HIGH CVEs found:', ', '.join(severity_dict['cves']))
-    table.add_row('[dark_orange]Packages affect by HIGH CVEs:', ', '.join(severity_dict['packages']))
+    table.add_row('[dark_orange]Packages affected by HIGH CVEs:', ', '.join(severity_dict['packages']))
     table.add_row('[dark_orange]Number of HIGH CVEs:', str(severity_dict['count']), end_section=True)
 
     severity_dict = summary['cves_summary']['medium']
     table.add_row('[yellow]MEDIUM CVEs found:', ', '.join(severity_dict['cves']))
-    table.add_row('[yellow]Packages affect by MEDIUM CVEs:', ', '.join(severity_dict['packages']))
+    table.add_row('[yellow]Packages affected by MEDIUM CVEs:', ', '.join(severity_dict['packages']))
     table.add_row('[yellow]Number of MEDIUM CVEs:', str(severity_dict['count']), end_section=True)
 
     severity_dict = summary['cves_summary']['low']
     table.add_row('[green]LOW CVEs found:', ', '.join(severity_dict['cves']))
-    table.add_row('[green]Packages affect by LOW CVEs:', ', '.join(severity_dict['packages']))
+    table.add_row('[green]Packages affected by LOW CVEs:', ', '.join(severity_dict['packages']))
     table.add_row('[green]Number of LOW CVEs:', str(severity_dict['count']), end_section=True)
 
     severity_dict = summary['cves_summary']['none']
     table.add_row('NONE CVEs found:', ', '.join(severity_dict['cves']))
-    table.add_row('Packages affect by NONE CVEs:', ', '.join(severity_dict['packages']))
+    table.add_row('Packages affected by NONE CVEs:', ', '.join(severity_dict['packages']))
     table.add_row('Number of NONE CVEs:', str(severity_dict['count']), end_section=True)
 
     severity_dict = summary['cves_summary']['unknown']
     table.add_row('UNKNOWN CVEs found:', ', '.join(severity_dict['cves']))
-    table.add_row('Packages affect by UNKNOWN CVEs:', ', '.join(severity_dict['packages']))
+    table.add_row('Packages affected by UNKNOWN CVEs:', ', '.join(severity_dict['packages']))
     table.add_row('Number of UNKNOWN CVEs:', str(severity_dict['count']), end_section=True)
 
     table.add_row('[bright_blue]All CVEs found:', ', '.join(summary['cves_summary']['all_cves']))
-    table.add_row('[bright_blue]All packages affect by CVEs:', ', '.join(summary['cves_summary']['all_packages']))
+    table.add_row('[bright_blue]All packages affected by CVEs:', ', '.join(summary['cves_summary']['all_packages']))
     table.add_row('[bright_blue]Total number of CVEs:', str(summary['cves_summary']['total_cves_count']))
 
     log.print(table, '\n')
