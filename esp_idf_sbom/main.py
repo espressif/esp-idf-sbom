@@ -9,6 +9,7 @@ import sys
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import NamedTuple
 
 import rich_click as click
 import yaml
@@ -65,31 +66,41 @@ def no_sync_excluded_cves_option(func: Any) -> Any:
     )(func)
 
 
-# Maps each create --format choice to (backend module, render encoding, spec
-# version). A bare name (e.g. spdx-json) is an alias for the latest supported
-# version of that format; pinning a specific version uses an @version suffix
-# (e.g. spdx-json@2.2). The bare alias may advance to a newer version on a major
-# esp-idf-sbom release (a breaking change), so pin name@version for reproducible
-# output. Adding a format or a version is just another row here; --format derives
-# its accepted values from these keys.
-SBOM_FORMATS: Dict[str, Any] = {
-    'spdx-tag-value': (spdx, 'tagvalue', '2.2'),
-    'spdx-tag-value@2.2': (spdx, 'tagvalue', '2.2'),
-    'spdx-json': (spdx, 'json', '2.2'),
-    'spdx-json@2.2': (spdx, 'json', '2.2'),
-    'spdx-json-ld': (spdx, 'json-ld', '3.0.1'),
-    'spdx-json-ld@3.0.1': (spdx, 'json-ld', '3.0.1'),
-    'cyclonedx-json': (cyclonedx, 'json', '1.6'),
-    'cyclonedx-json@1.6': (cyclonedx, 'json', '1.6'),
+class SbomFormat(NamedTuple):
+    """One create --format choice: the backend that renders it, the backend's
+    render encoding, the spec version to emit, and the conventional file
+    extension (used e.g. by the idf.py wrapper to name the output file)."""
+
+    backend: Any
+    encoding: str
+    version: str
+    ext: str
+
+
+# Maps each create --format choice to its SbomFormat. A bare name (e.g. spdx-json)
+# is an alias for the latest supported version of that format; pinning a specific
+# version uses an @version suffix (e.g. spdx-json@2.2). The bare alias may advance
+# to a newer version on a major esp-idf-sbom release (a breaking change), so pin
+# name@version for reproducible output. Adding a format or a version is just another
+# row here; --format derives its accepted values from these keys.
+SBOM_FORMATS: Dict[str, SbomFormat] = {
+    'spdx-tag-value': SbomFormat(spdx, 'tagvalue', '2.2', '.spdx'),
+    'spdx-tag-value@2.2': SbomFormat(spdx, 'tagvalue', '2.2', '.spdx'),
+    'spdx-json': SbomFormat(spdx, 'json', '2.2', '.spdx.json'),
+    'spdx-json@2.2': SbomFormat(spdx, 'json', '2.2', '.spdx.json'),
+    'spdx-json-ld': SbomFormat(spdx, 'json-ld', '3.0.1', '.spdx.jsonld'),
+    'spdx-json-ld@3.0.1': SbomFormat(spdx, 'json-ld', '3.0.1', '.spdx.jsonld'),
+    'cyclonedx-json': SbomFormat(cyclonedx, 'json', '1.6', '.cdx.json'),
+    'cyclonedx-json@1.6': SbomFormat(cyclonedx, 'json', '1.6', '.cdx.json'),
 }
 
 
 def cmd_create(args: Dict[str, Any]) -> int:
-    backend, encoding, version = SBOM_FORMATS[args['format']]
+    fmt = SBOM_FORMATS[args['format']]
     model = sbom.build(args, args['input_file'])
     # markup=False: the SBOM is data, not a rich-markup message; without it rich
     # strips bracketed content (e.g. JSON arrays, or any '[...]' inside a value).
-    log.print(backend.render(model, format=encoding, version=version), markup=False)
+    log.print(fmt.backend.render(model, format=fmt.encoding, version=fmt.version), markup=False)
     return 0
 
 
