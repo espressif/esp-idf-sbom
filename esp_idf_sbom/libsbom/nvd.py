@@ -32,13 +32,14 @@ environmental variable. For more information please see
 https://nvd.nist.gov/developers/start-here, section "Rate Limits"."""
 WARNED = False
 
-# One-time, actionable nudge printed on the online NVD REST API path when no API
-# key is set. Unlike HINT above (printed reactively on a 403), this is proactive:
-# with the shorter keyed delay a keyless scan now stays right at NVD's rate-limit
-# boundary and rarely trips a 403, so the 403 hint seldom fires and the speedup
-# would otherwise be discoverable only via the README. Emitted with log.hint() to
-# stderr so it never pollutes the report on stdout; suppressed by --quiet and by
-# --no-hint/SBOM_NO_HINT.
+# One-time, actionable nudge for the online NVD REST API path when no API key is
+# set. Unlike HINT above (printed reactively on a 403), this is proactive: with the
+# shorter keyed delay a keyless scan now stays right at NVD's rate-limit boundary
+# and rarely trips a 403, so the 403 hint seldom fires and the speedup would
+# otherwise be discoverable only via the README. The check and manifest-check
+# commands emit it once up front, before their progress bar, so it is not drawn
+# over the bar; log.hint() keeps it on stderr (never polluting the stdout report)
+# and honours --quiet and --no-hint/SBOM_NO_HINT.
 APIKEY_HINT = (
     'Querying the online NVD REST API without an API key is slow due to NVD rate '
     'limits. Set the NVDAPIKEY environment variable to speed up scanning about 10x '
@@ -46,7 +47,6 @@ APIKEY_HINT = (
     'use --local-db to scan against a local NVD mirror and avoid the REST API '
     'entirely. Use --no-hint to silence this message.'
 )
-APIKEY_HINTED = False
 
 # Delay between consecutive NVD REST API requests, in seconds. NVD enforces a
 # rolling 30 second window: 5 requests without an API key and 50 with one. The
@@ -106,13 +106,7 @@ def nvd_request(params: str) -> List[Dict[str, Any]]:
     unavailable_cnt = 0
     apikey = os.environ.get('NVDAPIKEY')
     delay = NVD_REQUEST_DELAY_WITH_APIKEY if apikey else NVD_REQUEST_DELAY
-    global WARNED, APIKEY_HINTED
-
-    # Nudge once per run that scanning the online NVD REST API without an API key
-    # is slow. Only reached on this REST path, so --local-db scans stay quiet.
-    if not apikey and not APIKEY_HINTED:
-        log.hint(APIKEY_HINT)
-        APIKEY_HINTED = True
+    global WARNED
 
     while True:
         url = f'{base_url}?{params}&startIndex={start_idx}'

@@ -3,7 +3,7 @@
 
 import sys
 
-from esp_idf_sbom.sbom import main
+from esp_idf_sbom.main import main
 
 if __name__ == '__main__':
     sys.exit(main())
