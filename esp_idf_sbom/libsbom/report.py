@@ -37,8 +37,14 @@ empty_record = {
 
 
 def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '', proj_ver: str = '') -> None:
-    # Sort records based on CVSS base score
-    records_sorted = sorted(records, key=lambda r: float(r['cvss_base_score'] or 0), reverse=True)
+    # Order records by CVSS base score (highest first), breaking ties by package
+    # name and version. The NO and SKIPPED groups carry no score, so every record
+    # in them compares equal on score; without the name/version tie-breaker they
+    # would keep the scan (traversal) order and appear unsorted to the user. Since
+    # Python's sort is stable, sorting by name/version first and by score second
+    # yields "score descending, then name/version ascending".
+    records_sorted = sorted(records, key=lambda r: (r['pkg_name'], r['pkg_version']))
+    records_sorted = sorted(records_sorted, key=lambda r: float(r['cvss_base_score'] or 0), reverse=True)
     record_list = [r for r in records_sorted if r['vulnerable'] == 'YES']
     record_list += [r for r in records_sorted if r['vulnerable'] == 'MAYBE']
     record_list += [r for r in records_sorted if r['vulnerable'] == 'EXCLUDED']
