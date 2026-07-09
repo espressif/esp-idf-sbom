@@ -114,6 +114,8 @@ CVE-2026-42214: Related to NotepadNext detectLanguageFromExtension() interpolati
 CVE-2026-1677: Related to mbedTLS usage in Zephyr. Not a vulnerability in mbedTLS
 CVE-2026-7210: Related to libexpat usage in cpython. Not a vulnerability in libexpat
 CVE-2026-42587: Related to Netty's HttpContentDecompressor/DelegatingDecompressorFrameListener silently ignoring maxAllocation for br/zstd/snappy encodings. Not a vulnerability in the zlib C library
+CVE-2026-10659: Related to the Zephyr RTOS Dhara FTL disk driver (drivers/disk/ftl_dhara.c) writing flash error codes through a NULL dhara_error_t pointer. Not a vulnerability in the Dhara library itself
+CVE-2026-53337: Related to the Linux kernel bonding driver (NULL pointer dereference in bond_do_ioctl). Not a vulnerability in the C++ fmtlib/fmt library
 
 CVE-2025-27840:
   cpes:
@@ -124,3 +126,29 @@ CVE-2025-27840:
     commands are primarily used for debugging purposes and pose no real, known
     security threat. Technical details were shared in this
     https://developer.espressif.com/blog/2025/03/esp32-bluetooth-clearing-the-air/
+
+CVE-2025-55297:
+  cpes:
+    - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+      versionStartIncluding: '5.2.6'
+      versionEndExcluding: '5.3'
+  reason: >-
+    Memory overflows in the BluFi example, fixed on the ESP-IDF 5.2 release
+    line since v5.2.6 (commits bf50c0c197af and e65cf7ea2a2b). NVD's affected
+    range for the 5.2 line ([5.2, 5.3.3)) was assigned before v5.2.6 was
+    released and never narrowed, so the fixed v5.2.6/v5.2.7 releases and the
+    release/v5.2 branch are still reported. The other release lines are
+    matched correctly (fixed in 5.0.9, 5.1.6, 5.3.3 and 5.4.1).
+    https://github.com/espressif/esp-idf/security/advisories/GHSA-9w88-r2vm-qfc4
+
+CVE-2026-40930:
+  cpes:
+    - cpe: cpe:2.3:a:pnggroup:libpng:*:*:*:*:*:*:*:*
+      versionEndExcluding: '1.8.0'
+    - cpe: cpe:2.3:a:libpng:libpng:*:*:*:*:*:*:*:*
+      versionEndExcluding: '1.8.0'
+  reason: >-
+    Chunk-discard flaws in the push-mode APNG parser introduced in libpng
+    1.8.0. Older release lines, such as the 1.6.x line bundled by the
+    idf-extra-components libpng component, do not contain the APNG push-mode
+    code.

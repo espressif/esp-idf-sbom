@@ -164,6 +164,13 @@ def cmd_check(args: Dict[str, Any]) -> int:
                         package_added = True
 
                 if args['extended_scan']:
+                    # Keyword hits are not tied to a single CPE, so honor the
+                    # globally-applicable exclusions for any of the package
+                    # CPEs. Manifest-level entries take precedence.
+                    keyword_exclude_list: Dict[str, str] = {}
+                    for cpe in cpes:
+                        keyword_exclude_list.update(nvd.get_excluded_cves_for_cpe(cpe))
+                    keyword_exclude_list.update(manifest_exclude_list)
                     for keyword in keywords:
                         vulns = nvd.check_keyword(keyword, args['local_db'])
                         for vuln in vulns:
@@ -173,7 +180,7 @@ def cmd_check(args: Dict[str, Any]) -> int:
                                 existing_record['keyword'] += f', {keyword}'
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, manifest_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
+                                vuln, keyword_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True
@@ -435,6 +442,13 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                         package_added = True
 
                 if args['extended_scan']:
+                    # Keyword hits are not tied to a single CPE, so honor the
+                    # globally-applicable exclusions for any of the package
+                    # CPEs. Manifest-level entries take precedence.
+                    keyword_exclude_list: Dict[str, str] = {}
+                    for cpe in cpes:
+                        keyword_exclude_list.update(nvd.get_excluded_cves_for_cpe(cpe))
+                    keyword_exclude_list.update(manifest_exclude_list)
                     for keyword in keywords:
                         vulns = nvd.check_keyword(keyword, args['local_db'])
                         for vuln in vulns:
@@ -444,7 +458,7 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                                 existing_record['keyword'] += f', {keyword}'
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, manifest_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
+                                vuln, keyword_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True
