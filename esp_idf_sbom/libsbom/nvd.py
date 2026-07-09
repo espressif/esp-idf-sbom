@@ -24,29 +24,24 @@ from esp_idf_sbom.libsbom import git
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import utils
 
-HINT = """\
-NVD REST API five requests in a rolling 30 second window reached.
-To overcome this limitation you may request NVD API key at
-https://nvd.nist.gov/developers/request-an-api-key and set the NVDAPIKEY
-environmental variable. For more information please see
-https://nvd.nist.gov/developers/start-here, section "Rate Limits"."""
-WARNED = False
-
-# One-time, actionable nudge printed on the online NVD REST API path when no API
-# key is set. Unlike HINT above (printed reactively on a 403), this is proactive:
-# with the shorter keyed delay a keyless scan now stays right at NVD's rate-limit
-# boundary and rarely trips a 403, so the 403 hint seldom fires and the speedup
-# would otherwise be discoverable only via the README. Emitted with log.hint() to
-# stderr so it never pollutes the report on stdout; suppressed by --quiet and by
-# --no-hint/SBOM_NO_HINT.
+# Messages about the NVD API key, shown once by show_apikey_status() before the
+# online scan's progress bar (never over it). The two status notes are factual and
+# printed with log.note() in either case; they honour --quiet. APIKEY_HINT is an
+# actionable nudge, printed with log.hint() only when no key is set, and is
+# additionally silenced by --no-hint/SBOM_NO_HINT.
+APIKEY_STATUS_PRESENT = (
+    "NVD API key detected (NVDAPIKEY); NVD's higher rate limit is in effect: "
+    '50 requests per 30 s, about 10x faster scanning.'
+)
+APIKEY_STATUS_ABSENT = (
+    "No NVD API key set; NVD's keyless rate limit is in effect: 5 requests per 30 s (slower scanning)."
+)
 APIKEY_HINT = (
-    'Querying the online NVD REST API without an API key is slow due to NVD rate '
-    'limits. Set the NVDAPIKEY environment variable to speed up scanning about 10x '
-    '(request a free key at https://nvd.nist.gov/developers/request-an-api-key), or '
-    'use --local-db to scan against a local NVD mirror and avoid the REST API '
+    'Set the NVDAPIKEY environment variable to speed up scanning about 10x '
+    '(request a free key at https://nvd.nist.gov/developers/request-an-api-key), '
+    'or use --local-db to scan against a local NVD mirror and avoid the REST API '
     'entirely. Use --no-hint to silence this message.'
 )
-APIKEY_HINTED = False
 
 # Delay between consecutive NVD REST API requests, in seconds. NVD enforces a
 # rolling 30 second window: 5 requests without an API key and 50 with one. The
@@ -91,6 +86,23 @@ EXCLUDED_CVES_FILE_ENV = 'SBOM_EXCLUDED_CVES_FILE'
 LOCAL_EXCLUDED_CVES_FILE = 'excluded_cves.yaml'
 
 
+def show_apikey_status(local_db: bool) -> None:
+    """Report NVD API-key status once, before the online scan's progress bar.
+
+    Prints a factual note about the API-key state and the NVD rate limit in
+    effect, and, when no key is set, an actionable hint on how to speed the scan
+    up (the hint honours --no-hint). A --local-db scan does not touch the REST
+    API, so it stays quiet.
+    """
+    if local_db:
+        return
+    if os.environ.get('NVDAPIKEY'):
+        log.note(APIKEY_STATUS_PRESENT)
+    else:
+        log.note(APIKEY_STATUS_ABSENT)
+        log.hint(APIKEY_HINT)
+
+
 def nvd_request(params: str) -> List[Dict[str, Any]]:
     """Query the NVD REST API and paginate through all results.
 
@@ -106,13 +118,6 @@ def nvd_request(params: str) -> List[Dict[str, Any]]:
     unavailable_cnt = 0
     apikey = os.environ.get('NVDAPIKEY')
     delay = NVD_REQUEST_DELAY_WITH_APIKEY if apikey else NVD_REQUEST_DELAY
-    global WARNED, APIKEY_HINTED
-
-    # Nudge once per run that scanning the online NVD REST API without an API key
-    # is slow. Only reached on this REST path, so --local-db scans stay quiet.
-    if not apikey and not APIKEY_HINTED:
-        log.hint(APIKEY_HINT)
-        APIKEY_HINTED = True
 
     while True:
         url = f'{base_url}?{params}&startIndex={start_idx}'
@@ -133,11 +138,11 @@ def nvd_request(params: str) -> List[Dict[str, Any]]:
 
         except urllib.error.HTTPError as e:
             if e.code == 403:
-                # https://nvd.nist.gov/developers/start-here Rate Limits
-                if not WARNED:
-                    log.warn(HINT)
-                    WARNED = True
-                log.warn('Sleeping for 30 seconds...')
+                # NVD returns 403 when the rolling-window rate limit is exceeded.
+                # The API-key status/hint is already shown up front by
+                # show_apikey_status(), so here we only explain the backoff. See
+                # https://nvd.nist.gov/developers/start-here, "Rate Limits".
+                log.warn('NVD REST API rate limit reached (HTTP 403). Sleeping for 30 seconds before retrying...')
                 time.sleep(30)
                 continue
             elif e.code == 503 and unavailable_cnt < 3:

@@ -27,7 +27,10 @@ def hello_world_build(ctx: dict = {'tmpdir': None}) -> Path:
     tmpdir = TemporaryDirectory()
     hello_world_path = Path(os.environ['IDF_PATH']) / 'examples' / 'get-started' / 'hello_world'
     copy_tree(str(hello_world_path), tmpdir.name, verbose=0)
-    run([sys.executable, IDF_PY_PATH, 'fullclean'], cwd=tmpdir.name, check=True)
+    # Build for esp32 explicitly: set-target clears the build dir and regenerates
+    # sdkconfig, so the target does not depend on whatever the source tree carries
+    # (e.g. a manual set-target). Tests like test_manifest_expression assert on it.
+    run([sys.executable, IDF_PY_PATH, 'set-target', 'esp32'], cwd=tmpdir.name, check=True)
     run([sys.executable, IDF_PY_PATH, 'build'], cwd=tmpdir.name, check=True)
     ctx['tmpdir'] = tmpdir
     return Path(tmpdir.name)
@@ -103,6 +106,22 @@ def test_sbom_subpackages(hello_world_build: Path) -> None:
     assert 'TEST_SUBSUBPACKAGE' in p.stdout
 
     shutil.rmtree(subpackage_path)
+
+
+def test_rem_subpackages_keeps_submodules(hello_world_build: Path) -> None:
+    """--rem-subpackages must drop only subpackages, not submodules. They are
+    independent: submodules come from git, subpackages from sbom.yml."""
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    p = run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '--rem-subpackages', proj_desc_path],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    # submodules are still reported as their own packages ...
+    assert 'SPDXRef-SUBMODULE-' in p.stdout
+    # ... while subpackages are removed.
+    assert 'SPDXRef-SUBPACKAGE-' not in p.stdout
 
 
 def test_referenced_manifests(hello_world_build: Path) -> None:
@@ -294,6 +313,153 @@ def test_validate_sbom(hello_world_build: Path) -> None:
     proj_desc_path = hello_world_build / 'build' / 'project_description.json'
     run([sys.executable, '-m', 'esp_idf_sbom', 'create', '--files', 'rem', '-o', output_fn, proj_desc_path], check=True)
     run(['pyspdxtools', '-i', output_fn], check=True)
+
+
+def test_validate_sbom_json(hello_world_build: Path) -> None:
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.spdx.json'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    run(
+        [
+            sys.executable,
+            '-m',
+            'esp_idf_sbom',
+            'create',
+            '--format',
+            'spdx-json',
+            '--files',
+            'rem',
+            '-o',
+            output_fn,
+            proj_desc_path,
+        ],
+        check=True,
+    )
+    run(['pyspdxtools', '-i', output_fn], check=True)
+
+
+def test_check_sbom_json(hello_world_build: Path) -> None:
+    """check must accept an SPDX JSON SBOM (sbom.load auto-detects the format)."""
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.spdx.json'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', 'spdx-json', '-o', output_fn, proj_desc_path],
+        check=True,
+    )
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', '--local-db', output_fn])
+    assert p.returncode in [0, 1]
+
+
+def test_validate_sbom_cyclonedx(hello_world_build: Path) -> None:
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.cdx.json'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', 'cyclonedx-json', '-o', output_fn, proj_desc_path],
+        check=True,
+    )
+    errors = JsonStrictValidator(SchemaVersion.V1_6).validate_str(output_fn.read_text())
+    assert errors is None, f'CycloneDX validation failed: {errors}'
+
+
+def test_check_sbom_cyclonedx(hello_world_build: Path) -> None:
+    """check must accept a CycloneDX SBOM (sbom.load auto-detects the format)."""
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.cdx.json'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', 'cyclonedx-json', '-o', output_fn, proj_desc_path],
+        check=True,
+    )
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', '--local-db', output_fn])
+    assert p.returncode in [0, 1]
+
+
+def _sbom_with_file():
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import File
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    f = File(path='./main/foo.c', sha1='a' * 40, sha256='b' * 64, license_concluded='MIT', copyrights={'Copyright X'})
+    proj = Package(
+        ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT, depends_on=['COMPONENT-lib']
+    )
+    lib = Package(
+        ref='COMPONENT-lib', name='lib', package_name='lib', kind=PackageKind.COMPONENT, version='2.0', files=[f]
+    )
+    return SBOM(name='app', root='PROJECT-app', packages=[proj, lib])
+
+
+def test_cyclonedx_renders_files() -> None:
+    """--files add: files must be emitted as nested CycloneDX components and validate."""
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    from esp_idf_sbom.libsbom import cyclonedx
+
+    text = cyclonedx.render(_sbom_with_file(), version='1.6')
+    assert '"type": "file"' in text
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+
+
+def test_validate_sbom_spdx_jsonld(hello_world_build: Path) -> None:
+    """create --format spdx-json-ld must validate against the official SPDX 3.0.1 JSON schema."""
+    import urllib.request
+
+    import jsonschema
+
+    try:
+        with urllib.request.urlopen('https://spdx.org/schema/3.0.1/spdx-json-schema.json', timeout=30) as resp:
+            schema = json.loads(resp.read())
+    except Exception as e:
+        pytest.skip(f'cannot fetch the SPDX 3.0.1 schema: {e}')
+
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.spdx3.json'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', 'spdx-json-ld', '-o', output_fn, proj_desc_path],
+        check=True,
+    )
+    errors = list(jsonschema.Draft202012Validator(schema).iter_errors(json.loads(output_fn.read_text())))
+    assert not errors, f'SPDX 3.0 validation failed: {errors[:3]}'
+
+
+def test_check_sbom_spdx_jsonld(hello_world_build: Path) -> None:
+    """check must accept an SPDX 3.0 JSON-LD SBOM (sbom.load auto-detects the format)."""
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.spdx3.json'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', 'spdx-json-ld', '-o', output_fn, proj_desc_path],
+        check=True,
+    )
+    p = run([sys.executable, '-m', 'esp_idf_sbom', 'check', '--local-db', output_fn])
+    assert p.returncode in [0, 1]
+
+
+def test_spdx_jsonld_renders_files() -> None:
+    """--files add: files must be emitted as software_File elements and validate."""
+    import urllib.request
+
+    import jsonschema
+
+    from esp_idf_sbom.libsbom import spdx
+
+    text = spdx.render(_sbom_with_file(), format='json-ld', version='3.0.1')
+    assert '"software_File"' in text
+    try:
+        with urllib.request.urlopen('https://spdx.org/schema/3.0.1/spdx-json-schema.json', timeout=30) as resp:
+            schema = json.loads(resp.read())
+    except Exception as e:
+        pytest.skip(f'cannot fetch the SPDX 3.0.1 schema: {e}')
+    errors = list(jsonschema.Draft202012Validator(schema).iter_errors(json.loads(text)))
+    assert not errors, f'SPDX 3.0 file validation failed: {errors[:2]}'
 
 
 def test_multiple_cpes(hello_world_build: Path) -> None:
@@ -849,6 +1015,27 @@ def test_derive_purl() -> None:
     assert derive_purl('https://www.lua.org/', '5.4') == ''
     assert derive_purl('https://github.com/foo/bar', '') == ''
     assert derive_purl('', '1.0') == ''
+
+
+def test_get_files_deduplicates_symlinks() -> None:
+    """A symlink and its target both surface in the directory walk, and prelpath
+    resolves the symlink to the target, so without deduplication they collapse to
+    the same relative path and the same file SPDXID (the toolchain's
+    xtensa-esp-elf-cc -> -gcc is the real case). get_files keeps one relpath per
+    file so per-file SPDXIDs stay unique."""
+    from esp_idf_sbom.libsbom import sbom
+
+    tmpdir = TemporaryDirectory()
+    base = Path(tmpdir.name)
+    (base / 'real.txt').write_text('content')
+    (base / 'link.txt').symlink_to(base / 'real.txt')
+
+    obj = sbom.SBOMObject({'file_tags': False}, {})
+    files = obj.get_files(str(base))
+    paths = [f.file.path for f in files]
+
+    assert len(paths) == len(set(paths)), f'duplicate file paths: {paths}'
+    assert paths == ['./real.txt']
 
 
 def test_expand_cpe_aliases() -> None:

@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 # file at a path is the marker that identifies the path as an IDF root.
 IDF_VERSION_CMAKE = 'tools/cmake/version.cmake'
 
-# Three CPEs that represent ESP-IDF in NVD. These are emitted on the framework
+# Four CPEs that represent ESP-IDF in NVD. These are emitted on the framework
 # package unconditionally regardless of target chip; NVD's CPE dictionary
 # registers them as Espressif's catch-all identifiers (no variant-specific
 # hardware or firmware CPEs exist for esp32-s2/s3/c3/c6/h2/p4 etc.).
@@ -104,6 +104,12 @@ def pwalk(path: str, exclude_dirs: Optional[List[str]] = None) -> Iterator[Tuple
     exclude_dirs = ppaths(exclude_dirs)
 
     for root, dirs, files in os.walk(path):
+        # Sort in place so the walk is deterministic: dirs.sort() fixes the
+        # recursion order, files.sort() the per-directory file order. This keeps
+        # file and subpackage ordering byte-stable across runs, regardless of the
+        # order the filesystem happens to return entries in.
+        dirs.sort()
+        files.sort()
         root = ppath(root)
         if exclude_dirs and root in exclude_dirs:
             continue
@@ -275,7 +281,7 @@ def read_idf_version(idf_path: str) -> Optional[str]:
 def build_idf_framework_cpes(version: str) -> List[str]:
     """Return the list of CPEs to attach to the ESP-IDF framework package.
 
-    The three CPEs are emitted unconditionally; the ``hw`` and ``os`` ones are
+    The four CPEs are emitted unconditionally; the ``hw`` and ``os`` ones are
     Espressif's NVD catch-alls and apply to any ESP-IDF build regardless of
     target chip (NVD has not registered variant-specific CPEs).
     """
