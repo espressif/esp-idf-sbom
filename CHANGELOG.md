@@ -1,3 +1,34 @@
+## v1.3.0 (2026-07-15)
+
+### ✨ New Features
+
+- let the idf.py sbom-create wrapper select the output format *(Frantisek Hrbata - 9ef09e9)*
+- add SPDX 3.0 JSON-LD output (create --format spdx-json-ld) *(Frantisek Hrbata - a84fdb6)*
+- add CycloneDX 1.6 JSON output (create --format cyclonedx-json) *(Frantisek Hrbata - ff13994)*
+- add SPDX 2.2 JSON output and a create --format option *(Frantisek Hrbata - 589637e)*
+- scan NA (unversioned) CPEs under --extended-scan *(Frantisek Hrbata - 69f6ba6)*
+- add CPE vendor aliases so renamed-vendor CVEs are found *(Frantisek Hrbata - 768d644)*
+- hint about the NVD API key when scanning online without one *(Frantisek Hrbata - 2cee56c)*
+
+### 🐛 Bug Fixes
+
+- sort vulnerability report entries by package within each group *(Frantisek Hrbata - 6cd9756)*
+- correct "affect by" to "affected by" in the vulnerability report *(Frantisek Hrbata - f02f145)*
+- report NVD API-key status up front and drop the 403 key hint *(Frantisek Hrbata - 0d5cae4)*
+- sort the directory walk so SBOM file and package order is deterministic *(Frantisek Hrbata - 88c6da3)*
+- honor global CPE-scoped exclusions for keyword-matched CVEs *(Frantisek Hrbata - c97a184)*
+- report NVD's Primary CVSS score instead of a Secondary one *(Frantisek Hrbata - 611721b)*
+
+### 📖 Documentation
+
+- rework the README for format-neutral, multi-format output *(Frantisek Hrbata - 5f34ac8)*
+
+### 🔧 Code Refactoring
+
+- switch to a format-neutral SBOM model *(Frantisek Hrbata - dbdd908)*
+- rename --extended-scan option dest to extended_scan *(Frantisek Hrbata - c7d4fe0)*
+
+
 ## v1.2.0 (2026-06-24)
 
 ### ✨ New Features
