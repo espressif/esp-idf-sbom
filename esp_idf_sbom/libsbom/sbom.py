@@ -597,7 +597,9 @@ class SBOMObject:
 
         # idf_component.yml may contains special sbom section
         idf_component_sbom = idf_component_yml.get('sbom', dict())
-        mft.fix(idf_component_sbom)
+        # The component version at the idf_component.yml root is passed as
+        # the default version for the sbom section.
+        mft.fix(idf_component_sbom, idf_component_yml.get('version', ''))
         mft.validate(idf_component_sbom, sbom_path, directory)
         self.update_manifest(manifest, idf_component_sbom, sbom_path)
 
