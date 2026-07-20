@@ -228,6 +228,69 @@ def test_sbom_manifest_from_idf_component(hello_world_build: Path) -> None:
     manifest.unlink()
 
 
+def test_idf_component_sbom_version_placeholder() -> None:
+    """The component version at the idf_component.yml root is injected into
+    the sbom section by fix(), since the sbom section itself usually carries
+    no version key. This makes the {} placeholder in cpe/purl values expand
+    from the root version and the version available for reports. Covers both
+    the manifest commands path (mft.get_manifests) and the SBOM create path
+    (mft.fix with the root version)."""
+    from esp_idf_sbom.libsbom import mft
+
+    tmpdir = TemporaryDirectory()
+    manifest = Path(tmpdir.name) / 'idf_component.yml'
+    content = """
+              version: "2.4.1"
+              sbom:
+                cpe: cpe:2.3:a:espressif:led_strip:{}:*:*:*:*:*:*:*
+                purl: pkg:generic/espressif/led_strip@{}
+                supplier: 'Organization: Espressif Systems (Shanghai) CO LTD'
+                cve-exclude-list:
+                  - cve: CVE-2023-1234
+                    reason: Description why this package is not vulnerable
+              """
+    manifest.write_text(dedent(content))
+
+    # get_manifests extracts the sbom section, converts cpe into a list and
+    # expands the {} placeholder from the root version; validate must accept
+    # the result.
+    manifests = mft.get_manifests([str(manifest)])
+    assert len(manifests) == 1
+    m = manifests[0]
+    mft.validate(m, m['_src'], m['_dst'], die=False)
+    assert m['version'] == '2.4.1'
+    assert m['cpe'] == ['cpe:2.3:a:espressif:led_strip:2.4.1:*:*:*:*:*:*:*']
+    assert m['purl'] == 'pkg:generic/espressif/led_strip@2.4.1'
+
+    # SBOM create path: fix() applied to the extracted sbom section with the
+    # root version.
+    yml = mft.load(str(manifest))
+    sub = yml.get('sbom', dict())
+    mft.fix(sub, yml.get('version', ''))
+    assert sub['version'] == '2.4.1'
+    assert sub['cpe'] == ['cpe:2.3:a:espressif:led_strip:2.4.1:*:*:*:*:*:*:*']
+
+    # A version key inside the sbom section takes precedence over the root one.
+    sub = {'version': '9.9.9', 'cpe': 'cpe:2.3:a:espressif:led_strip:{}:*:*:*:*:*:*:*'}
+    mft.fix(sub, '2.4.1')
+    assert sub['version'] == '9.9.9'
+    assert sub['cpe'] == ['cpe:2.3:a:espressif:led_strip:9.9.9:*:*:*:*:*:*:*']
+
+    # An empty manifest is kept empty, so idf_component.yml without the sbom
+    # section is still skipped by get_manifests.
+    manifest.write_text('version: "2.4.1"\n')
+    assert mft.get_manifests([str(manifest)]) == []
+
+    p = run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'manifest', 'validate', str(manifest)],
+        capture_output=True,
+        text=True,
+    )
+    assert p.returncode == 0, p.stderr
+
+    manifest.unlink()
+
+
 def test_cve_exclude_list() -> None:
     """Test that CVE-2020-27209 is reported for the manifest file, then add
     it to cve-exclude-list and test it's not reported."""

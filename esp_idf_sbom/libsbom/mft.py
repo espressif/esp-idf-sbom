@@ -60,8 +60,21 @@ def build_idf_framework_manifest(idf_path: str) -> Dict[str, Any]:
 licensing = get_spdx_licensing()
 
 
-def fix(manifest: Dict[str, Any]) -> None:
-    """Fix manifest keys, e.g. convert string entries to list."""
+def fix(manifest: Dict[str, Any], version: str = '') -> None:
+    """Fix manifest keys, e.g. convert string entries to list.
+
+    :param manifest: Manifest dictionary.
+    :param version:  Default version added to the manifest if it does not have
+                     its own version key. This is the case for the sbom section
+                     from idf_component.yml, where the component version is
+                     stored at the manifest root. Aside from the {} placeholder
+                     expansion in cpe and purl values, the injected version is
+                     also used e.g. in reports. An empty manifest is kept
+                     empty, meaning no sbom information available.
+    """
+
+    if version and manifest and 'version' not in manifest:
+        manifest['version'] = version
 
     # Convert cpe into a list
     if 'cpe' in manifest and type(manifest['cpe']) is not list:
@@ -229,8 +242,13 @@ def get_manifests(sources: List[str]) -> List[Dict[str, Any]]:
             manifest_file = os.path.basename(manifest_path)
             manifest = load(manifest_path)
             if manifest_file == 'idf_component.yml':
-                # extract the sbom part from idf_component manifest
+                # Extract the sbom part from idf_component manifest and fix it,
+                # since the fix() done as part of load() touches top-level keys
+                # only. The component version at the idf_component.yml root is
+                # passed as the default version for the sbom section.
+                component_version = manifest.get('version', '')
                 manifest = manifest.get('sbom', dict())
+                fix(manifest, component_version)
             if not manifest:
                 continue
         else:
