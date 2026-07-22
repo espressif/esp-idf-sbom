@@ -291,6 +291,27 @@ def test_idf_component_sbom_version_placeholder() -> None:
     manifest.unlink()
 
 
+def test_update_manifest_embeded_path_first_wins() -> None:
+    """_embeded_path must stay tied to the source that first supplied the
+    "manifests" list. A later source that also carries a "manifests" key must
+    not overwrite it, otherwise the recorded origin would disagree with the
+    kept list and embedded manifests would report the wrong source."""
+    from esp_idf_sbom.libsbom.sbom import SBOMObject
+
+    obj = SBOMObject({}, {})
+    dst = SBOMObject.EMPTY_MANIFEST.copy()
+
+    # first source with a "manifests" list sets both the list and its origin
+    obj.update_manifest(dst, {'manifests': [{'path': 'a.yml', 'dest': 'a'}]}, '/first/sbom.yml')
+    assert dst['manifests'] == [{'path': 'a.yml', 'dest': 'a'}]
+    assert dst['_embeded_path'] == '/first/sbom.yml'
+
+    # a later source also carrying "manifests" leaves both untouched (first-wins)
+    obj.update_manifest(dst, {'manifests': [{'path': 'b.yml', 'dest': 'b'}]}, '/second/sbom.yml')
+    assert dst['manifests'] == [{'path': 'a.yml', 'dest': 'a'}]
+    assert dst['_embeded_path'] == '/first/sbom.yml'
+
+
 def test_cve_exclude_list() -> None:
     """Test that CVE-2020-27209 is reported for the manifest file, then add
     it to cve-exclude-list and test it's not reported."""

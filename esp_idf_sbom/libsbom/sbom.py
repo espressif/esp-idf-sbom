@@ -561,10 +561,9 @@ class SBOMObject:
         if not embedded_path:
             return
 
-        # For embedded manifests, maintain a record of their origin in the
-        # private _embedded_path key. This is used during manifest validation
-        # to identify its exact source.
-        if 'manifests' in src:
+        # Record the origin of the "manifests" list for get_subpackages,
+        # first-wins to match how the list itself is filled (keep them in sync).
+        if 'manifests' in src and not dst.get('_embeded_path'):
             dst['_embeded_path'] = embedded_path
 
     def get_manifest(self, directory: str) -> Dict[str, Any]:
