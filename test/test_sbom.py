@@ -384,6 +384,27 @@ def test_update_manifest_embeded_path_first_wins() -> None:
     assert dst['_embeded_path'] == '/first/sbom.yml'
 
 
+def test_pwalk_prunes_excluded_subtree(tmp_path: Path) -> None:
+    """pwalk must skip an excluded directory AND everything under it, so a
+    subpackage's nested files are not also collected for the parent package."""
+    from esp_idf_sbom.libsbom import utils
+
+    (tmp_path / 'top.txt').write_text('')
+    (tmp_path / 'sub' / 'deeper').mkdir(parents=True)
+    (tmp_path / 'sub' / 'direct.txt').write_text('')
+    (tmp_path / 'sub' / 'deeper' / 'nested.txt').write_text('')
+
+    collected = {
+        os.path.relpath(os.path.join(root, f), str(tmp_path))
+        for root, _dirs, files in utils.pwalk(str(tmp_path), [str(tmp_path / 'sub')])
+        for f in files
+    }
+
+    # only the parent's own file; both the subpackage's direct and nested files
+    # are pruned (before the fix, sub/deeper/nested.txt leaked in)
+    assert collected == {'top.txt'}
+
+
 def test_cve_exclude_list() -> None:
     """Test that CVE-2020-27209 is reported for the manifest file, then add
     it to cve-exclude-list and test it's not reported."""

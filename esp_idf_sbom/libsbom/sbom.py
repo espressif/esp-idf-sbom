@@ -898,7 +898,12 @@ class SBOMPackage(SBOMObject):
 
         submodules_info_dict = {i['path']: i for i in submodules_info}
 
-        for root, dirs, files in utils.pwalk(self.dir, [self.dir]):
+        own_dir = utils.ppath(self.dir)
+        for root, dirs, files in utils.pwalk(self.dir):
+            # The package's own directory is not one of its subpackages; skip it
+            # but keep descending into its subdirectories to find real ones.
+            if root == own_dir:
+                continue
             pkg = None
             # submodules_info_dict is only populated when submodules are kept
             # (not rem_submodules), so membership alone is the right gate here --
