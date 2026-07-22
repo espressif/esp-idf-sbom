@@ -291,6 +291,78 @@ def test_idf_component_sbom_version_placeholder() -> None:
     manifest.unlink()
 
 
+def test_find_orphan_manifests(tmp_path: Path) -> None:
+    """find_orphan_manifests returns all sbom_<name>.yml files (each becomes a
+    virtual package) and does not treat a plain sbom.yml as an orphan."""
+    from esp_idf_sbom.libsbom.sbom import SBOMObject
+
+    obj = SBOMObject({}, {})
+
+    # none present
+    assert obj.find_orphan_manifests(str(tmp_path)) == []
+
+    # one orphan -> returned
+    foo = tmp_path / 'sbom_foo.yml'
+    foo.write_text('name: FOO\n')
+    assert obj.find_orphan_manifests(str(tmp_path)) == [str(foo)]
+
+    # a plain sbom.yml is handled by the normal path, not as an orphan
+    (tmp_path / 'sbom.yml').write_text('name: BAR\n')
+    assert obj.find_orphan_manifests(str(tmp_path)) == [str(foo)]
+
+    # more than one orphan -> all returned, sorted
+    bar = tmp_path / 'sbom_bar.yml'
+    bar.write_text('name: BAR\n')
+    assert obj.find_orphan_manifests(str(tmp_path)) == sorted([str(foo), str(bar)])
+
+
+def test_get_manifest_adopts_orphans_as_virtpackages(tmp_path: Path) -> None:
+    """A managed component (.component_hash present) whose idf_component.yml lost
+    its "sbom" section on upload still ships the referenced sbom_<name>.yml
+    file(s). get_manifest registers each as a virtual package and leaves the
+    component's own identity untouched (no squashing)."""
+    from esp_idf_sbom.libsbom.sbom import SBOMObject
+
+    comp = tmp_path / 'espressif__orphanlib'
+    comp.mkdir()
+    # published idf_component.yml: the sbom section was stripped on upload
+    (comp / 'idf_component.yml').write_text('version: "1.2.3"\ndescription: managed component\n')
+    # marker written by the component manager when a managed component is installed
+    (comp / '.component_hash').write_text('deadbeef')
+    # two orphaned, previously-referenced manifests still shipped in the package
+    (comp / 'sbom_orphanlib.yml').write_text('name: orphanlib\ncpe: cpe:2.3:a:orphanlib:orphanlib:1.0:*:*:*:*:*:*:*\n')
+    (comp / 'sbom_otherlib.yml').write_text('name: otherlib\ncpe: cpe:2.3:a:otherlib:otherlib:2.0:*:*:*:*:*:*:*\n')
+
+    manifest = SBOMObject({}, {}).get_manifest(str(comp))
+
+    # each orphan is registered as a virtual package, not squashed onto the component
+    assert manifest['virtpackages'] == ['sbom_orphanlib.yml', 'sbom_otherlib.yml']
+    # the component keeps its own identity and gains no CPE of its own
+    assert manifest['version'] == '1.2.3'
+    assert manifest['description'] == 'managed component'
+    assert manifest['cpe'] == []
+    # the shared EMPTY_MANIFEST list must not have been mutated in place
+    assert SBOMObject.EMPTY_MANIFEST['virtpackages'] == []
+
+
+def test_get_manifest_ignores_orphan_without_component_hash(tmp_path: Path) -> None:
+    """Without a .component_hash (a source checkout, not a managed component), an
+    orphaned sbom_<name>.yml is NOT adopted; wiring stays the component's job."""
+    from esp_idf_sbom.libsbom.sbom import SBOMObject
+
+    comp = tmp_path / 'orphanlib'
+    comp.mkdir()
+    (comp / 'idf_component.yml').write_text('version: "1.2.3"\ndescription: source component\n')
+    (comp / 'sbom_orphanlib.yml').write_text('name: orphanlib\ncpe: cpe:2.3:a:orphanlib:orphanlib:1.0:*:*:*:*:*:*:*\n')
+    # note: no .component_hash
+
+    manifest = SBOMObject({}, {}).get_manifest(str(comp))
+
+    assert manifest['virtpackages'] == []
+    assert manifest['cpe'] == []
+    assert manifest['description'] == 'source component'
+
+
 def test_update_manifest_embeded_path_first_wins() -> None:
     """_embeded_path must stay tied to the source that first supplied the
     "manifests" list. A later source that also carries a "manifests" key must

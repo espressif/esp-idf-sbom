@@ -602,6 +602,19 @@ class SBOMObject:
         mft.validate(idf_component_sbom, sbom_path, directory)
         self.update_manifest(manifest, idf_component_sbom, sbom_path)
 
+        # A managed component (.component_hash present) whose published
+        # idf_component.yml lost its "sbom" section: adopt each orphaned
+        # sbom_<name>.yml as a virtual package. See the commit message.
+        if (
+            directory not in self.REFERENCED_MANIFESTS
+            and not sbom_yml
+            and not idf_component_sbom
+            and os.path.isfile(utils.pjoin(directory, '.component_hash'))
+        ):
+            orphans = [utils.prelpath(p, directory) for p in self.find_orphan_manifests(directory)]
+            # list(...) not append: manifest is a shallow copy of EMPTY_MANIFEST.
+            manifest['virtpackages'] = list(manifest['virtpackages']) + orphans
+
         # try to fill missing info dirrectly from idf_component.yml
         self.update_manifest(manifest, idf_component_yml, sbom_path)
 
@@ -611,6 +624,19 @@ class SBOMObject:
                 manifest['supplier'] = 'Person: ' + ', '.join(idf_component_yml['maintainers'])
 
         return manifest
+
+    def find_orphan_manifests(self, directory: str) -> List[str]:
+        """Return sorted paths of orphaned sbom_<name>.yml files in directory."""
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            return []
+
+        return sorted(
+            utils.pjoin(directory, name)
+            for name in names
+            if name.startswith('sbom_') and name.endswith('.yml') and os.path.isfile(utils.pjoin(directory, name))
+        )
 
     def include_files(self, repo: Optional[str] = None, url: Optional[str] = None, ver: Optional[str] = None) -> bool:
         """Check if package files should be included or not, based on user's
