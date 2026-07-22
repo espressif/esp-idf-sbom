@@ -699,8 +699,10 @@ class SBOMPackage(SBOMObject):
         all_subpackages = self.get_subpackages()
         self.subpackages = [subpkg for subpkg in all_subpackages if subpkg.include]
 
-        # exclude subpackage paths if any
-        exclude_dirs = [subpkg.dir for subpkg in all_subpackages]
+        # Exclude subpackage/submodule dirs so their files are not double-counted.
+        # Skip virtual packages: they own no files and their dir is the component
+        # dir itself for a root-level orphan, so excluding it would lose files.
+        exclude_dirs = [subpkg.dir for subpkg in all_subpackages if not isinstance(subpkg, SBOMVirtpackage)]
 
         self.files = self.get_files(self.dir, exclude_dirs)
 
