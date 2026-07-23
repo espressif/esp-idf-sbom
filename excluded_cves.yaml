@@ -164,7 +164,7 @@ CVE-2024-5290: Related to Ubuntu wpa_supplicant
 CVE-2020-22283:
     cpes:
       - cpe: cpe:2.3:a:lwip_project:lwip:*:*:*:*:*:*:*:*
-        versionEndExcluding: '2.2.0'
+        versionStartIncluding: '2.1.3'
     reason: >-
       ICMPv6 out-of-bounds read (savannah #58553) in
       icmp6_send_response_with_addrs_and_netif(). Fixed upstream by commits
