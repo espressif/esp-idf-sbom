@@ -561,10 +561,9 @@ class SBOMObject:
         if not embedded_path:
             return
 
-        # For embedded manifests, maintain a record of their origin in the
-        # private _embedded_path key. This is used during manifest validation
-        # to identify its exact source.
-        if 'manifests' in src:
+        # Record the origin of the "manifests" list for get_subpackages,
+        # first-wins to match how the list itself is filled (keep them in sync).
+        if 'manifests' in src and not dst.get('_embeded_path'):
             dst['_embeded_path'] = embedded_path
 
     def get_manifest(self, directory: str) -> Dict[str, Any]:
@@ -603,6 +602,19 @@ class SBOMObject:
         mft.validate(idf_component_sbom, sbom_path, directory)
         self.update_manifest(manifest, idf_component_sbom, sbom_path)
 
+        # A managed component (.component_hash present) whose published
+        # idf_component.yml lost its "sbom" section: adopt each orphaned
+        # sbom_<name>.yml as a virtual package. See the commit message.
+        if (
+            directory not in self.REFERENCED_MANIFESTS
+            and not sbom_yml
+            and not idf_component_sbom
+            and os.path.isfile(utils.pjoin(directory, '.component_hash'))
+        ):
+            orphans = [utils.prelpath(p, directory) for p in self.find_orphan_manifests(directory)]
+            # list(...) not append: manifest is a shallow copy of EMPTY_MANIFEST.
+            manifest['virtpackages'] = list(manifest['virtpackages']) + orphans
+
         # try to fill missing info dirrectly from idf_component.yml
         self.update_manifest(manifest, idf_component_yml, sbom_path)
 
@@ -612,6 +624,19 @@ class SBOMObject:
                 manifest['supplier'] = 'Person: ' + ', '.join(idf_component_yml['maintainers'])
 
         return manifest
+
+    def find_orphan_manifests(self, directory: str) -> List[str]:
+        """Return sorted paths of orphaned sbom_<name>.yml files in directory."""
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            return []
+
+        return sorted(
+            utils.pjoin(directory, name)
+            for name in names
+            if name.startswith('sbom_') and name.endswith('.yml') and os.path.isfile(utils.pjoin(directory, name))
+        )
 
     def include_files(self, repo: Optional[str] = None, url: Optional[str] = None, ver: Optional[str] = None) -> bool:
         """Check if package files should be included or not, based on user's
@@ -700,8 +725,10 @@ class SBOMPackage(SBOMObject):
         all_subpackages = self.get_subpackages()
         self.subpackages = [subpkg for subpkg in all_subpackages if subpkg.include]
 
-        # exclude subpackage paths if any
-        exclude_dirs = [subpkg.dir for subpkg in all_subpackages]
+        # Exclude subpackage/submodule dirs so their files are not double-counted.
+        # Skip virtual packages: they own no files and their dir is the component
+        # dir itself for a root-level orphan, so excluding it would lose files.
+        exclude_dirs = [subpkg.dir for subpkg in all_subpackages if not isinstance(subpkg, SBOMVirtpackage)]
 
         self.files = self.get_files(self.dir, exclude_dirs)
 
@@ -871,7 +898,12 @@ class SBOMPackage(SBOMObject):
 
         submodules_info_dict = {i['path']: i for i in submodules_info}
 
-        for root, dirs, files in utils.pwalk(self.dir, [self.dir]):
+        own_dir = utils.ppath(self.dir)
+        for root, dirs, files in utils.pwalk(self.dir):
+            # The package's own directory is not one of its subpackages; skip it
+            # but keep descending into its subdirectories to find real ones.
+            if root == own_dir:
+                continue
             pkg = None
             # submodules_info_dict is only populated when submodules are kept
             # (not rem_submodules), so membership alone is the right gate here --
