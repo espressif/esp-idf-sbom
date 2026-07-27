@@ -14,6 +14,8 @@ the [National Vulnerability Database][4] (NVD) based on the
 - [Creating SBOM](#creating-sbom)
 - [Checking vulnerabilities](#checking-vulnerabilities)
 - [Excluding CVEs](#excluding-cves)
+  - [ESP-IDF tree local exclusions](#esp-idf-tree-local-exclusions)
+  - [Project-local exclusions](#project-local-exclusions)
 - [Usage example](#usage-example)
 - [SBOM layout](#sbom-layout)
 - [Output formats](#output-formats)
@@ -200,22 +202,25 @@ ID, and each value is either:
   handled for the listed CPEs and version ranges; the scan still lists it, marked
   as *excluded* with the given reason.
 
-The same list can be extended per repository and per revision by placing an
-`excluded_cves.yaml` file, in the same format, at the root of the scanned
-ESP-IDF tree. Its entries are merged into the global list for that scan only
-(`manifest check` and SBOM generation alike), and on a duplicate CVE ID the
-local entry wins. The file is read from the scanned tree, so it does not need to
-be the upstream esp-idf-sbom repository.
+The global list can be extended at two local levels by placing an
+`excluded_cves.yaml` file in the same format at the appropriate root directory.
+In both cases entries are merged into the global list for that scan only, and on
+a duplicate CVE ID the local entry wins.
 
-This is meant for cases where a CVE cannot be distinguished from an affected
-release by version alone. A release branch keeps the version of the last
-released ESP-IDF until the next release is cut (for example `release/v6.0` still
-reports 6.0.1 even though 6.0.1 is out), and NVD lists exactly that version as
-affected. A version-scoped entry in the global file cannot tell the fixed branch
-apart from the genuinely affected release without also hiding the CVE for users
-still on that release. Because the repository-local file lives in the tree, the
-fix and the exclusion ride on the release branch together, while the affected
-release tag predates them and is still reported.
+### ESP-IDF tree local exclusions
+
+Place `excluded_cves.yaml` at the root of the ESP-IDF tree to extend the
+exclusion list for both `manifest check` and SBOM generation (`create`). This
+is the right level for ESP-IDF maintainers: the file lives in the IDF tree
+itself, so the exclusion and the fix can ride on a release branch together.
+
+This is useful when a CVE cannot be distinguished from an affected release by
+version alone. A release branch keeps the version of the last released ESP-IDF
+until the next release is cut (for example `release/v6.0` still reports 6.0.1
+even though 6.0.1 is out), and NVD lists exactly that version as affected. A
+version-scoped entry in the global file cannot tell the fixed branch apart from
+the genuinely affected release without also hiding the CVE for users still on
+that release.
 
 ```yaml
 # <ESP-IDF root>/excluded_cves.yaml
@@ -227,10 +232,34 @@ CVE-2026-45160:
     lists as affected) until 6.0.2 is released.
 ```
 
-For this use prefer the scoped `cpes` form over the plain-string form: the
-scoped form keeps the CVE visible in the report as *excluded* with a reason,
-while the string form drops it from the scan output entirely. Once the fix ships
-in a bumped version, NVD no longer matches it and the entry can be removed.
+### Project-local exclusions
+
+Place `excluded_cves.yaml` at the root of your ESP-IDF project (the directory
+that contains `CMakeLists.txt` and whose `build/` directory holds
+`project_description.json`) to extend the exclusion list for SBOM generation
+only (`create` command). This is the right level for application developers: the
+file stays in the project repository and applies whenever that project's SBOM is
+generated, without affecting other projects or `manifest check` runs.
+
+Use this to suppress CVEs that do not apply to your specific firmware build --
+for example because a vulnerable code path is disabled by your sdkconfig, or
+because your hardware variant is not affected.
+
+```yaml
+# <project root>/excluded_cves.yaml
+CVE-2025-12345:
+  cpes:
+    - cpe: cpe:2.3:a:example:libfoo:2.3.1:*:*:*:*:*:*:*
+  reason: >-
+    The vulnerable feature is disabled in this project's configuration
+    (CONFIG_LIBFOO_FEATURE_X is not set).
+```
+
+For either local file, prefer the scoped `cpes` form over the plain-string
+form: the scoped form keeps the CVE visible in the report as *excluded* with a
+reason, while the string form drops it from the scan output entirely. Once the
+fix ships in a bumped version, NVD no longer matches it and the entry can be
+removed.
 
 
 ## Usage example

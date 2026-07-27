@@ -1617,6 +1617,12 @@ def build(args: Dict[str, Any], proj_desc_path: str) -> SBOM:
     if idf_path:
         nvd.merge_local_excluded_cves(idf_path)
 
+    # Honor a project-local excluded_cves.yaml at the project root before
+    # any package is built.
+    project_path = proj_desc.get('project_path', '')
+    if project_path:
+        nvd.merge_local_excluded_cves(project_path)
+
     project = SBOMProject(args, proj_desc)
 
     packages: List[Package] = []
