@@ -160,6 +160,9 @@ CVE-2026-64612: Related to libcupsfilters and cups-filters
 CVE-2026-47695: Related to CC Tweaked which is a mod for Minecraft that adds programmable computers, turtles and more to the game
 CVE-2026-55990: Related to NLnet Labs Unbound (a validating, recursive, caching DNS resolver)
 CVE-2024-5290: Related to Ubuntu wpa_supplicant
+CVE-2026-64313: Related to the Linux kernel crypto/ecc.c carry overflow, introduced when the code was extracted from micro-ecc's muladd() into separate mul_64_64()/add_128_128() helpers. Not a vulnerability in micro-ecc itself
+CVE-2026-51244: Related to schreibfaul1 ESP32-audioI2S, a third party Arduino library. Buffer overflow in UnpackFrameHeader() of its bundled Helix MP3 decoder. Not a vulnerability in ESP-IDF
+CVE-2026-66038: Related to FFmpeg's LCL/ZLIB video decoder (libavcodec/lcldec.c) exposing uninitialized heap memory. Not a vulnerability in the zlib C library
 
 CVE-2020-22283:
     cpes:
