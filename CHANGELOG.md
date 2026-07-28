@@ -1,3 +1,15 @@
+## v1.3.1 (2026-07-23)
+
+### 🐛 Bug Fixes
+
+- prune the whole excluded subtree in pwalk *(Frantisek Hrbata - adc67c9)*
+- recover orphaned sbom manifests of managed components *(Frantisek Hrbata - 4c20ef3)*
+- do not exclude virtual package dirs from the component files *(Frantisek Hrbata - 054a4b5)*
+- keep _embeded_path in sync with the manifests list it describes *(Frantisek Hrbata - ebcd86b)*
+- correct CVE-2020-22283 exclusion version range *(Frantisek Hrbata - ac6e240)*
+- use the component version in the sbom section from idf_component.yml *(Frantisek Hrbata - b528a75)*
+
+
 ## v1.3.0 (2026-07-15)
 
 ### ✨ New Features
