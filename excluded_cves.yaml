@@ -163,6 +163,9 @@ CVE-2024-5290: Related to Ubuntu wpa_supplicant
 CVE-2026-64313: Related to the Linux kernel crypto/ecc.c carry overflow, introduced when the code was extracted from micro-ecc's muladd() into separate mul_64_64()/add_128_128() helpers. Not a vulnerability in micro-ecc itself
 CVE-2026-51244: Related to schreibfaul1 ESP32-audioI2S, a third party Arduino library. Buffer overflow in UnpackFrameHeader() of its bundled Helix MP3 decoder. Not a vulnerability in ESP-IDF
 CVE-2026-66038: Related to FFmpeg's LCL/ZLIB video decoder (libavcodec/lcldec.c) exposing uninitialized heap memory. Not a vulnerability in the zlib C library
+CVE-2026-51272: Related to schreibfaul1 ESP32-audioI2S, a third party Arduino library. Heap buffer overflow in latinToUTF8() of its Audio.cpp. Not a vulnerability in ESP-IDF
+CVE-2026-11841: Related to SICK AG AppEngine Fileaccess HTTP feature exposing a critical filesystem directory (advisory SCA-2026-0010). Not a vulnerability in Lua itself
+CVE-2026-62845: Related to Kamaji (Kubernetes Hosted Control Plane Manager), builds SQL identifiers with Go's fmt.Sprintf, not the C++ fmtlib/fmt library
 
 CVE-2020-22283:
     cpes:
