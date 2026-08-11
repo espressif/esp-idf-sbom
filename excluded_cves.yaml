@@ -177,3 +177,6 @@ CVE-2020-22283:
       489405839ae0 and 488d4ad2460c (lwIP 2.1.3/2.2.0), further hardened by
       2bf8fcd7c240; all present as ancestors in the vendored esp-lwip fork. NVD's
       CPE has no fixed-version boundary ("git head"), causing the version match.
+
+CVE-2026-8718: Related to Zephyr's socket layer, missing optlen validation in tls_opt_dtls_peer_connection_id_value_get(). Not a vulnerability in mbedTLS itself
+CVE-2026-71969: Related to OP-TEE OS (<= 4.10.0), unsigned length underflow in the RSA NOPAD paths of its mbedTLS backend and SE050 driver. Not a vulnerability in mbedTLS itself
