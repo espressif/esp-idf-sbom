@@ -180,3 +180,16 @@ CVE-2020-22283:
 
 CVE-2026-8718: Related to Zephyr's socket layer, missing optlen validation in tls_opt_dtls_peer_connection_id_value_get(). Not a vulnerability in mbedTLS itself
 CVE-2026-71969: Related to OP-TEE OS (<= 4.10.0), unsigned length underflow in the RSA NOPAD paths of its mbedTLS backend and SE050 driver. Not a vulnerability in mbedTLS itself
+
+CVE-2026-71235: Related to Magistrala's Rules Engine, whose Lua script engine (re/lua.go) preloads db, ioutil, an HTTP client and filepath without any input validation. Not a vulnerability in Lua itself
+CVE-2026-18598: Related to GL.iNet GL-MT3000 (<= 4.4.5), command injection through the module argument of logread.get_system_log in its oui-httpd Lua RPC plugin. Not a vulnerability in Lua itself
+CVE-2026-18599: Related to GL.iNet GL-MT3000 (<= 4.4.5), command injection through the record_size argument of logread.set_config in its oui-httpd Lua RPC plugin. Not a vulnerability in Lua itself
+CVE-2026-18600: Related to GL.iNet GL-MT3000 (<= 4.4.5), command injection through the switch argument of network.switch_info/network.switch_status in its oui-httpd Lua RPC plugin. Not a vulnerability in Lua itself
+CVE-2026-63177: Related to cisagov Malcolm (< 26.07.0), whose Nginx OpenResty Lua RBAC layer matches the unnormalized ngx.var.request_uri and falls open on a traversal segment. Not a vulnerability in Lua itself
+CVE-2026-50472: Related to the Windows LUAFV (LUA File Virtualization) filter driver, a local privilege escalation matched on the "LUA" prefix of the driver name. Not a vulnerability in Lua itself
+CVE-2026-70630: Related to FFmpeg's Screenpresso decoder (libavcodec/screenpresso.c), which copies a full frame without checking how many bytes the zlib stream produced. Not a vulnerability in the zlib C library
+CVE-2026-70631: Related to FFmpeg's TIFF decoder (libavcodec/tiff.c), whose tiff_unpack_zlib() memcpy()s all declared rows regardless of how many bytes zlib decompressed. Not a vulnerability in the zlib C library
+CVE-2026-29035: Related to CivetWeb's read_websocket() writing a 4-byte zlib sync trailer out of bounds when permessage-deflate is negotiated with USE_ZLIB and MG_EXPERIMENTAL_INTERFACES. Not a vulnerability in the zlib C library
+CVE-2026-58045: Related to Node.js (22.x, 24.x, 26.x), a spoofed TypedArray byteLength reaching an assertion in the synchronous node:zlib bindings. Not a vulnerability in the zlib C library
+CVE-2026-69659: Related to ash-project ash (Elixir), which passes a client-supplied pagination cursor to :erlang.binary_to_term/2 that transparently inflates zlib-compressed Erlang terms. Not a vulnerability in the zlib C library
+CVE-2026-71276: Related to Magistrala's message-readers API, which interpolates an unvalidated query-string value into raw SQL with Go's fmt.Sprintf. Not a vulnerability in the C++ fmtlib/fmt library
