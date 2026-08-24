@@ -194,3 +194,6 @@ CVE-2026-58045: Related to Node.js (22.x, 24.x, 26.x), a spoofed TypedArray byte
 CVE-2026-69659: Related to ash-project ash (Elixir), which passes a client-supplied pagination cursor to :erlang.binary_to_term/2 that transparently inflates zlib-compressed Erlang terms. Not a vulnerability in the zlib C library
 CVE-2026-71276: Related to Magistrala's message-readers API, which interpolates an unvalidated query-string value into raw SQL with Go's fmt.Sprintf. Not a vulnerability in the C++ fmtlib/fmt library
 CVE-2026-63650: Related to OpenVPN (2.7_alpha1 through 2.7.5) when built against mbedTLS, which ignores the configured X.509 username identity lookup field and can therefore misidentify remote authenticated users. Not a vulnerability in mbedTLS itself.
+CVE-2026-74767: Related to Pandora that uses zlib to decompress compressed chunks without enforcing a limit on uncompressed data. Not a vulnerability in zlib C library
+CVE-2026-62292: Related to libheif that uses zlib to decompress a compressed file. A crafted HEIF image can result in out of bounds read. Not a vulnerability in zlib C library
+CVE-2026-77640: Related to tor that was prone to an infinite loop when decompressing a truncated zlib/gzip stream with done=1. Not a vulnerability in zlib C library
