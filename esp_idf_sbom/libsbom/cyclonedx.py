@@ -22,8 +22,15 @@ from typing import Any
 from typing import Dict
 from typing import List
 
-from esp_idf_sbom import __version__
 from esp_idf_sbom.libsbom.sbom import SBOM
+from esp_idf_sbom.libsbom.sbom import TOOL_DISTRIBUTION_URL
+from esp_idf_sbom.libsbom.sbom import TOOL_LICENSE
+from esp_idf_sbom.libsbom.sbom import TOOL_NAME
+from esp_idf_sbom.libsbom.sbom import TOOL_PURL
+from esp_idf_sbom.libsbom.sbom import TOOL_SUPPLIER
+from esp_idf_sbom.libsbom.sbom import TOOL_SUPPLIER_URL
+from esp_idf_sbom.libsbom.sbom import TOOL_URL
+from esp_idf_sbom.libsbom.sbom import TOOL_VERSION
 from esp_idf_sbom.libsbom.sbom import File
 from esp_idf_sbom.libsbom.sbom import Package
 from esp_idf_sbom.libsbom.sbom import PackageKind
@@ -54,6 +61,24 @@ def _supplier_name(supplier: str) -> str:
         if supplier.startswith(prefix):
             return supplier[len(prefix) :]
     return supplier
+
+
+def _tool_component() -> Dict[str, Any]:
+    """The metadata.tools entry for this tool. Since CycloneDX 1.5 such entries
+    are full components, so the tool identifies itself as any component does.
+    """
+    return {
+        'type': 'application',
+        'name': TOOL_NAME,
+        'version': TOOL_VERSION,
+        'supplier': {'name': _supplier_name(TOOL_SUPPLIER), 'url': [TOOL_SUPPLIER_URL]},
+        'purl': TOOL_PURL,
+        'licenses': [{'license': {'id': TOOL_LICENSE}}],
+        'externalReferences': [
+            {'type': 'vcs', 'url': TOOL_URL},
+            {'type': 'distribution', 'url': TOOL_DISTRIBUTION_URL},
+        ],
+    }
 
 
 def _component(pkg: Package) -> Dict[str, Any]:
@@ -150,7 +175,7 @@ def _render_json(sbom: SBOM, version: str) -> str:
         'version': 1,
         'metadata': {
             'timestamp': timestamp,
-            'tools': {'components': [{'type': 'application', 'name': 'esp-idf-sbom', 'version': __version__}]},
+            'tools': {'components': [_tool_component()]},
         },
     }
     root = by_ref.get(sbom.root)

@@ -44,12 +44,25 @@ from typing import Tuple
 from license_expression import ExpressionError
 from license_expression import get_spdx_licensing
 
+from esp_idf_sbom import __version__
 from esp_idf_sbom.libsbom import expr
 from esp_idf_sbom.libsbom import git
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import mft
 from esp_idf_sbom.libsbom import nvd
 from esp_idf_sbom.libsbom import utils
+
+# Identity of this tool as the producer of the documents it renders; every
+# backend maps it onto its format's document provenance slot (SPDX creators,
+# CycloneDX metadata.tools). It describes the generator, never the product.
+TOOL_NAME = 'esp-idf-sbom'
+TOOL_VERSION = __version__
+TOOL_SUPPLIER = 'Organization: Espressif Systems (Shanghai) CO LTD'
+TOOL_SUPPLIER_URL = 'https://www.espressif.com'
+TOOL_URL = 'https://github.com/espressif/esp-idf-sbom'
+TOOL_DISTRIBUTION_URL = 'https://pypi.org/project/esp-idf-sbom/'
+TOOL_PURL = f'pkg:pypi/{TOOL_NAME}@{__version__}'
+TOOL_LICENSE = 'Apache-2.0'
 
 
 class PackageKind(Enum):
@@ -153,7 +166,10 @@ class SBOM:
 
     name: str
     root: str  # ref of the top-level (project) package
-    creator: str = 'ESP-IDF SBOM builder'
+    # Producer of the document this model was parsed from, as that document
+    # records it; empty if it does not say or the model was built, not parsed.
+    # Render does not read it and writes the TOOL_* identity above.
+    creator: str = ''
     packages: List[Package] = field(default_factory=list)
 
 

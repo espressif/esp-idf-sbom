@@ -639,6 +639,45 @@ def test_spdx_jsonld_renders_files() -> None:
     assert not errors, f'SPDX 3.0 file validation failed: {errors[:2]}'
 
 
+def test_producer_attribution() -> None:
+    """Every format must attribute the document to the tool that produced it:
+    name and version, the organization supplying the tool, and the tool's purl
+    wherever the format has a slot for one."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import spdx
+    from esp_idf_sbom.libsbom.sbom import TOOL_NAME
+    from esp_idf_sbom.libsbom.sbom import TOOL_PURL
+    from esp_idf_sbom.libsbom.sbom import TOOL_SUPPLIER
+    from esp_idf_sbom.libsbom.sbom import TOOL_VERSION
+
+    model = _sbom_with_file()
+    tool_id = f'{TOOL_NAME}-{TOOL_VERSION}'
+    org = TOOL_SUPPLIER.split(': ', 1)[1]
+
+    tagvalue = spdx.render(model, format='tagvalue', version='2.2')
+    assert f'Creator: Tool: {tool_id}' in tagvalue
+    assert f'Creator: {TOOL_SUPPLIER}' in tagvalue
+
+    document = json.loads(spdx.render(model, format='json', version='2.2'))
+    assert document['creationInfo']['creators'] == [f'Tool: {tool_id}', TOOL_SUPPLIER]
+
+    graph = json.loads(spdx.render(model, format='json-ld', version='3.0.1'))['@graph']
+    tool = next(e for e in graph if e['type'] == 'Tool')
+    assert tool['name'] == tool_id
+    assert tool['externalIdentifier'][0]['identifier'] == TOOL_PURL
+    creation_info = next(e for e in graph if e['type'] == 'CreationInfo')
+    assert creation_info['createdUsing'] == [tool['spdxId']]
+    creator = next(e for e in graph if e.get('spdxId') in creation_info['createdBy'])
+    assert creator['type'] == 'Organization' and creator['name'] == org
+
+    bom = json.loads(cyclonedx.render(model, version='1.6'))
+    component = bom['metadata']['tools']['components'][0]
+    assert component['name'] == TOOL_NAME
+    assert component['version'] == TOOL_VERSION
+    assert component['supplier']['name'] == org
+    assert component['purl'] == TOOL_PURL
+
+
 def test_multiple_cpes(hello_world_build: Path) -> None:
     """Test that multiple CPE values can be specified in manifest file."""
     manifest = hello_world_build / 'main' / 'sbom.yml'
