@@ -24,6 +24,11 @@ import yaml
 from esp_idf_sbom import __version__
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom.sbom import SBOM
+from esp_idf_sbom.libsbom.sbom import TOOL_NAME
+from esp_idf_sbom.libsbom.sbom import TOOL_PURL
+from esp_idf_sbom.libsbom.sbom import TOOL_SUPPLIER
+from esp_idf_sbom.libsbom.sbom import TOOL_URL
+from esp_idf_sbom.libsbom.sbom import TOOL_VERSION
 from esp_idf_sbom.libsbom.sbom import File
 from esp_idf_sbom.libsbom.sbom import Package
 from esp_idf_sbom.libsbom.sbom import PackageKind
@@ -202,7 +207,10 @@ def _render_tagvalue(sbom: SBOM, version: str) -> str:
     out += 'SPDXID: SPDXRef-DOCUMENT\n'
     out += f'DocumentName: {sbom.name}\n'
     out += f'DocumentNamespace: {namespace}\n'
-    out += f'Creator: Tool: {sbom.creator}\n'
+    # The tool in the spec's toolidentifier-version form plus the organization
+    # behind it; SPDX 2.x has no slot for a tool's own purl or license.
+    out += f'Creator: Tool: {TOOL_NAME}-{TOOL_VERSION}\n'
+    out += f'Creator: {TOOL_SUPPLIER}\n'
     out += f'Created: {created}\n'
     out += 'CreatorComment: <text>ESP-IDF SBOM document in SPDX format</text>\n'
     out += f'Relationship: SPDXRef-DOCUMENT DESCRIBES SPDXRef-{sbom.root}\n'
@@ -319,7 +327,7 @@ def _render_json(sbom: SBOM, version: str) -> str:
         'name': sbom.name,
         'documentNamespace': namespace,
         'creationInfo': {
-            'creators': [f'Tool: {sbom.creator}'],
+            'creators': [f'Tool: {TOOL_NAME}-{TOOL_VERSION}', TOOL_SUPPLIER],
             'created': created,
             'comment': 'ESP-IDF SBOM document in SPDX format',
         },
@@ -354,11 +362,6 @@ def _render_jsonld(sbom: SBOM, version: str) -> str:
     graph: List[Dict[str, Any]] = []
     element_ids: List[str] = []
 
-    tool = sid('Agent-esp-idf-sbom')
-    graph.append({'type': 'SoftwareAgent', 'spdxId': tool, 'creationInfo': ci, 'name': 'esp-idf-sbom'})
-    element_ids.append(tool)
-    graph.append({'type': 'CreationInfo', '@id': ci, 'specVersion': version, 'created': created, 'createdBy': [tool]})
-
     agents: Dict[str, str] = {}
 
     def agent_id(supplier: str) -> Any:
@@ -375,6 +378,35 @@ def _render_jsonld(sbom: SBOM, version: str) -> str:
             graph.append({'type': atype, 'spdxId': aid, 'creationInfo': ci, 'name': name})
             element_ids.append(aid)
         return agents[name]
+
+    # SPDX 3.0 splits producer attribution into who created the document
+    # (createdBy) and what it was created with (createdUsing). A Tool is an
+    # Element, so it carries its own purl and repository; its version has no
+    # property of its own and goes into the name, as in the 2.x form.
+    tool = sid('Tool-' + _sanitize_spdxid(TOOL_NAME))
+    graph.append(
+        {
+            'type': 'Tool',
+            'spdxId': tool,
+            'creationInfo': ci,
+            'name': f'{TOOL_NAME}-{TOOL_VERSION}',
+            'externalIdentifier': [
+                {'type': 'ExternalIdentifier', 'externalIdentifierType': 'packageUrl', 'identifier': TOOL_PURL}
+            ],
+            'externalRef': [{'type': 'ExternalRef', 'externalRefType': 'vcs', 'locator': [TOOL_URL]}],
+        }
+    )
+    element_ids.append(tool)
+    graph.append(
+        {
+            'type': 'CreationInfo',
+            '@id': ci,
+            'specVersion': version,
+            'created': created,
+            'createdBy': [agent_id(TOOL_SUPPLIER)],
+            'createdUsing': [tool],
+        }
+    )
 
     licenses: Dict[str, str] = {}
 
