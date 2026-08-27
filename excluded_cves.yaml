@@ -197,3 +197,78 @@ CVE-2026-63650: Related to OpenVPN (2.7_alpha1 through 2.7.5) when built against
 CVE-2026-74767: Related to Pandora that uses zlib to decompress compressed chunks without enforcing a limit on uncompressed data. Not a vulnerability in zlib C library
 CVE-2026-62292: Related to libheif that uses zlib to decompress a compressed file. A crafted HEIF image can result in out of bounds read. Not a vulnerability in zlib C library
 CVE-2026-77640: Related to tor that was prone to an infinite loop when decompressing a truncated zlib/gzip stream with done=1. Not a vulnerability in zlib C library
+
+CVE-2026-74366: Related to the Linux kernel ath12k driver, a NULL pointer dereference in ath12k_mac_op_change_sta_links() for a link whose vdev was never created. Not a vulnerability in wpa_supplicant
+CVE-2026-73232: Related to ffuf (Go web fuzzer), whose response size guard checks only the compressed Content-Length while io.ReadAll transparently decompresses gzip, brotli and deflate bodies. Not a vulnerability in the brotli C library
+CVE-2026-54616: Related to NanaZip's SquashfsHandler.cpp, which rejects only a zero return from LZ4_decompress_safe() and converts the negative error value into an unsigned length. Not a vulnerability in the LZ4 C library
+CVE-2026-59949: Related to yawkat lz4-java, whose JNI-backed XXHash bindings do not validate the array, off and len arguments before passing them to native code. Not a vulnerability in the LZ4 C library
+CVE-2026-78367: Related to RPM's rpmbuild tarball mode, which passes an attacker-controlled tar member name to rpmExpand() so a crafted .spec name can inject RPM macros, including Lua expressions. Not a vulnerability in Lua itself
+CVE-2026-62381: Related to luci-lib-px5g (OpenWrt LuCI), a heap buffer overflow in asn1_add_obj() of its native x509write.c, reachable through the exported Lua binding. Not a vulnerability in Lua itself
+CVE-2026-19670: Related to cisagov Malcolm, whose Nginx Lua RBAC layer matches the raw percent-encoded request URI while Nginx routes on the decoded one. Not a vulnerability in Lua itself
+CVE-2026-77639: Related to Tor (< 0.4.9.9), a compression bomb check bypass by concatenating many gzip/zlib sub-streams, each just under the per-stream detection threshold. Not a vulnerability in the zlib C library
+CVE-2026-9805: Related to the Insyde SMM IHISI handler FMTSWriteUseIntelLib (FMTS command 0x32), which reads and writes data without checking the buffer size. Not a vulnerability in the C++ fmtlib/fmt library
+CVE-2026-74682: Related to the Linux kernel ALSA usb-audio driver, an out-of-bounds write on Type II inbound URBs whose buffer_size is computed before the transfer delimiter packet is accounted for. Not a vulnerability in the C++ fmtlib/fmt library
+
+CVE-2026-77234:
+  cpes:
+    - cpe: cpe:2.3:o:amazon:freertos:*:*:*:*:*:*:*:*
+      versionStartIncluding: '7.0.0'
+      versionEndIncluding: '11.3.0'
+  reason: >-
+    A timer command submitted by an unprivileged task is executed by the timer
+    service task as a caller-supplied function call. Affects only MPU-enabled
+    ports (GHSA-w3vr-pr75-5hc6). ESP-IDF ships the xtensa, riscv and linux
+    ports only, none of which set portUSING_MPU_WRAPPERS, so the MPU wrappers
+    and the privilege boundary they enforce are not built. Same reasoning as
+    CVE-2024-28115, already excluded in the FreeRTOS-Kernel manifest.
+
+CVE-2026-77237:
+  cpes:
+    - cpe: cpe:2.3:o:amazon:freertos:*:*:*:*:*:*:*:*
+      versionStartIncluding: '7.4.0'
+      versionEndIncluding: '11.3.0'
+  reason: >-
+    Missing queue-set type validation in xQueueAddToSet() leading to an
+    out-of-bounds read in privileged kernel context. Affects only MPU-enabled
+    ports with configUSE_QUEUE_SETS=1 (GHSA-9wvc-hqvx-5wf5). ESP-IDF ships the
+    xtensa, riscv and linux ports only, none of which set
+    portUSING_MPU_WRAPPERS, so there is no privileged/unprivileged split for
+    the over-read to cross.
+
+CVE-2026-77235:
+  cpes:
+    - cpe: cpe:2.3:o:amazon:freertos:*:*:*:*:*:*:*:*
+      versionStartIncluding: '10.2.0'
+      versionEndIncluding: '11.3.0'
+  reason: >-
+    Missing privilege verification in the secure context cleanup SVC handler,
+    letting a Non-Secure task free another task's secure context
+    (GHSA-55pf-q87x-c58c). Affects ARMv8-M ports with TrustZone and MPU only.
+    ESP-IDF ships the xtensa, riscv and linux ports only and carries no
+    secure_context sources, so the affected code is not present.
+
+CVE-2026-77236:
+  cpes:
+    - cpe: cpe:2.3:o:amazon:freertos:*:*:*:*:*:*:*:*
+      versionStartIncluding: '10.2.0'
+      versionEndIncluding: '11.3.0'
+  reason: >-
+    Missing minimum size validation in secure context allocation, writing the
+    stack-overflow sentinel outside the allocated Secure-world buffer
+    (GHSA-vq2f-9qj3-jj2m). Affects ARMv8-M ports with TrustZone only. ESP-IDF
+    ships the xtensa, riscv and linux ports only and carries no secure_context
+    sources, so the affected code is not present.
+
+CVE-2026-75466:
+  cpes:
+    - cpe: cpe:2.3:a:libjpeg-turbo:libjpeg-turbo:*:*:*:*:*:*:*:*
+      versionEndExcluding: '3.2.0'
+    - cpe: cpe:2.3:a:d.r.commander:libjpeg-turbo:*:*:*:*:*:*:*:*
+      versionEndExcluding: '3.2.0'
+  reason: >-
+    Division by zero in the indexed-color branch of the PNG loader
+    (src/rdpng.c) reached through the TurboJPEG API tj3LoadImage12() and
+    tj3LoadImage16(). The PNG loader was added in the 3.2 line; the 3.1.x line
+    bundled by the idf-extra-components libjpeg-turbo component has no
+    src/rdpng.c, and the component builds with WITH_TURBOJPEG=FALSE, so the
+    TurboJPEG API is not built at all.
