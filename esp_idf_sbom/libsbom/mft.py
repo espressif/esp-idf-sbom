@@ -346,6 +346,18 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
             return True
         raise schema.SchemaError(f'Value {url} must have "git", "http" or "https" scheme and domain.')
 
+    def check_email(email: str) -> bool:
+        if utils.is_email(email):
+            return True
+        raise schema.SchemaError(f'Value "{email}" does not look like an email address.')
+
+    def check_document_entity(entity: Dict[str, str]) -> bool:
+        # A name alone gives no way to reach the entity, which is what a
+        # vulnerability contact has to provide.
+        if not entity.get('url') and not entity.get('contact'):
+            raise schema.SchemaError('At least one of "url" or "contact" must be specified.')
+        return True
+
     def check_cpes(cpes: List[str]) -> bool:
         for cpe in cpes:
             if not CPE.is_cpe_valid(cpe):
@@ -446,6 +458,26 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
 
     manifests_schema = schema.Schema([manifest_entry_schema], ignore_extra_keys=True)
 
+    # Describes the SBOM document, not the package. Used only in the project's
+    # manifest.
+    document_entity_schema = schema.Schema(
+        schema.And(
+            {
+                'name': schema.And(str, check_person_organization),
+                schema.Optional('url'): schema.And(str, check_url),
+                schema.Optional('contact'): schema.And(str, check_email),
+            },
+            check_document_entity,
+        )
+    )
+
+    document_schema = schema.Schema(
+        {
+            schema.Optional('supplier'): document_entity_schema,
+            schema.Optional('manufacturer'): document_entity_schema,
+        }
+    )
+
     sbom_schema = schema.Schema(
         {
             schema.Optional('name'): str,
@@ -465,6 +497,9 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
             schema.Optional('manifests'): manifests_schema,
             schema.Optional('virtpackages'): schema.And(list, check_virtpackages),
             schema.Optional('if'): schema.And(str, check_if),
+            # Read only from the project's manifest. It lives in sbom.yml so
+            # that no separate file is needed; elsewhere it has no effect.
+            schema.Optional('document'): document_schema,
         },
         ignore_extra_keys=True,
     )

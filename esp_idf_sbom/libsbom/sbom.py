@@ -157,6 +157,22 @@ class Package:
 
 
 @dataclass
+class Organization:
+    """An organization named in the document metadata.
+
+    Comes from the "document" key of the project's manifest. The name keeps the
+    "Organization: " or "Person: " prefix; backends strip it.
+    """
+
+    name: str = ''
+    url: str = ''
+    contact_email: str = ''
+
+    def __bool__(self) -> bool:
+        return bool(self.name or self.url or self.contact_email)
+
+
+@dataclass
 class SBOM:
     """A whole SBOM: a flat, ordered set of packages plus document metadata.
 
@@ -170,6 +186,12 @@ class SBOM:
     # records it; empty if it does not say or the model was built, not parsed.
     # Render does not read it and writes the TOOL_* identity above.
     creator: str = ''
+    # Who supplies the product this document describes. CycloneDX has a slot
+    # for it, SPDX does not.
+    supplier: Organization = field(default_factory=Organization)
+    # Who produced this document, meaning the organization running the tool.
+    # SPDX records this as the document creator.
+    manufacturer: Organization = field(default_factory=Organization)
     packages: List[Package] = field(default_factory=list)
 
 
@@ -1146,6 +1168,13 @@ class SBOMProject(SBOMPackage):
         if not manifest['version']:
             manifest['version'] = self.proj_desc['project_version']
 
+        # Describes the SBOM document, not a package. Read only here, so it
+        # cannot end up on another package. Not in EMPTY_MANIFEST, so
+        # update_manifest never merges it.
+        sbom_yml = mft.load(utils.pjoin(path, 'sbom.yml'))
+        if 'document' in sbom_yml:
+            manifest['document'] = sbom_yml['document']
+
         return manifest
 
     def walk_packages(self) -> Iterator[SBOMPackage]:
@@ -1613,6 +1642,16 @@ def _flatten(pkg: SBOMPackage, out: List[Package]) -> None:
         _flatten(subpkg, out)
 
 
+def _organization(entity: Dict[str, str]) -> Organization:
+    """Build an Organization from one entity of the manifest "document" key.
+    An absent entity yields an empty Organization, which backends skip."""
+    return Organization(
+        name=entity.get('name', ''),
+        url=entity.get('url', ''),
+        contact_email=entity.get('contact', ''),
+    )
+
+
 def build(args: Dict[str, Any], proj_desc_path: str) -> SBOM:
     """Build the format-neutral SBOM model from a built ESP-IDF project.
 
@@ -1653,7 +1692,14 @@ def build(args: Dict[str, Any], proj_desc_path: str) -> SBOM:
     for component in project.components.values():
         _flatten(component, packages)
 
-    return SBOM(name=proj_desc['project_name'], root=project.ref, packages=packages)
+    document = project.manifest.get('document', {})
+    return SBOM(
+        name=proj_desc['project_name'],
+        root=project.ref,
+        supplier=_organization(document.get('supplier', {})),
+        manufacturer=_organization(document.get('manufacturer', {})),
+        packages=packages,
+    )
 
 
 def load(path: str) -> SBOM:

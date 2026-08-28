@@ -32,6 +32,7 @@ from esp_idf_sbom.libsbom.sbom import TOOL_SUPPLIER_URL
 from esp_idf_sbom.libsbom.sbom import TOOL_URL
 from esp_idf_sbom.libsbom.sbom import TOOL_VERSION
 from esp_idf_sbom.libsbom.sbom import File
+from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
 from esp_idf_sbom.libsbom.sbom import PackageKind
 from esp_idf_sbom.libsbom.sbom import kind_and_name
@@ -61,6 +62,18 @@ def _supplier_name(supplier: str) -> str:
         if supplier.startswith(prefix):
             return supplier[len(prefix) :]
     return supplier
+
+
+def _entity(org: Organization) -> Dict[str, Any]:
+    """Render a document-level Organization as a CycloneDX organizationalEntity."""
+    entity: Dict[str, Any] = {}
+    if org.name:
+        entity['name'] = _supplier_name(org.name)
+    if org.url:
+        entity['url'] = [org.url]
+    if org.contact_email:
+        entity['contact'] = [{'email': org.contact_email}]
+    return entity
 
 
 def _tool_component() -> Dict[str, Any]:
@@ -178,6 +191,11 @@ def _render_json(sbom: SBOM, version: str) -> str:
             'tools': {'components': [_tool_component()]},
         },
     }
+    # Two separate facts, and consumers differ on which one they read.
+    if sbom.supplier:
+        bom['metadata']['supplier'] = _entity(sbom.supplier)
+    if sbom.manufacturer:
+        bom['metadata']['manufacturer'] = _entity(sbom.manufacturer)
     root = by_ref.get(sbom.root)
     if root is not None:
         bom['metadata']['component'] = _component(root)
@@ -207,6 +225,21 @@ def render(sbom: SBOM, format: str = 'json', version: str = '1.6') -> str:
 # ===========================================================================
 # Parse: CycloneDX JSON -> SBOM model
 # ===========================================================================
+
+
+def _entity_to_organization(entity: Dict[str, Any]) -> Organization:
+    """Read a CycloneDX organizationalEntity back into an Organization.
+
+    The name comes back without the prefix render strips, as package suppliers
+    do. _supplier_name leaves an unprefixed name alone, so a re-render matches.
+    """
+    urls = entity.get('url', [])
+    contacts = entity.get('contact', [])
+    return Organization(
+        name=entity.get('name', ''),
+        url=urls[0] if urls else '',
+        contact_email=next((c.get('email', '') for c in contacts if c.get('email')), ''),
+    )
 
 
 def _package_from_component(
@@ -312,7 +345,15 @@ def _parse_json(text: str) -> SBOM:
     if not name and packages:
         name = packages[0].package_name
 
-    return SBOM(name=name, root=root_ref, packages=packages, creator=creator)
+    metadata = bom.get('metadata', {})
+    return SBOM(
+        name=name,
+        root=root_ref,
+        supplier=_entity_to_organization(metadata.get('supplier', {})),
+        manufacturer=_entity_to_organization(metadata.get('manufacturer', {})),
+        packages=packages,
+        creator=creator,
+    )
 
 
 def parse(text: str, format: str = 'json') -> SBOM:

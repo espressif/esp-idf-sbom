@@ -1438,3 +1438,153 @@ def test_merge_local_excluded_cves_robustness(tmp_path: Path) -> None:
     nvd.merge_local_excluded_cves(str(root))
     entry = nvd.get_excluded_cves()['CVE-2026-45160']
     assert isinstance(entry, dict) and entry['reason'] == 'Fixed on release/v6.0'
+
+
+def _document_manifest() -> str:
+    return dedent(
+        """\
+        document:
+          supplier:
+            name: 'Organization: Acme Corp'
+            url: 'https://acme.example'
+            contact: 'psirt@acme.example'
+          manufacturer:
+            name: 'Organization: Acme Corp'
+            url: 'https://acme.example'
+            contact: 'psirt@acme.example'
+        """
+    )
+
+
+@pytest.mark.parametrize(
+    'manifest,valid',
+    [
+        ({'document': {'supplier': {'name': 'Organization: A', 'contact': 'a@b.io'}}}, True),
+        ({'document': {'supplier': {'name': 'Person: A', 'url': 'https://a.example'}}}, True),
+        ({'document': {}}, True),
+        # A name alone identifies the entity but gives no way to reach it.
+        ({'document': {'supplier': {'name': 'Organization: A'}}}, False),
+        # The "Person: "/"Organization: " prefix is required, as for suppliers.
+        ({'document': {'supplier': {'name': 'A', 'contact': 'a@b.io'}}}, False),
+        ({'document': {'supplier': {'name': 'Organization: A', 'contact': 'nope'}}}, False),
+        ({'document': {'supplier': {'name': 'Organization: A', 'url': 'ssh://a.example'}}}, False),
+        # Unknown entities are rejected even though the outer schema ignores extra keys.
+        ({'document': {'author': {'name': 'Organization: A', 'contact': 'a@b.io'}}}, False),
+        ({'document': 'Organization: A'}, False),
+    ],
+)
+def test_manifest_document_schema(manifest: dict, valid: bool) -> None:
+    """The "document" key accepts an entity with a prefixed name plus a way to
+    reach it, and rejects anything that could not satisfy a compliance check."""
+    from esp_idf_sbom.libsbom import mft
+
+    if valid:
+        mft.validate(manifest, 'sbom.yml', '.', die=False)
+    else:
+        with pytest.raises(RuntimeError):
+            mft.validate(manifest, 'sbom.yml', '.', die=False)
+
+
+def test_document_metadata_cyclonedx(hello_world_build: Path) -> None:
+    """document metadata from the project manifest lands in CycloneDX
+    metadata.supplier/manufacturer and survives a parse/render round trip."""
+    from esp_idf_sbom.libsbom import cyclonedx
+
+    (hello_world_build / 'sbom.yml').write_text(_document_manifest())
+    try:
+        tmpdir = TemporaryDirectory()
+        output_fn = Path(tmpdir.name) / 'sbom.cdx.json'
+        proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+        run(
+            [
+                sys.executable,
+                '-m',
+                'esp_idf_sbom',
+                'create',
+                '--format',
+                'cyclonedx-json',
+                '-o',
+                output_fn,
+                proj_desc_path,
+            ],
+            check=True,
+        )
+    finally:
+        (hello_world_build / 'sbom.yml').unlink()
+
+    text = output_fn.read_text()
+    metadata = json.loads(text)['metadata']
+    for key in ('supplier', 'manufacturer'):
+        assert metadata[key]['name'] == 'Acme Corp'
+        assert metadata[key]['url'] == ['https://acme.example']
+        assert metadata[key]['contact'] == [{'email': 'psirt@acme.example'}]
+
+    model = cyclonedx.parse(text)
+    assert model.supplier.name == 'Acme Corp'
+    assert model.supplier.contact_email == 'psirt@acme.example'
+    assert model.manufacturer.url == 'https://acme.example'
+    # Re-rendering must not lose or alter the entities.
+    assert cyclonedx.parse(cyclonedx.render(model)).supplier == model.supplier
+
+
+def test_document_metadata_spdx(hello_world_build: Path) -> None:
+    """The manufacturer is recorded as an SPDX document creator: a Creator line
+    in 2.2, and an Agent with an email/urlScheme identifier in 3.0.1. SPDX has
+    no document-level slot for the supplier, so only the manufacturer maps."""
+    (hello_world_build / 'sbom.yml').write_text(_document_manifest())
+    try:
+        tmpdir = TemporaryDirectory()
+        proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+        outputs = {}
+        for fmt, name in (('spdx-tag-value', 'sbom.spdx'), ('spdx-json-ld', 'sbom.spdx3.json')):
+            outputs[fmt] = Path(tmpdir.name) / name
+            run(
+                [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', fmt, '-o', outputs[fmt], proj_desc_path],
+                check=True,
+            )
+    finally:
+        (hello_world_build / 'sbom.yml').unlink()
+
+    assert 'Creator: Organization: Acme Corp (psirt@acme.example)' in outputs['spdx-tag-value'].read_text()
+
+    graph = json.loads(outputs['spdx-json-ld'].read_text())['@graph']
+    creation_info = next(e for e in graph if e.get('type') == 'CreationInfo')
+    agent = next(e for e in graph if e.get('name') == 'Acme Corp')
+    assert agent['spdxId'] in creation_info['createdBy']
+    identifiers = {i['externalIdentifierType']: i['identifier'] for i in agent['externalIdentifier']}
+    assert identifiers == {'email': 'psirt@acme.example', 'urlScheme': 'https://acme.example'}
+
+
+def test_document_metadata_ignored_outside_project(hello_world_build: Path) -> None:
+    """The key is read from the project manifest only.
+
+    It is not an EMPTY_MANIFEST key, so update_manifest never carries it and
+    only SBOMProject.get_manifest reads it. A component that sets it therefore
+    does not get it on its own manifest, and cannot supply the document
+    metadata for the SBOM.
+    """
+    manifest = hello_world_build / 'main' / 'sbom.yml'
+    manifest.write_text(_document_manifest())
+    try:
+        tmpdir = TemporaryDirectory()
+        output_fn = Path(tmpdir.name) / 'sbom.cdx.json'
+        proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+        run(
+            [
+                sys.executable,
+                '-m',
+                'esp_idf_sbom',
+                'create',
+                '--format',
+                'cyclonedx-json',
+                '-o',
+                output_fn,
+                proj_desc_path,
+            ],
+            check=True,
+        )
+    finally:
+        manifest.unlink()
+
+    metadata = json.loads(output_fn.read_text())['metadata']
+    assert 'supplier' not in metadata and 'manufacturer' not in metadata

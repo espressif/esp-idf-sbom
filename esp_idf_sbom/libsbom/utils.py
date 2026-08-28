@@ -140,6 +140,17 @@ def is_purl(purl: str = '') -> bool:
     return bool(_PURL_RE.match(purl))
 
 
+# Deliberately permissive: a single "@" with a dotted domain on the right. The
+# point is to catch a URL or a plain name pasted into a contact field, not to
+# adjudicate RFC 5322.
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+
+def is_email(email: str = '') -> bool:
+    """Minimal syntactic check for an email address."""
+    return bool(_EMAIL_RE.match(email))
+
+
 # Matches a github.com or gitlab.com repository URL pointing at the repository
 # root only -- with an optional trailing slash or ".git" suffix. URLs that go
 # deeper (e.g. ".../tree/<branch>/<subpath>", which github uses to browse a

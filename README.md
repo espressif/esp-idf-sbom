@@ -328,6 +328,21 @@ detects the format automatically. The model concepts map to each format as follo
 `spdx-json-ld` emits SPDX 3.0, which has a different, element-based model (JSON-LD is its
 only serialization) and validates against the official SPDX 3.0.1 JSON schema.
 
+The concepts above belong to individual packages. The document as a whole carries two
+more, set from the `document` key of the project manifest (see
+[Manifest file](#manifest-file)).
+
+| Concept               | SPDX 2.x           | SPDX 3.0 JSON-LD           | CycloneDX               |
+|-----------------------|--------------------|----------------------------|-------------------------|
+| document supplier     | not available      | not available              | `metadata.supplier`     |
+| document manufacturer | `Creator:`         | `CreationInfo.createdBy`   | `metadata.manufacturer` |
+
+The two are not symmetric across formats. SPDX has no document level slot for the supplier
+of the described product, its nearest equivalent being the root package's own
+`PackageSupplier`, so only the manufacturer is recorded there. In SPDX 3.0 the manufacturer
+becomes an `Organization` agent carrying `email` and `urlScheme` external identifiers, and
+in SPDX 2.x the contact is folded into the `Creator` value as `name (email)`.
+
 ## Manifest file
 
 During SBOM generation the esp-idf-sbom tool is looking for `sbom.yml` manifest files.
@@ -554,6 +569,54 @@ cve-exclude-list:
       if: '1536 <= FREERTOS_ISR_STACKSIZE < 0xffff'
 ```
 
+* **document**:
+    Information about the generated SBOM document itself, rather than about the
+    package whose directory holds the manifest. This is the only key that does not
+    describe a package. It is read from the **project** manifest only, and has no
+    effect in any other manifest. It lives in `sbom.yml` for convenience, so that
+    no separate document metadata file is needed.
+
+    Two organizations can be described, both optional.
+
+    * **supplier**: the organization supplying the product this SBOM describes,
+      stating at document level what the project package's `supplier` states about
+      the described product. As there, this is whoever delivers the product to its
+      recipient, which need not be whoever wrote it. When an application is
+      redistributed, for example built by one organization and then shipped by
+      another under its own name, the redistributing organization is the supplier
+      and the original author belongs in the project package's `originator`. This
+      is also the organization a recipient is expected to contact about a
+      vulnerability in the delivered product.
+    * **manufacturer**: the organization that produced the SBOM document. This is
+      not the vendor of the `esp-idf-sbom` tool, which is recorded separately among
+      the document's tools; it is the organization running the tool.
+
+    For an organization building and shipping its own firmware the two are the same.
+    They differ when the document is produced by someone other than the party
+    delivering the product, for example when the original builder generates the SBOM
+    for an application that another organization then redistributes. Each takes the
+    following entries.
+
+    * **name**: prefixed with *Person:* or *Organization:*, as for `supplier`.
+    * **url**: link to the organization, for example its home or security page.
+    * **contact**: email address for reporting vulnerabilities.
+
+    `name` is required, together with at least one of `url` or `contact`. A name on
+    its own identifies the organization but gives no way to reach it, which is what
+    consumers checking an SBOM for a reachable vulnerability contact are looking for.
+
+```
+      document:
+        supplier:
+          name: 'Organization: Acme Corp'
+          url: 'https://acme.example'
+          contact: 'psirt@acme.example'
+        manufacturer:
+          name: 'Organization: Acme Corp'
+          url: 'https://acme.example'
+          contact: 'psirt@acme.example'
+```
+
 Example of the `sbom.yml` manifest file for the ESP-IDF blink project.
 
     version: 0.1.0
@@ -586,6 +649,14 @@ CycloneDX fields.
 | copyright        | PackageCopyrightText         | copyright                         |
 | cve-exclude-list | PackageComment               | not_affected VEX                  |
 | cve-keywords     | PackageComment               | properties                        |
+
+The `document` key is the exception, as it describes the document rather than a package
+and is read from the project manifest only.
+
+| manifest              | SPDX          | CycloneDX               |
+|-----------------------|---------------|-------------------------|
+| document.supplier     | not available | metadata.supplier       |
+| document.manufacturer | Creator       | metadata.manufacturer   |
 
 Even though the `sbom.yml` file is the primary source of information, the esp-idf-sbom tool
 is also looking at other places if it's not present. The `idf_component.yml` manifest file,
