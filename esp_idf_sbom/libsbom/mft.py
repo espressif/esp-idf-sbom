@@ -26,14 +26,18 @@ IDF_FRAMEWORK_DESCRIPTION = (
     "Espressif IoT Development Framework -- the official development framework for Espressif Systems' chips."
 )
 IDF_FRAMEWORK_SUPPLIER = 'Organization: Espressif Systems (Shanghai) CO LTD'
+# The license ESP-IDF declares for itself, as stated by the LICENSE file at the
+# root of the repository. Individual components keep their own licenses, which
+# are concluded from their file tags; this is the framework's declared license.
+IDF_FRAMEWORK_LICENSE = 'Apache-2.0'
 
 
 def build_idf_framework_manifest(idf_path: str) -> Dict[str, Any]:
     """Build the in-memory manifest dict for an ESP-IDF framework package.
 
     Reads the IDF version from ``tools/cmake/version.cmake`` at ``idf_path``,
-    composes the four NVD CPEs, and derives ``PackageDownloadLocation`` from
-    the checkout's git remote (so customer forks are attributed correctly).
+    composes the four NVD CPEs, and takes the repository from the checkout's
+    git remote (so customer forks are attributed correctly).
 
     Returns an empty dict when the version cannot be read; callers should
     treat that as "no framework manifest available" and skip emitting one.
@@ -50,10 +54,14 @@ def build_idf_framework_manifest(idf_path: str) -> Dict[str, Any]:
         'cpe': utils.build_idf_framework_cpes(version),
         'description': IDF_FRAMEWORK_DESCRIPTION,
         'supplier': IDF_FRAMEWORK_SUPPLIER,
+        'license': IDF_FRAMEWORK_LICENSE,
     }
+    # The remote is where the sources are, not a download location, so it goes
+    # to repository. The SBOM build path fills this in on its own; the manifest
+    # check path does not, and has no other source for it.
     remote = git.get_remote_location(idf_path)
     if remote:
-        manifest['url'] = f'git+{remote}'
+        manifest['repository'] = remote
     return manifest
 
 

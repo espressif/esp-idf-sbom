@@ -1588,3 +1588,15 @@ def test_document_metadata_ignored_outside_project(hello_world_build: Path) -> N
 
     metadata = json.loads(output_fn.read_text())['metadata']
     assert 'supplier' not in metadata and 'manufacturer' not in metadata
+
+
+def test_idf_framework_manifest_license() -> None:
+    """The synthesized ESP-IDF framework manifest declares the license from the
+    LICENSE file at the repository root, so the framework package is not the one
+    component in a generated SBOM without license information."""
+    from esp_idf_sbom.libsbom import mft
+
+    manifest = mft.build_idf_framework_manifest(os.environ['IDF_PATH'])
+    assert manifest['license'] == 'Apache-2.0'
+    # It must survive manifest validation, which parses the license expression.
+    mft.validate(manifest, 'built-in', os.environ['IDF_PATH'], die=False)
