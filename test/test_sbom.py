@@ -1185,15 +1185,14 @@ def test_purl_end_to_end(hello_world_build: Path) -> None:
             p.stdout,
         )
 
-        # The esp-idf superproject PURL must not auto-derive onto the in-tree
-        # wrapper components (components/* inside esp-idf) or the project
-        # itself -- that repeats one identical pkg:github/espressif/esp-idf@<ver>
-        # line across dozens of packages, noise over each package's own OTHER
-        # repository ExternalRef. At most one is allowed: the FRAMEWORK-esp-idf
-        # package carries it when esp-idf's remote is a github.com/gitlab.com
-        # forge, and none when the remote is an internal/ssh URL that
-        # guess_purl ignores -- hence <= 1, not == 1.
-        assert p.stdout.count('pkg:github/espressif/esp-idf@') <= 1
+        # In-tree packages derive the esp-idf superproject PURL, each pinned to
+        # the checkout's commit and distinguished by its own path as the PURL
+        # subpath. What must never happen is the same PURL repeated across
+        # packages, which is what dropping the subpath would produce. There are
+        # none at all when esp-idf's remote is an internal/ssh URL that
+        # guess_purl ignores, so this checks for duplicates rather than a count.
+        idf_purls = re.findall(r'pkg:github/espressif/esp-idf@\S+', p.stdout)
+        assert len(idf_purls) == len(set(idf_purls))
 
         # Toolchain emits the tarball SHA256 from tools.json as the only
         # PackageChecksum in the SBOM (files get FileChecksum, packages get
@@ -1600,3 +1599,161 @@ def test_idf_framework_manifest_license() -> None:
     assert manifest['license'] == 'Apache-2.0'
     # It must survive manifest validation, which parses the license expression.
     mft.validate(manifest, 'built-in', os.environ['IDF_PATH'], die=False)
+
+
+def _guess_purl(**manifest) -> str:
+    """Run guess_purl against a synthetic manifest.
+
+    The commit-based paths cannot be reached end-to-end from a checkout whose
+    remote is not a github.com/gitlab.com URL, which is the case for any
+    internal or ssh clone, so the manifest states are built directly.
+    """
+    from esp_idf_sbom.libsbom.sbom import SBOMObject
+    from esp_idf_sbom.libsbom.sbom import SBOMPackage
+
+    pkg = SBOMPackage.__new__(SBOMPackage)
+    pkg.args = {'no_guess': manifest.pop('no_guess', False)}
+    pkg.manifest = dict(SBOMObject.EMPTY_MANIFEST, **manifest)
+    return pkg.guess_purl()
+
+
+def test_guess_purl_prefers_commit() -> None:
+    """A recorded commit wins over the package version, and the package's path
+    inside the repository becomes the PURL subpath.
+
+    The github/gitlab PURL types define the version as "a commit or tag". The
+    package version is neither here: an in-tree component carries ESP-IDF's git
+    describe output and a managed component the registry's "<ver>~<rev>"
+    revision, and neither is a ref in the repository the PURL names.
+    """
+    # In-tree component: get_remote_location() records "<url>@<sha>#<path>".
+    assert (
+        _guess_purl(
+            repository='https://github.com/espressif/esp-idf@a9de6a4f302d1e6e#components/heap',
+            version='v6.2-dev-2219-ga9de6a4f302d',
+        )
+        == 'pkg:github/espressif/esp-idf@a9de6a4f302d1e6e#components/heap'
+    )
+    # Submodule at a working tree root: no path fragment, so no subpath.
+    assert (
+        _guess_purl(
+            repository='https://github.com/kmackay/micro-ecc@24c60e243580c786',
+            version='1.1',
+            url='https://github.com/kmackay/micro-ecc',
+        )
+        == 'pkg:github/kmackay/micro-ecc@24c60e243580c786'
+    )
+    # Managed component: the registry's repository_info, over a "git://" URL
+    # and a version that is a registry revision rather than a tag.
+    assert (
+        _guess_purl(
+            repository='git://github.com/espressif/example_components.git',
+            version='3.3.9~1',
+            url='https://github.com/espressif/example_components/tree/master/cmp',
+            repository_info={'commit_sha': '121f1c16ec4b0a0a', 'path': 'cmp'},
+        )
+        == 'pkg:github/espressif/example_components@121f1c16ec4b0a0a#cmp'
+    )
+    # The registry writes "." for a component published from the repo root.
+    assert (
+        _guess_purl(
+            repository='git://github.com/lvgl/lvgl.git',
+            version='9.5.0',
+            repository_info={'commit_sha': '85aa60d18b1e5b0b', 'path': '.'},
+        )
+        == 'pkg:github/lvgl/lvgl@85aa60d18b1e5b0b'
+    )
+
+
+def test_guess_purl_falls_back_to_version() -> None:
+    """With no commit recorded the package version is used. This is the
+    toolchain, described by tools.json rather than by a checkout, whose version
+    is a crosstool-NG release tag and so still names a real ref."""
+    assert (
+        _guess_purl(repository='https://github.com/espressif/crosstool-NG', version='esp-16.1.0_20260609')
+        == 'pkg:github/espressif/crosstool-NG@esp-16.1.0_20260609'
+    )
+    # No repository and no commit: nothing to derive from.
+    assert _guess_purl(version='0.3.0') == ''
+    # A commit on a host with no PURL type yields nothing rather than a guess.
+    assert _guess_purl(repository='https://example.com/foo/bar@abc123', version='1.0') == ''
+    # --no-guess suppresses the commit path too.
+    assert _guess_purl(repository='https://github.com/a/b@abc123', version='1.0', no_guess=True) == ''
+
+
+def test_derive_purl_subpath() -> None:
+    """derive_purl carries a subpath and accepts the "git" scheme the IDF
+    Component Registry writes into a managed component's repository URL."""
+    from esp_idf_sbom.libsbom.utils import derive_purl
+
+    assert derive_purl('https://github.com/a/b', 'abc', 'sub/dir') == 'pkg:github/a/b@abc#sub/dir'
+    assert derive_purl('git://github.com/a/b.git', 'abc') == 'pkg:github/a/b@abc'
+    # "." and empty both mean the repository root.
+    assert derive_purl('https://github.com/a/b', 'abc', '.') == 'pkg:github/a/b@abc'
+    assert derive_purl('https://github.com/a/b', 'abc', '') == 'pkg:github/a/b@abc'
+    assert derive_purl('https://github.com/a/b', 'abc', '/sub/') == 'pkg:github/a/b@abc#sub'
+    # A subdirectory browse URL still does not derive; the subpath is the way
+    # to express a package inside a repository.
+    assert derive_purl('https://github.com/a/b/tree/master/sub', 'abc') == ''
+
+
+def test_guess_purl_virtpackage_borrowed_dir() -> None:
+    """A virtual package must not derive a PURL from a commit.
+
+    It has no directory of its own and borrows the one holding its manifest,
+    which belongs to the component it is declared in. Deriving from that commit
+    would identify the virtual package as the code at that path and collide with
+    the component's own PURL. Its own url still derives.
+    """
+    from esp_idf_sbom.libsbom.sbom import SBOMObject
+    from esp_idf_sbom.libsbom.sbom import SBOMVirtpackage
+
+    pkg = SBOMVirtpackage.__new__(SBOMVirtpackage)
+    pkg.args = {'no_guess': False}
+    pkg.manifest = dict(
+        SBOMObject.EMPTY_MANIFEST,
+        repository='https://github.com/espressif/esp-idf@a9de6a4f302d1e6e#components/esp_libc',
+        version='1.8.10',
+    )
+    assert pkg.guess_purl() == ''
+
+    pkg.manifest['url'] = 'https://github.com/picolibc/picolibc'
+    assert pkg.guess_purl() == 'pkg:github/picolibc/picolibc@1.8.10'
+
+
+def test_repository_info_not_hand_authorable(tmp_path) -> None:
+    """repository_info is registry data, not a documented manifest key.
+
+    It is deliberately absent from EMPTY_MANIFEST, and update_manifest copies
+    only keys already present there, so it never takes part in the referenced
+    manifest -> sbom.yml -> idf_component.yml merge. get_manifest assigns it
+    straight from idf_component.yml, where the registry writes it, leaving a
+    hand-written entry in any other manifest with no effect. Merging it would
+    let such an entry shadow the commit the registry recorded.
+    """
+    from esp_idf_sbom.libsbom.sbom import SBOMObject
+
+    # Neither non-package key may be an EMPTY_MANIFEST key; that is what keeps
+    # update_manifest from carrying them, so readers must use get().
+    assert 'repository_info' not in SBOMObject.EMPTY_MANIFEST
+    assert 'document' not in SBOMObject.EMPTY_MANIFEST
+
+    (tmp_path / 'sbom.yml').write_text("repository_info:\n  commit_sha: 'handwritten'\n  path: 'evil'\n")
+    (tmp_path / 'idf_component.yml').write_text(
+        f"version: '1.0'\nrepository_info:\n  commit_sha: '{'a' * 40}'\n  path: 'led_strip'\n"
+    )
+    # A referenced manifest is merged before either file, so it would win too.
+    SBOMObject.REFERENCED_MANIFESTS[str(tmp_path)] = {
+        '_embeded_path': str(tmp_path / 'ref.yml'),
+        'repository_info': {'commit_sha': 'referenced', 'path': 'evil'},
+    }
+    try:
+        manifest = SBOMObject({'no_guess': False}, {}).get_manifest(str(tmp_path))
+    finally:
+        del SBOMObject.REFERENCED_MANIFESTS[str(tmp_path)]
+
+    assert manifest['repository_info'] == {'commit_sha': 'a' * 40, 'path': 'led_strip'}
+
+    # With no idf_component.yml the key is absent, not the sbom.yml value.
+    (tmp_path / 'idf_component.yml').unlink()
+    assert 'repository_info' not in SBOMObject({'no_guess': False}, {}).get_manifest(str(tmp_path))

@@ -162,26 +162,22 @@ def is_email(email: str = '') -> bool:
 #   1: host ("github" or "gitlab")
 #   2: owner (namespace)
 #   3: repo name (".git" suffix stripped)
+# The "git" scheme is included; the IDF Component Registry uses it.
 _GIT_HOST_RE = re.compile(
-    r'^https?://(?:www\.)?(github|gitlab)\.com/([^/]+)/([^/]+?)(?:\.git)?/?$',
+    r'^(?:https?|git)://(?:www\.)?(github|gitlab)\.com/([^/]+)/([^/]+?)(?:\.git)?/?$',
     re.IGNORECASE,
 )
 
 
-def derive_purl(url: str, version: str) -> str:
+def derive_purl(url: str, version: str, subpath: str = '') -> str:
     """Derive a Package URL from a github.com or gitlab.com source URL.
 
-    Recognises plain repository URLs at the repo root (with optional
-    trailing slash or ".git" suffix). Subdirectory URLs such as
-    ".../tree/<branch>/<subpath>" intentionally do not match -- a PURL
-    derived from them would identify the parent repo at a version that
-    does not exist there (e.g. the IDF Component Registry's "<ver>~<rev>"
-    revision form for the bundling, which is not a github tag). The
-    maintainer can set an explicit purl: in the manifest for such cases.
+    Only repository root URLs match, with an optional trailing slash or ".git"
+    suffix. A package inside a repository is described by passing its path as
+    subpath, not by a ".../tree/<branch>/<subpath>" URL.
 
-    Returns an empty string when the URL cannot be derived from (unknown
-    host, subdirectory URL, missing version). The caller is expected to
-    skip emission in that case rather than producing a partial PURL.
+    Returns an empty string if no PURL can be derived, and the caller then
+    emits none.
     """
     if not url or not version:
         return ''
@@ -191,7 +187,12 @@ def derive_purl(url: str, version: str) -> str:
         return ''
 
     host, owner, repo = m.group(1), m.group(2), m.group(3)
-    return f'pkg:{host.lower()}/{owner}/{repo}@{version}'
+    purl = f'pkg:{host.lower()}/{owner}/{repo}@{version}'
+    # The registry uses "." for a component at the repository root.
+    subpath = subpath.strip('/')
+    if subpath and subpath != '.':
+        purl += f'#{subpath}'
+    return purl
 
 
 def csv_escape(entries: Iterable) -> List[str]:

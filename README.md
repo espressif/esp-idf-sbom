@@ -404,16 +404,26 @@ The `sbom.yml` is a simple yaml file, which may contain the following entries.
     covers the case where the same software is tracked in NVD under multiple
     vendor names.
 
-    When `purl` is not set explicitly, a PURL is auto-derived for components and
-    submodules from `url` (preferred) or `repository` if it points at a
-    `github.com` or `gitlab.com` repository root. Subdirectory URLs such as
-    `github.com/<owner>/<repo>/tree/<branch>/<subdir>` do **not** auto-derive: a
-    PURL built from them would identify the parent repo at a version that does not
-    exist there, so those need an explicit `purl`. Non-github/gitlab
-    URLs (e.g. `https://www.lua.org/`) need an explicit `purl`. Subpackages do
-    **not** auto-derive, because their directory lives inside the parent's git
-    tree and the derived PURL would falsely point at the parent project; a
-    subpackage must opt in by setting `purl` in its own manifest.
+    When `purl` is not set explicitly, a PURL is auto-derived from the commit the
+    package was built from, with the package path inside the repository as the
+    PURL subpath:
+
+    ```
+    pkg:github/espressif/esp-idf@<sha>#components/heap
+    ```
+
+    The commit comes from the checkout, or for a managed component from the
+    `repository_info` the IDF Component Registry writes into `idf_component.yml`.
+    The `github` and `gitlab` PURL types define the version as a commit or tag,
+    and a package version is usually neither, so it is not used when a commit is
+    known. If no commit is known, the package version is used with `url`
+    preferred over `repository`. This applies to the toolchain, whose version is
+    a release tag.
+
+    Only `github.com` and `gitlab.com` repository root URLs are recognised. Other
+    hosts (e.g. `https://www.lua.org/`) need an explicit `purl`. Virtual packages
+    never auto-derive from a commit, because they own no directory and would get
+    the PURL of the component that declares them.
 
     The explicit `purl` value also acts as an override for forks where the
     auto-derived "where we built from" PURL is not what downstream OSV/GHSA-style
