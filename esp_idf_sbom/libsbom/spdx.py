@@ -30,6 +30,7 @@ from esp_idf_sbom.libsbom.sbom import TOOL_SUPPLIER
 from esp_idf_sbom.libsbom.sbom import TOOL_URL
 from esp_idf_sbom.libsbom.sbom import TOOL_VERSION
 from esp_idf_sbom.libsbom.sbom import File
+from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
 from esp_idf_sbom.libsbom.sbom import PackageKind
 from esp_idf_sbom.libsbom.sbom import kind_and_name
@@ -192,6 +193,21 @@ def _package_header(pkg: Package) -> str:
     return f'# {pkg.name} {pkg.kind.value}\n'
 
 
+def _document_creator(org: Organization) -> str:
+    """Render the document manufacturer as an SPDX 2.x Creator value.
+
+    Only the manufacturer maps here; SPDX has no document-level slot for the
+    supplier. Returns an empty string if there is no manufacturer, and the
+    caller then omits the Creator.
+    """
+    if not org.name:
+        return ''
+    # SPDX 2.x carries the contact inside the Creator value as "name (email)".
+    if org.contact_email:
+        return f'{org.name} ({org.contact_email})'
+    return org.name
+
+
 def _render_tagvalue(sbom: SBOM, version: str) -> str:
     """Render the SBOM as an SPDX 2.2 tag/value document."""
     argv = ' '.join('"' + arg + '"' if ' ' in arg else arg for arg in sys.argv)
@@ -211,6 +227,9 @@ def _render_tagvalue(sbom: SBOM, version: str) -> str:
     # behind it; SPDX 2.x has no slot for a tool's own purl or license.
     out += f'Creator: Tool: {TOOL_NAME}-{TOOL_VERSION}\n'
     out += f'Creator: {TOOL_SUPPLIER}\n'
+    creator = _document_creator(sbom.manufacturer)
+    if creator:
+        out += f'Creator: {creator}\n'
     out += f'Created: {created}\n'
     out += 'CreatorComment: <text>ESP-IDF SBOM document in SPDX format</text>\n'
     out += f'Relationship: SPDXRef-DOCUMENT DESCRIBES SPDXRef-{sbom.root}\n'
@@ -320,6 +339,11 @@ def _render_json(sbom: SBOM, version: str) -> str:
         for file in pkg.files:
             files.append(_file_json(pkg, file))
 
+    creators = [f'Tool: {TOOL_NAME}-{TOOL_VERSION}', TOOL_SUPPLIER]
+    creator = _document_creator(sbom.manufacturer)
+    if creator:
+        creators.append(creator)
+
     document: Dict[str, Any] = {
         'spdxVersion': f'SPDX-{version}',
         'dataLicense': 'CC0-1.0',
@@ -327,7 +351,7 @@ def _render_json(sbom: SBOM, version: str) -> str:
         'name': sbom.name,
         'documentNamespace': namespace,
         'creationInfo': {
-            'creators': [f'Tool: {TOOL_NAME}-{TOOL_VERSION}', TOOL_SUPPLIER],
+            'creators': creators,
             'created': created,
             'comment': 'ESP-IDF SBOM document in SPDX format',
         },
@@ -364,7 +388,7 @@ def _render_jsonld(sbom: SBOM, version: str) -> str:
 
     agents: Dict[str, str] = {}
 
-    def agent_id(supplier: str) -> Any:
+    def agent_id(supplier: str, url: str = '', email: str = '') -> Any:
         if not supplier:
             return None
         atype, name = 'Organization', supplier
@@ -375,7 +399,20 @@ def _render_jsonld(sbom: SBOM, version: str) -> str:
         if name not in agents:
             aid = sid('Agent-' + (_sanitize_spdxid(name) or 'x'))
             agents[name] = aid
-            graph.append({'type': atype, 'spdxId': aid, 'creationInfo': ci, 'name': name})
+            agent: Dict[str, Any] = {'type': atype, 'spdxId': aid, 'creationInfo': ci, 'name': name}
+            # Only the document manufacturer passes these.
+            identifiers = []
+            if email:
+                identifiers.append(
+                    {'type': 'ExternalIdentifier', 'externalIdentifierType': 'email', 'identifier': email}
+                )
+            if url:
+                identifiers.append(
+                    {'type': 'ExternalIdentifier', 'externalIdentifierType': 'urlScheme', 'identifier': url}
+                )
+            if identifiers:
+                agent['externalIdentifier'] = identifiers
+            graph.append(agent)
             element_ids.append(aid)
         return agents[name]
 
@@ -403,7 +440,20 @@ def _render_jsonld(sbom: SBOM, version: str) -> str:
             '@id': ci,
             'specVersion': version,
             'created': created,
-            'createdBy': [agent_id(TOOL_SUPPLIER)],
+            # The organization that produced this document, before the tool's
+            # own vendor. BSI TR-03183-2 reads the SBOM creator from here.
+            'createdBy': [
+                a
+                for a in (
+                    agent_id(
+                        sbom.manufacturer.name,
+                        url=sbom.manufacturer.url,
+                        email=sbom.manufacturer.contact_email,
+                    ),
+                    agent_id(TOOL_SUPPLIER),
+                )
+                if a
+            ],
             'createdUsing': [tool],
         }
     )

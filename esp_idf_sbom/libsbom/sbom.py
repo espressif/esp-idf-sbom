@@ -157,6 +157,22 @@ class Package:
 
 
 @dataclass
+class Organization:
+    """An organization named in the document metadata.
+
+    Comes from the "document" key of the project's manifest. The name keeps the
+    "Organization: " or "Person: " prefix; backends strip it.
+    """
+
+    name: str = ''
+    url: str = ''
+    contact_email: str = ''
+
+    def __bool__(self) -> bool:
+        return bool(self.name or self.url or self.contact_email)
+
+
+@dataclass
 class SBOM:
     """A whole SBOM: a flat, ordered set of packages plus document metadata.
 
@@ -170,6 +186,12 @@ class SBOM:
     # records it; empty if it does not say or the model was built, not parsed.
     # Render does not read it and writes the TOOL_* identity above.
     creator: str = ''
+    # Who supplies the product this document describes. CycloneDX has a slot
+    # for it, SPDX does not.
+    supplier: Organization = field(default_factory=Organization)
+    # Who produced this document, meaning the organization running the tool.
+    # SPDX records this as the document creator.
+    manufacturer: Organization = field(default_factory=Organization)
     packages: List[Package] = field(default_factory=list)
 
 
@@ -639,6 +661,11 @@ class SBOMObject:
             if 'maintainers' in idf_component_yml and idf_component_yml['maintainers']:
                 manifest['supplier'] = 'Person: ' + ', '.join(idf_component_yml['maintainers'])
 
+        # Written by the IDF Component Registry, not by hand. Not in
+        # EMPTY_MANIFEST, so update_manifest never merges it.
+        if 'repository_info' in idf_component_yml:
+            manifest['repository_info'] = idf_component_yml['repository_info']
+
         return manifest
 
     def find_orphan_manifests(self, directory: str) -> List[str]:
@@ -805,42 +832,59 @@ class SBOMPackage(SBOMObject):
 
         self.add_relationships()
 
+    def purl_from_commit(self) -> str:
+        """Derive a PURL from the commit the package was built from, with the
+        package path inside the repository as the PURL subpath.
+
+        The commit comes from repository_info for a managed component, or from
+        manifest['repository'], which get_remote_location() fills in as
+        "<url>@<sha>" or "<url>@<sha>#<path>".
+
+        Returns an empty string if no commit is known, as for the toolchain.
+        """
+        repository = self.manifest['repository']
+
+        # The key is absent for most packages and its value comes from a
+        # published idf_component.yml, so check both.
+        info = self.manifest.get('repository_info')
+        if isinstance(info, dict) and info.get('commit_sha'):
+            return utils.derive_purl(repository, info['commit_sha'], info.get('path', ''))
+
+        # Split on the last "@"; the URL itself may contain one.
+        url, sep, rest = repository.rpartition('@')
+        if not sep:
+            return ''
+        sha, _, subpath = rest.partition('#')
+        return utils.derive_purl(url, sha, subpath)
+
     def guess_purl(self) -> str:
-        """Try to derive a PURL from the manifest url or repository.
+        """Try to derive a PURL for the package.
 
-        Tries manifest['url'] first (explicit, maintainer-curated upstream
-        URL set in sbom.yml or sbom-url in .gitmodules). If that does not
-        yield a PURL -- e.g. a release-asset download URL like the
-        toolchain's .../releases/download/.../foo.tar.xz -- falls back to
-        manifest['repository'], stripping the @<sha>#<path> suffix that
-        get_remote_location() appends.
+        A commit is used if known. The github and gitlab PURL types define the
+        version as a commit or tag, and the package version is neither: an
+        in-tree component uses ESP-IDF's git describe output and a managed
+        component the registry's "<ver>~<rev>" revision.
 
-        The repository fallback is skipped when the auto-filled URL has a
-        "#<path>" fragment, which marks the package directory as a
-        subdirectory of a parent git repository (typical for in-tree
-        wrapper components and the project itself when both live inside
-        esp-idf). Without this guard every in-tree wrapper would
-        auto-derive the same pkg:github/espressif/esp-idf@<ver> PURL --
-        identical lines on dozens of packages add no identification
-        information that the per-package repository reference (which retains
-        the subpath) doesn't already provide.
+        Otherwise the package version is used, with manifest['url'] tried before
+        manifest['repository']. This covers the toolchain, whose version is a
+        crosstool-NG release tag.
 
-        Returns empty string when neither source yields a PURL; the
-        caller is then expected to leave manifest['purl'] empty so no
-        purl is emitted.
+        Returns an empty string if no PURL can be derived, and the caller then
+        emits none.
         """
         if self.args['no_guess']:
             return ''
+
+        purl = self.purl_from_commit()
+        if purl:
+            return purl
 
         ver = self.manifest['version']
         purl = utils.derive_purl(self.manifest['url'], ver)
         if purl or not self.manifest['repository']:
             return purl
 
-        # A "#" anywhere in the repository value signals the auto-filled
-        # "<URL>@<sha>#<path>" form from get_remote_location() where the
-        # package lives inside a parent repo. Skip rather than emit a
-        # PURL pointing at the parent.
+        # A "#" means the "<url>@<sha>#<path>" form, already tried above.
         if '#' in self.manifest['repository']:
             return ''
         return utils.derive_purl(self.manifest['repository'].split('@', 1)[0], ver)
@@ -1145,6 +1189,13 @@ class SBOMProject(SBOMPackage):
         manifest = super().get_manifest(path)
         if not manifest['version']:
             manifest['version'] = self.proj_desc['project_version']
+
+        # Describes the SBOM document, not a package. Read only here, so it
+        # cannot end up on another package. Not in EMPTY_MANIFEST, so
+        # update_manifest never merges it.
+        sbom_yml = mft.load(utils.pjoin(path, 'sbom.yml'))
+        if 'document' in sbom_yml:
+            manifest['document'] = sbom_yml['document']
 
         return manifest
 
@@ -1474,6 +1525,12 @@ class SBOMVirtpackage(SBOMPackage):
         # A virtual package cannot have subpackages.
         return []
 
+    def purl_from_commit(self) -> str:
+        # A virtual package borrows the directory of the component that
+        # declares it, so a commit PURL would point at that component. It can
+        # still derive a PURL from a url in its own manifest.
+        return ''
+
     def get_files(self, path: str, exclude_dirs: Optional[List[str]] = None) -> List['SBOMFile']:
         # A virtual package cannot have files.
         return []
@@ -1613,6 +1670,16 @@ def _flatten(pkg: SBOMPackage, out: List[Package]) -> None:
         _flatten(subpkg, out)
 
 
+def _organization(entity: Dict[str, str]) -> Organization:
+    """Build an Organization from one entity of the manifest "document" key.
+    An absent entity yields an empty Organization, which backends skip."""
+    return Organization(
+        name=entity.get('name', ''),
+        url=entity.get('url', ''),
+        contact_email=entity.get('contact', ''),
+    )
+
+
 def build(args: Dict[str, Any], proj_desc_path: str) -> SBOM:
     """Build the format-neutral SBOM model from a built ESP-IDF project.
 
@@ -1653,7 +1720,14 @@ def build(args: Dict[str, Any], proj_desc_path: str) -> SBOM:
     for component in project.components.values():
         _flatten(component, packages)
 
-    return SBOM(name=proj_desc['project_name'], root=project.ref, packages=packages)
+    document = project.manifest.get('document', {})
+    return SBOM(
+        name=proj_desc['project_name'],
+        root=project.ref,
+        supplier=_organization(document.get('supplier', {})),
+        manufacturer=_organization(document.get('manufacturer', {})),
+        packages=packages,
+    )
 
 
 def load(path: str) -> SBOM:

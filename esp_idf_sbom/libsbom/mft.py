@@ -26,14 +26,18 @@ IDF_FRAMEWORK_DESCRIPTION = (
     "Espressif IoT Development Framework -- the official development framework for Espressif Systems' chips."
 )
 IDF_FRAMEWORK_SUPPLIER = 'Organization: Espressif Systems (Shanghai) CO LTD'
+# The license ESP-IDF declares for itself, as stated by the LICENSE file at the
+# root of the repository. Individual components keep their own licenses, which
+# are concluded from their file tags; this is the framework's declared license.
+IDF_FRAMEWORK_LICENSE = 'Apache-2.0'
 
 
 def build_idf_framework_manifest(idf_path: str) -> Dict[str, Any]:
     """Build the in-memory manifest dict for an ESP-IDF framework package.
 
     Reads the IDF version from ``tools/cmake/version.cmake`` at ``idf_path``,
-    composes the four NVD CPEs, and derives ``PackageDownloadLocation`` from
-    the checkout's git remote (so customer forks are attributed correctly).
+    composes the four NVD CPEs, and takes the repository from the checkout's
+    git remote (so customer forks are attributed correctly).
 
     Returns an empty dict when the version cannot be read; callers should
     treat that as "no framework manifest available" and skip emitting one.
@@ -50,10 +54,14 @@ def build_idf_framework_manifest(idf_path: str) -> Dict[str, Any]:
         'cpe': utils.build_idf_framework_cpes(version),
         'description': IDF_FRAMEWORK_DESCRIPTION,
         'supplier': IDF_FRAMEWORK_SUPPLIER,
+        'license': IDF_FRAMEWORK_LICENSE,
     }
+    # The remote is where the sources are, not a download location, so it goes
+    # to repository. The SBOM build path fills this in on its own; the manifest
+    # check path does not, and has no other source for it.
     remote = git.get_remote_location(idf_path)
     if remote:
-        manifest['url'] = f'git+{remote}'
+        manifest['repository'] = remote
     return manifest
 
 
@@ -346,6 +354,18 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
             return True
         raise schema.SchemaError(f'Value {url} must have "git", "http" or "https" scheme and domain.')
 
+    def check_email(email: str) -> bool:
+        if utils.is_email(email):
+            return True
+        raise schema.SchemaError(f'Value "{email}" does not look like an email address.')
+
+    def check_document_entity(entity: Dict[str, str]) -> bool:
+        # A name alone gives no way to reach the entity, which is what a
+        # vulnerability contact has to provide.
+        if not entity.get('url') and not entity.get('contact'):
+            raise schema.SchemaError('At least one of "url" or "contact" must be specified.')
+        return True
+
     def check_cpes(cpes: List[str]) -> bool:
         for cpe in cpes:
             if not CPE.is_cpe_valid(cpe):
@@ -446,6 +466,26 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
 
     manifests_schema = schema.Schema([manifest_entry_schema], ignore_extra_keys=True)
 
+    # Describes the SBOM document, not the package. Used only in the project's
+    # manifest.
+    document_entity_schema = schema.Schema(
+        schema.And(
+            {
+                'name': schema.And(str, check_person_organization),
+                schema.Optional('url'): schema.And(str, check_url),
+                schema.Optional('contact'): schema.And(str, check_email),
+            },
+            check_document_entity,
+        )
+    )
+
+    document_schema = schema.Schema(
+        {
+            schema.Optional('supplier'): document_entity_schema,
+            schema.Optional('manufacturer'): document_entity_schema,
+        }
+    )
+
     sbom_schema = schema.Schema(
         {
             schema.Optional('name'): str,
@@ -465,6 +505,9 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
             schema.Optional('manifests'): manifests_schema,
             schema.Optional('virtpackages'): schema.And(list, check_virtpackages),
             schema.Optional('if'): schema.And(str, check_if),
+            # Read only from the project's manifest. It lives in sbom.yml so
+            # that no separate file is needed; elsewhere it has no effect.
+            schema.Optional('document'): document_schema,
         },
         ignore_extra_keys=True,
     )
