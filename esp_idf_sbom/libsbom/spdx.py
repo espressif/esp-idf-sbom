@@ -772,15 +772,18 @@ def _parse_tagvalue(text: str) -> SBOM:
     name = ''
     root = ''
     creator = ''
+    doc_id = ''
     for line in text.splitlines():
         line = line.strip()
         if not name and line.startswith('DocumentName:'):
             name = line.split(':', 1)[1].strip()
+        elif not doc_id and line.startswith('DocumentNamespace:'):
+            doc_id = line.split(':', 1)[1].strip()
         elif not root and line.startswith('Relationship:') and ' DESCRIBES ' in line:
             root = _unref(line.split(' DESCRIBES ', 1)[1].strip())
         elif not creator and line.startswith('Creator: Tool:'):
             creator = line[len('Creator: Tool:') :].strip()
-        if name and root and creator:
+        if name and root and creator and doc_id:
             break
     # The project package is emitted first and is the DESCRIBES target; fall back
     # to it if the header did not carry the information.
@@ -789,7 +792,7 @@ def _parse_tagvalue(text: str) -> SBOM:
     if not name and packages:
         name = packages[0].package_name
 
-    return SBOM(name=name, root=root, packages=packages, creator=creator)
+    return SBOM(name=name, root=root, packages=packages, creator=creator, doc_id=doc_id)
 
 
 def _comment_to_dict(comment: str) -> Dict[str, Any]:
@@ -887,7 +890,13 @@ def _parse_json(text: str) -> SBOM:
     if not name and packages:
         name = packages[0].package_name
 
-    return SBOM(name=name, root=root, packages=packages, creator=creator)
+    return SBOM(
+        name=name,
+        root=root,
+        packages=packages,
+        creator=creator,
+        doc_id=document.get('documentNamespace', ''),
+    )
 
 
 def _parse_jsonld(text: str) -> SBOM:
@@ -997,7 +1006,7 @@ def _parse_jsonld(text: str) -> SBOM:
         root = packages[0].ref
     if not doc_name and packages:
         doc_name = packages[0].package_name
-    return SBOM(name=doc_name, root=root, packages=packages, creator=creator)
+    return SBOM(name=doc_name, root=root, packages=packages, creator=creator, doc_id=docns)
 
 
 def parse(text: str, format: str = 'tagvalue') -> SBOM:

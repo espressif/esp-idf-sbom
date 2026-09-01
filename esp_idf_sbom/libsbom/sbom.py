@@ -186,6 +186,12 @@ class SBOM:
     # records it; empty if it does not say or the model was built, not parsed.
     # Render does not read it and writes the TOOL_* identity above.
     creator: str = ''
+    # Id of the document this model was parsed from: the CycloneDX serialNumber
+    # or the SPDX document namespace. Empty if the model was built and not
+    # parsed. Like creator, render ignores it and writes its own id, so this
+    # says what the input file was, not what the output will be. A standalone
+    # VEX names the SBOM it belongs to by this id.
+    doc_id: str = ''
     # Who supplies the product this document describes. CycloneDX has a slot
     # for it, SPDX does not.
     supplier: Organization = field(default_factory=Organization)

@@ -16,12 +16,15 @@ Both round-trip and keep check seeing every CPE.
 
 import datetime
 import json
+import re
 import uuid
 from collections import defaultdict
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Tuple
 
+from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import vex
 from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import TOOL_DISTRIBUTION_URL
@@ -319,6 +322,103 @@ def render_vex(vexdoc: vex.Vex, format: str = 'json', version: str = '1.6') -> s
 
 
 # ===========================================================================
+# Parse: standalone CycloneDX VEX -> VEX model
+# ===========================================================================
+
+# Reverse of _ANALYSIS_STATE. CycloneDX has more states than CISA, so several
+# map to the same one. The justification is not read back at all, because
+# code_not_present has two CISA meanings and nothing downstream uses it.
+_VEX_STATUS = {
+    'not_affected': vex.VexStatus.NOT_AFFECTED,
+    'false_positive': vex.VexStatus.NOT_AFFECTED,
+    'exploitable': vex.VexStatus.AFFECTED,
+    'resolved': vex.VexStatus.FIXED,
+    'resolved_with_pedigree': vex.VexStatus.FIXED,
+    'in_triage': vex.VexStatus.UNDER_INVESTIGATION,
+}
+
+# A BOM-Link names a document, and with a fragment it names one element in it.
+# The document form is used by the externalReferences entry, the element form by
+# every affects[] entry.
+_BOM_LINK = r'urn:cdx:(?P<serial>[0-9a-f-]{36})/(?P<version>[1-9][0-9]*)'
+_BOM_LINK_DOCUMENT_RE = re.compile(f'^{_BOM_LINK}$')
+_BOM_LINK_ELEMENT_RE = re.compile(f'^{_BOM_LINK}' + r'#(?P<ref>.+)$')
+
+
+def _parse_bom_reference(bom: Dict[str, Any]) -> Tuple[str, int]:
+    """The SBOM a standalone VEX names in its document level references.
+
+    render_vex writes it as an externalReferences entry of type bom. The entry is
+    optional, so a VEX from another tool may only have the links in affects[].
+    """
+    for extref in bom.get('externalReferences', []):
+        if extref.get('type') != 'bom':
+            continue
+        match = _BOM_LINK_DOCUMENT_RE.match(extref.get('url', ''))
+        if match:
+            return 'urn:uuid:' + match.group('serial'), int(match.group('version'))
+    return '', 1
+
+
+def _parse_affects(ref: str) -> Tuple[vex.VexProduct, str, int]:
+    """Read one affects[] entry.
+
+    A standalone VEX uses a BOM-Link, which holds the SBOM serialNumber and
+    version as well as the component ref. A VEX embedded in an SBOM uses a plain
+    bom-ref, and then there is no SBOM id to read.
+    """
+    match = _BOM_LINK_ELEMENT_RE.match(ref)
+    if not match:
+        return vex.VexProduct(ref=ref), '', 1
+    return (
+        vex.VexProduct(ref=match.group('ref')),
+        'urn:uuid:' + match.group('serial'),
+        int(match.group('version')),
+    )
+
+
+def parse_vex(text: str) -> vex.Vex:
+    """Parse a standalone CycloneDX VEX document into the format-neutral VEX model."""
+    bom = json.loads(text)
+
+    # The document reference is where the pairing belongs. The links in affects[]
+    # have to agree with it, and stand in for it when it is missing.
+    sbom_id, sbom_version = _parse_bom_reference(bom)
+
+    statements = []
+    for vulnerability in bom.get('vulnerabilities', []):
+        analysis = vulnerability.get('analysis', {})
+        state = analysis.get('state', '')
+        if state not in _VEX_STATUS:
+            log.warn(f'Skipping CycloneDX VEX entry with unknown analysis state "{state}".')
+            continue
+
+        products = []
+        for affects in vulnerability.get('affects', []):
+            product, link_id, link_version = _parse_affects(affects.get('ref', ''))
+            products.append(product)
+            if not link_id:
+                continue
+            if not sbom_id:
+                sbom_id, sbom_version = link_id, link_version
+            elif (link_id, link_version) != (sbom_id, sbom_version):
+                raise ValueError(
+                    f'the statements name more than one SBOM, "{sbom_id}/{sbom_version}" and "{link_id}/{link_version}"'
+                )
+
+        statements.append(
+            vex.VexStatement(
+                vulnerability=vulnerability.get('id', ''),
+                status=_VEX_STATUS[state],
+                products=products,
+                impact_statement=analysis.get('detail', ''),
+            )
+        )
+
+    return vex.Vex(statements=statements, sbom_id=sbom_id, sbom_version=sbom_version)
+
+
+# ===========================================================================
 # Parse: CycloneDX JSON -> SBOM model
 # ===========================================================================
 
@@ -449,6 +549,7 @@ def _parse_json(text: str) -> SBOM:
         manufacturer=_entity_to_organization(metadata.get('manufacturer', {})),
         packages=packages,
         creator=creator,
+        doc_id=bom.get('serialNumber', ''),
     )
 
 
