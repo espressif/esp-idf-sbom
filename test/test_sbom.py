@@ -639,6 +639,28 @@ def test_spdx_jsonld_renders_files() -> None:
     assert not errors, f'SPDX 3.0 file validation failed: {errors[:2]}'
 
 
+def test_spdx_jsonld_parses_bare_refs() -> None:
+    """SPDX 3.0 element ids carry the document namespace. Parsing must drop our own
+    so the refs match what the other backends produce, and so re-rendering does not
+    nest the old namespace inside the new one."""
+    from esp_idf_sbom.libsbom import spdx
+
+    model = _sbom_with_file()
+    model.packages[1].cve_exclude_list = [{'cve': 'CVE-2020-1', 'reason': 'not used'}]
+
+    back = spdx.parse(spdx.render(model, format='json-ld', version='3.0.1'), format='json-ld')
+
+    by_ref = {pkg.ref: pkg for pkg in back.packages}
+    assert back.root == 'PROJECT-app'
+    assert set(by_ref) == {'PROJECT-app', 'COMPONENT-lib'}
+    assert by_ref['PROJECT-app'].depends_on == ['COMPONENT-lib']
+    # The graph is still keyed on full ids, so this breaks if the two ever drift.
+    assert by_ref['COMPONENT-lib'].cve_exclude_list == [{'cve': 'CVE-2020-1', 'reason': 'not used'}]
+
+    graph = json.loads(spdx.render(back, format='json-ld', version='3.0.1'))['@graph']
+    assert all(e.get('spdxId', '').count('#') <= 1 for e in graph)
+
+
 def test_producer_attribution() -> None:
     """Every format must attribute the document to the tool that produced it:
     name and version, the organization supplying the tool, and the tool's purl

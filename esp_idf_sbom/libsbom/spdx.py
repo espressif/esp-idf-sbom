@@ -686,6 +686,14 @@ def _unref(spdxid: str) -> str:
     return spdxid[len(prefix) :] if spdxid.startswith(prefix) else spdxid
 
 
+def _unref_jsonld(spdxid: str, docns: str) -> str:
+    """Remove our document namespace from an SPDX 3.0 element id and return the
+    model ref. Ids from another namespace are returned unchanged, because only our
+    ids are known to be unique without the namespace."""
+    prefix = f'{docns}#'
+    return spdxid[len(prefix) :] if docns and spdxid.startswith(prefix) else spdxid
+
+
 def _package_from_tags(spdxid: str, tags: Dict[str, List[str]]) -> Package:
     ref = _unref(spdxid)
     # The SPDXID is SPDXRef-<MARK>-<sanitized name>; recover kind and name from it.
@@ -909,6 +917,7 @@ def _parse_jsonld(text: str) -> SBOM:
     doc_name = ''
     creator = ''
     root = ''
+    docns = ''
     for e in graph:
         t = e.get('type')
         if t == 'Relationship' and e.get('relationshipType') == 'dependsOn':
@@ -919,6 +928,8 @@ def _parse_jsonld(text: str) -> SBOM:
                 excludes.setdefault(_id(to), []).append(entry)
         elif t == 'SpdxDocument':
             doc_name = e.get('name', '')
+            # Our namespace. render writes it as '<docns>#SPDXRef-DOCUMENT'.
+            docns = _id(e.get('spdxId')).rsplit('#', 1)[0]
             roots = _as_list(e.get('rootElement'))
             if roots:
                 root = _id(roots[0])
@@ -927,11 +938,15 @@ def _parse_jsonld(text: str) -> SBOM:
             # esp-idf-sbom (see the provenance note in cmd_check).
             creator = e.get('name', '')
 
+    root = _unref_jsonld(root, docns)
+
     packages: List[Package] = []
     for e in graph:
         if e.get('type') != 'software_Package':
             continue
-        ref = _id(e.get('spdxId'))
+        # The graph uses full ids (see _id). The model uses short refs.
+        spdxid = _id(e.get('spdxId'))
+        ref = _unref_jsonld(spdxid, docns)
         # kind/name are cosmetic on the load path (check keys on
         # package_name/cpes/version); derive them best-effort from the id
         # fragment of our own KIND-name scheme, defaulting to COMPONENT.
@@ -955,9 +970,9 @@ def _parse_jsonld(text: str) -> SBOM:
                 version=e.get('software_packageVersion', ''),
                 purl=e.get('software_packageUrl', ''),
                 cpes=cpes,
-                cve_exclude_list=excludes.get(ref, []),
+                cve_exclude_list=excludes.get(spdxid, []),
                 cve_keywords=cve_keywords,
-                depends_on=depends.get(ref, []),
+                depends_on=[_unref_jsonld(d, docns) for d in depends.get(spdxid, [])],
             )
         )
 
