@@ -21,10 +21,12 @@ from esp_idf_sbom.libsbom import git
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import mft
 from esp_idf_sbom.libsbom import nvd
+from esp_idf_sbom.libsbom import openvex
 from esp_idf_sbom.libsbom import report
 from esp_idf_sbom.libsbom import sbom
 from esp_idf_sbom.libsbom import spdx
 from esp_idf_sbom.libsbom import utils
+from esp_idf_sbom.libsbom import vex
 
 EXTENDED_SCAN_HELP = (
     'If available, use the product part of the CPE and the keywords found '
@@ -95,9 +97,72 @@ SBOM_FORMATS: Dict[str, SbomFormat] = {
 }
 
 
-def cmd_create(args: Dict[str, Any]) -> int:
+class VexFormat(NamedTuple):
+    """One create --vex-format choice. Same as SbomFormat, plus "linked".
+
+    A linked format points to the SBOM document. A CycloneDX VEX uses a BOM-Link
+    built from the SBOM serialNumber, so it needs a CycloneDX SBOM. OpenVEX names
+    products by PURL and CPE and works with any SBOM format."""
+
+    backend: Any
+    encoding: str
+    version: str
+    linked: bool
+
+
+# --vex values that are not a format: the VEX goes into the SBOM, or nowhere.
+_VEX_IN_SBOM = ('embed', 'none')
+
+VEX_FORMATS: Dict[str, VexFormat] = {
+    'openvex': VexFormat(openvex, 'json', '0.2.0', False),
+    'openvex@0.2.0': VexFormat(openvex, 'json', '0.2.0', False),
+    'cyclonedx-json': VexFormat(cyclonedx, 'json', '1.6', True),
+    'cyclonedx-json@1.6': VexFormat(cyclonedx, 'json', '1.6', True),
+}
+
+
+def _check_vex_options(args: Dict[str, Any]) -> None:
+    """Refuse option combinations that cannot do what the user asked for."""
+    vex_choice = args['vex']
+    vex_output = args['vex_output']
+    separate = vex_choice not in _VEX_IN_SBOM
+
+    if separate and not vex_output:
+        log.die(f'--vex {vex_choice} writes a separate VEX document, so --vex-output is needed.')
+
+    if not separate and vex_output:
+        log.die(
+            f'--vex {vex_choice} writes no separate file, so --vex-output cannot be used. '
+            f'"embed" puts the VEX into the SBOM and "none" writes no VEX at all.'
+        )
+
+    if not separate:
+        return
+
+    # Both documents would be written through their own file handle, so neither
+    # would survive.
+    if args['output_file'] and os.path.realpath(args['output_file']) == os.path.realpath(vex_output):
+        log.die('The SBOM and the VEX cannot be written to the same file. Use --vex embed for one document.')
+
+    vexfmt = VEX_FORMATS[vex_choice]
     fmt = SBOM_FORMATS[args['format']]
+    if vexfmt.linked and vexfmt.backend is not fmt.backend:
+        log.die(
+            f'The "{vex_choice}" VEX format links to the SBOM document, so it needs an SBOM '
+            f'in the same format, not "{args["format"]}".'
+        )
+
+
+def cmd_create(args: Dict[str, Any]) -> int:
+    _check_vex_options(args)
+
+    fmt = SBOM_FORMATS[args['format']]
+    separate = args['vex'] not in _VEX_IN_SBOM
     model = sbom.build(args, args['input_file'])
+
+    # Build the VEX model before the exclusion list is cleared below, so the VEX
+    # file keeps all the exclusions.
+    vexdoc = vex.build(model) if separate else None
 
     if args['vex'] != 'embed':
         # All formats write their vulnerability information from this one list.
@@ -105,9 +170,24 @@ def cmd_create(args: Dict[str, Any]) -> int:
         for pkg in model.packages:
             pkg.cve_exclude_list = []
 
+    # Create the document id here and pass it to render(). The VEX file needs the
+    # same id to link to this SBOM.
+    doc_id = fmt.backend.new_document_id(model)
+    text = fmt.backend.render(model, format=fmt.encoding, version=fmt.version, doc_id=doc_id)
+
+    if vexdoc is not None:
+        vexfmt = VEX_FORMATS[args['vex']]
+        if vexfmt.linked:
+            vexdoc.sbom_id = doc_id
+        try:
+            with open(args['vex_output'], 'w') as f:
+                f.write(vexfmt.backend.render_vex(vexdoc, format=vexfmt.encoding, version=vexfmt.version))
+        except OSError as e:
+            log.die(f'cannot write VEX file: {e}')
+
     # markup=False: the SBOM is data, not a rich-markup message; without it rich
     # strips bracketed content (e.g. JSON arrays, or any '[...]' inside a value).
-    log.print(fmt.backend.render(model, format=fmt.encoding, version=fmt.version), markup=False)
+    log.print(text, markup=False)
     return 0
 
 
@@ -849,7 +929,7 @@ def main(
 )
 @click.option(
     '--vex',
-    type=click.Choice(['embed', 'none']),
+    type=click.Choice(list(_VEX_IN_SBOM) + list(VEX_FORMATS)),
     default=os.environ.get('SBOM_CREATE_VEX', 'embed'),
     help=(
         'What to do with the vulnerability information, meaning the excluded CVEs. '
@@ -857,7 +937,21 @@ def main(
         'vulnerabilities, SPDX 3.0.1 security elements, or the cve-exclude-list '
         'comment in SPDX 2.2. '
         'none - write no vulnerability information at all. The excluded CVEs are '
-        'lost, so check will report them again.'
+        'lost, so check will report them again. '
+        'A VEX format writes a separate VEX document and leaves the SBOM clean. '
+        'openvex - OpenVEX 0.2.0. It names components by PURL and CPE, so it works '
+        'with any SBOM format. '
+        'cyclonedx-json - CycloneDX 1.6. It links to the components with a '
+        'BOM-Link, so it needs --format cyclonedx-json.'
+    ),
+)
+@click.option(
+    '--vex-output',
+    metavar='VEX_FILE',
+    default=None,
+    help=(
+        'Write the separate VEX document to VEX_FILE. Needed when --vex selects a '
+        'VEX format, and cannot be used with --vex embed or --vex none.'
     ),
 )
 @no_sync_excluded_cves_option

@@ -209,10 +209,18 @@ def _document_creator(org: Organization) -> str:
     return org.name
 
 
-def _render_tagvalue(sbom: SBOM, version: str) -> str:
+def new_document_id(sbom: SBOM) -> str:
+    """Return a new document namespace for an SBOM.
+
+    Pass it to render() when the caller also needs the id.
+    """
+    return f'https://spdx.org/spdxdocs/{_sanitize_spdxid(sbom.name or "document")}-{uuid.uuid4()}'
+
+
+def _render_tagvalue(sbom: SBOM, version: str, doc_id: str = '') -> str:
     """Render the SBOM as an SPDX 2.2 tag/value document."""
     argv = ' '.join('"' + arg + '"' if ' ' in arg else arg for arg in sys.argv)
-    namespace = 'http://spdx.org/spdxdocs/' + _sanitize_spdxid(sbom.name) + '-' + str(uuid.uuid4())
+    namespace = doc_id or new_document_id(sbom)
     created = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     out = ''
@@ -311,13 +319,13 @@ def _package_json(pkg: Package) -> Dict[str, Any]:
     return pkg_obj
 
 
-def _render_json(sbom: SBOM, version: str) -> str:
+def _render_json(sbom: SBOM, version: str, doc_id: str = '') -> str:
     """Render the SBOM as an SPDX 2.2 JSON document.
 
     The same data as the tag/value form, in the schema's canonical JSON shape:
     relationships and files are top-level arrays (not nested under packages).
     """
-    namespace = 'http://spdx.org/spdxdocs/' + _sanitize_spdxid(sbom.name) + '-' + str(uuid.uuid4())
+    namespace = doc_id or new_document_id(sbom)
     created = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     relationships: List[Dict[str, str]] = [
@@ -365,7 +373,7 @@ def _render_json(sbom: SBOM, version: str) -> str:
     return json.dumps(document, indent=2)
 
 
-def _render_jsonld(sbom: SBOM, version: str) -> str:
+def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
     """Render the model as SPDX 3.0 JSON-LD.
 
     Unlike SPDX 2.x, SPDX 3.0 has no tag/value form -- JSON-LD is the only
@@ -377,7 +385,7 @@ def _render_jsonld(sbom: SBOM, version: str) -> str:
     excluded CVE as a security_Vulnerability plus a not-affected VEX relationship.
     """
     context = f'https://spdx.org/rdf/{version}/spdx-context.jsonld'
-    docns = f'https://spdx.org/spdxdocs/{_sanitize_spdxid(sbom.name or "document")}-{uuid.uuid4()}'
+    docns = doc_id or new_document_id(sbom)
 
     def sid(suffix: str) -> str:
         return f'{docns}#{suffix}'
@@ -659,20 +667,21 @@ def _render_jsonld(sbom: SBOM, version: str) -> str:
     return json.dumps({'@context': context, '@graph': graph}, indent=2)
 
 
-def render(sbom: SBOM, format: str = 'tagvalue', version: str = '2.2') -> str:
+def render(sbom: SBOM, format: str = 'tagvalue', version: str = '2.2', doc_id: str = '') -> str:
     """Render a format-neutral SBOM as an SPDX document.
 
     :param sbom: the SBOM model to serialize
     :param format: 'tagvalue' or 'json' for SPDX 2.x, 'json-ld' for SPDX 3.0 JSON-LD
     :param version: the SPDX spec version to emit
+    :param doc_id: document namespace to use. A new one is created when empty.
     :returns: the serialized SPDX document
     """
     if format == 'tagvalue':
-        return _render_tagvalue(sbom, version)
+        return _render_tagvalue(sbom, version, doc_id)
     if format == 'json':
-        return _render_json(sbom, version)
+        return _render_json(sbom, version, doc_id)
     if format == 'json-ld':
-        return _render_jsonld(sbom, version)
+        return _render_jsonld(sbom, version, doc_id)
     raise ValueError(f'unsupported SPDX format: {format!r}')
 
 

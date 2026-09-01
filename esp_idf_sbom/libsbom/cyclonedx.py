@@ -203,8 +203,17 @@ def _vulnerability(statement: vex.VexStatement, bom_link: str = '') -> Dict[str,
     }
 
 
-def _render_json(sbom: SBOM, version: str) -> str:
-    serial = 'urn:uuid:' + str(uuid.uuid4())
+def new_document_id(sbom: SBOM) -> str:
+    """Return a new serialNumber for an SBOM.
+
+    Pass it to render() when the caller also needs the id, for example to link a
+    VEX file to the SBOM.
+    """
+    return 'urn:uuid:' + str(uuid.uuid4())
+
+
+def _render_json(sbom: SBOM, version: str, doc_id: str = '') -> str:
+    serial = doc_id or new_document_id(sbom)
     timestamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     by_ref = {pkg.ref: pkg for pkg in sbom.packages}
 
@@ -241,15 +250,16 @@ def _render_json(sbom: SBOM, version: str) -> str:
     return json.dumps(bom, indent=2)
 
 
-def render(sbom: SBOM, format: str = 'json', version: str = '1.6') -> str:
+def render(sbom: SBOM, format: str = 'json', version: str = '1.6', doc_id: str = '') -> str:
     """Render a format-neutral SBOM as a CycloneDX document.
 
     :param sbom: the SBOM model to serialize
     :param format: 'json' for CycloneDX JSON
     :param version: the CycloneDX spec version to emit (currently '1.6')
+    :param doc_id: serialNumber to use. A new one is created when empty.
     """
     if format == 'json':
-        return _render_json(sbom, version)
+        return _render_json(sbom, version, doc_id)
     raise ValueError(f'unsupported CycloneDX format: {format!r}')
 
 
