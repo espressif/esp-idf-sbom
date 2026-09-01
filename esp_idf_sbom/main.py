@@ -3,9 +3,13 @@
 # SPDX-FileCopyrightText: 2023-2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
+import io
 import json
+import locale
 import os
 import sys
+from pathlib import Path
+from typing import IO
 from typing import Any
 from typing import Dict
 from typing import List
@@ -180,11 +184,9 @@ def cmd_create(args: Dict[str, Any]) -> int:
         vexfmt = VEX_FORMATS[args['vex']]
         if vexfmt.linked:
             vexdoc.sbom_id = doc_id
-        try:
-            with open(args['vex_output'], 'w') as f:
-                f.write(vexfmt.backend.render_vex(vexdoc, format=vexfmt.encoding, version=vexfmt.version))
-        except OSError as e:
-            log.die(f'cannot write VEX file: {e}')
+        # The same helper as the -o file, so both create missing directories.
+        vex_text = vexfmt.backend.render_vex(vexdoc, format=vexfmt.encoding, version=vexfmt.version)
+        _write_output_file(args['vex_output'], vex_text)
 
     # markup=False: the SBOM is data, not a rich-markup message; without it rich
     # strips bracketed content (e.g. JSON arrays, or any '[...]' inside a value).
@@ -758,6 +760,26 @@ def cmd_manifest_aggregate(args: Dict[str, Any]) -> int:
     return 0
 
 
+class _OutputBuffer(io.StringIO):
+    # rich replaces characters that the encoding of the console file cannot
+    # represent with an ASCII counterpart. io.StringIO reports no encoding, and
+    # rich then assumes UTF-8. Report the encoding _write_output_file() writes
+    # with, so the output is rendered as if it went into the file directly.
+    encoding = locale.getpreferredencoding(False)
+
+
+def _write_output_file(fn: str, data: str) -> None:
+    try:
+        path = Path(fn)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Escape characters that the output file encoding cannot represent, for
+        # example a package name with non-ASCII characters in a cp1252 locale, so
+        # that one name does not stop the whole file from being written.
+        path.write_text(data, encoding=_OutputBuffer.encoding, errors='backslashreplace')
+    except OSError as e:
+        log.die(f'cannot write to "{fn}": {e}')
+
+
 def _dispatch(ctx: click.Context, func: Any, **params: Any) -> None:
     # Merge the global options (stored on ctx.obj by the group) and the
     # subcommand options into a single args dict, configure the console, run the
@@ -765,14 +787,17 @@ def _dispatch(ctx: click.Context, func: Any, **params: Any) -> None:
     options = ctx.obj
     args = {**options, **params}
 
-    ofile = sys.stdout
+    # The output is collected in a buffer and the file is written only after the
+    # command succeeded. Creating the file upfront leaves an empty file behind on
+    # a failure and destroys the output of a previous run. Opening it just before
+    # the output is written is not enough either, because a command may fail in
+    # the middle of writing.
     output_file = params.get('output_file')
-    if output_file:
-        # set_console pins stdout to this file and drops --force-terminal there,
-        # so the written report stays ANSI-free.
-        ofile = open(output_file, 'w')
+    ofile: IO[str] = _OutputBuffer() if output_file else sys.stdout
 
     log.set_console(
+        # set_console pins stdout to this file and drops --force-terminal there,
+        # so the written report stays ANSI-free.
         ofile,
         options['quiet'],
         options['no_color'],
@@ -789,11 +814,11 @@ def _dispatch(ctx: click.Context, func: Any, **params: Any) -> None:
     # excluded_cves.yaml fetch is skipped on subcommands that consult it.
     nvd.EXCLUDED_CVES_NO_SYNC = bool(args.get('no_sync_excluded_cves', False))
 
-    try:
-        exit_code = func(args)
-    finally:
-        if ofile is not sys.stdout:
-            ofile.close()
+    # log.die raises SystemExit, so a failure in a command skips the write below
+    # and the file is left as it was.
+    exit_code = func(args)
+    if output_file:
+        _write_output_file(output_file, ofile.getvalue())  # type: ignore[attr-defined]
 
     ctx.exit(exit_code)
 
