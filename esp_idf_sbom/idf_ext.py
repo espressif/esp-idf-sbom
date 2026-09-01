@@ -38,9 +38,9 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
         sbom_format: str,
         **action_args: Any,
     ) -> None:
-        # Imported lazily: SBOM_FORMATS pulls in the render backends and is only
-        # needed when this action actually runs, so idf.py startup stays light.
-        from esp_idf_sbom.main import SBOM_FORMATS
+        # Imported here and not at module level, so that idf.py startup stays
+        # light; the format tables pull in the render backends.
+        from esp_idf_sbom.libsbom.formats import SBOM_FORMATS
 
         fmt = SBOM_FORMATS.get(sbom_format)
         if fmt is None:

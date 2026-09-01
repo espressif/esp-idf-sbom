@@ -17,7 +17,6 @@ only not_affected today, but with an explicit status, check can later report
 affected or under_investigation without any backend change.
 """
 
-import json
 from dataclasses import dataclass
 from dataclasses import field
 from enum import Enum
@@ -137,31 +136,6 @@ def build(sbom: SBOM, sbom_id: str = '') -> Vex:
     ]
 
     return Vex(statements=statements, sbom_id=sbom_id, sbom_name=sbom.name)
-
-
-def load(path: str) -> Vex:
-    """Read a VEX file, detect its format and parse it into the model.
-
-    This is the parse side entry point, like sbom.load() for SBOM files. Unlike
-    sbom.load() it does not read standard input, because that is where the SBOM
-    itself is read from.
-    """
-    with open(path) as f:
-        text = f.read()
-
-    # Late import: the backends import this module, so importing them at module
-    # level would be circular. load() only detects the format and dispatches.
-    from esp_idf_sbom.libsbom import cyclonedx
-    from esp_idf_sbom.libsbom import openvex
-
-    obj = json.loads(text)
-    if not isinstance(obj, dict):
-        raise ValueError('unrecognized VEX format')
-    if 'openvex.dev' in str(obj.get('@context', '')):
-        return openvex.parse_vex(text)
-    if obj.get('bomFormat') == 'CycloneDX':
-        return cyclonedx.parse_vex(text)
-    raise ValueError('unrecognized VEX format')
 
 
 # Statuses that say the CVE does not apply to the product. not_affected means it
