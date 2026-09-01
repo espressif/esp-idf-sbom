@@ -700,6 +700,69 @@ def test_producer_attribution() -> None:
     assert component['purl'] == TOOL_PURL
 
 
+def test_vex_build() -> None:
+    """vex.build turns each cve-exclude-list entry into one not-affected statement
+    about its own package, carrying both product identities."""
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_file()
+    lib = model.packages[1]
+    lib.purl = 'pkg:github/example/lib@2.0'
+    lib.cpes = ['cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*']
+    lib.cve_exclude_list = [
+        {'cve': 'CVE-2020-1', 'reason': 'not used'},
+        {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
+    ]
+
+    doc = vex.build(model, sbom_id='urn:uuid:11111111-2222-3333-4444-555555555555')
+
+    assert doc.sbom_id == 'urn:uuid:11111111-2222-3333-4444-555555555555'
+    assert doc.sbom_name == 'app'
+    assert [s.vulnerability for s in doc.statements] == ['CVE-2020-1', 'CVE-2020-2']
+
+    statement = doc.statements[0]
+    assert statement.status is vex.VexStatus.NOT_AFFECTED
+    assert statement.justification is None
+    assert statement.impact_statement == 'not used'
+
+    product = statement.products[0]
+    assert product.ref == 'COMPONENT-lib'
+    assert product.purl == 'pkg:github/example/lib@2.0'
+    assert product.cpes == ['cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*']
+    assert product.name == 'lib'
+    assert product.version == '2.0'
+    # A copy, so editing the statement cannot reach back into the SBOM model.
+    assert product.cpes is not lib.cpes
+
+
+def test_vex_build_without_exclusions() -> None:
+    """An SBOM with nothing excluded yields no statements at all."""
+    from esp_idf_sbom.libsbom import vex
+
+    assert vex.build(_sbom_with_file()).statements == []
+
+
+def test_vex_vocabulary_is_cisa() -> None:
+    """The model vocabulary has to stay CISA's. OpenVEX and the SPDX 3.0.1 security
+    profile use it verbatim, so only the CycloneDX backend maps out of it; changing
+    these values would push that mapping into every backend."""
+    from esp_idf_sbom.libsbom import vex
+
+    assert {s.value for s in vex.VexStatus} == {
+        'not_affected',
+        'affected',
+        'fixed',
+        'under_investigation',
+    }
+    assert {j.value for j in vex.VexJustification} == {
+        'component_not_present',
+        'vulnerable_code_not_present',
+        'vulnerable_code_not_in_execute_path',
+        'vulnerable_code_cannot_be_controlled_by_adversary',
+        'inline_mitigations_already_exist',
+    }
+
+
 def test_multiple_cpes(hello_world_build: Path) -> None:
     """Test that multiple CPE values can be specified in manifest file."""
     manifest = hello_world_build / 'main' / 'sbom.yml'
