@@ -91,6 +91,9 @@ class Vex:
 
     statements: List[VexStatement] = field(default_factory=list)
     sbom_id: str = ''  # the SBOM's serialNumber / document namespace
+    # The SBOM document version. A CycloneDX BOM-Link points to one version of a
+    # document, so the link needs it too.
+    sbom_version: int = 1
     sbom_name: str = ''
     # Who made these statements, as the parsed file records it. Empty if the file
     # does not say, or if the model was built and not parsed. Same as SBOM.creator:

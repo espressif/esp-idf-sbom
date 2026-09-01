@@ -183,8 +183,13 @@ _ANALYSIS_JUSTIFICATION = {
 }
 
 
-def _vulnerability(statement: vex.VexStatement) -> Dict[str, Any]:
-    """A VEX statement as a CycloneDX vulnerability entry."""
+def _vulnerability(statement: vex.VexStatement, bom_link: str = '') -> Dict[str, Any]:
+    """Convert a VEX statement to a CycloneDX vulnerability entry.
+
+    In an SBOM the affected components are named by their bom-ref. A standalone
+    VEX has no components, so bom_link holds the 'urn:cdx:<serial>/<version>' of
+    the SBOM and the refs become BOM-Links into it.
+    """
     analysis: Dict[str, Any] = {'state': _ANALYSIS_STATE[statement.status]}
     if statement.justification is not None:
         analysis['justification'] = _ANALYSIS_JUSTIFICATION[statement.justification]
@@ -194,7 +199,7 @@ def _vulnerability(statement: vex.VexStatement) -> Dict[str, Any]:
         'bom-ref': f'vex-{statement.products[0].ref}-{statement.vulnerability}',
         'id': statement.vulnerability,
         'analysis': analysis,
-        'affects': [{'ref': product.ref} for product in statement.products],
+        'affects': [{'ref': f'{bom_link}#{p.ref}' if bom_link else p.ref} for p in statement.products],
     }
 
 
@@ -246,6 +251,61 @@ def render(sbom: SBOM, format: str = 'json', version: str = '1.6') -> str:
     if format == 'json':
         return _render_json(sbom, version)
     raise ValueError(f'unsupported CycloneDX format: {format!r}')
+
+
+def _bom_link(vexdoc: vex.Vex) -> str:
+    """Return the BOM-Link for the SBOM this VEX belongs to.
+
+    The schema pattern is ^urn:cdx:<uuid>/[1-9][0-9]*$, so the serialNumber is
+    used without the urn:uuid: prefix.
+    """
+    if not vexdoc.sbom_id:
+        raise ValueError('a standalone CycloneDX VEX needs the serialNumber of its SBOM')
+    prefix = 'urn:uuid:'
+    serial = vexdoc.sbom_id[len(prefix) :] if vexdoc.sbom_id.startswith(prefix) else vexdoc.sbom_id
+    return f'urn:cdx:{serial}/{vexdoc.sbom_version}'
+
+
+def _render_vex_json(vexdoc: vex.Vex, version: str) -> str:
+    serial = 'urn:uuid:' + str(uuid.uuid4())
+    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    link = _bom_link(vexdoc)
+
+    # A BOM with assessments only, no components and no dependencies. The SBOM is
+    # referenced twice: once for the whole document, so that tools can find it, and
+    # once in every affects[] entry, so that each statement can be resolved alone.
+    bom: Dict[str, Any] = {
+        'bomFormat': 'CycloneDX',
+        'specVersion': version,
+        'serialNumber': serial,
+        'version': 1,
+        'metadata': {
+            'timestamp': timestamp,
+            'tools': {'components': [_tool_component()]},
+        },
+        'externalReferences': [
+            {
+                'type': 'bom',
+                'url': link,
+                'comment': f'SBOM this VEX applies to: {vexdoc.sbom_name}',
+            }
+        ],
+        'vulnerabilities': [_vulnerability(statement, bom_link=link) for statement in vexdoc.statements],
+    }
+
+    return json.dumps(bom, indent=2)
+
+
+def render_vex(vexdoc: vex.Vex, format: str = 'json', version: str = '1.6') -> str:
+    """Render a format-neutral VEX as a standalone CycloneDX document.
+
+    :param vexdoc: the VEX model to serialize
+    :param format: 'json' for CycloneDX JSON
+    :param version: the CycloneDX spec version to emit (currently '1.6')
+    """
+    if format == 'json':
+        return _render_vex_json(vexdoc, version)
+    raise ValueError(f'unsupported CycloneDX VEX format: {format!r}')
 
 
 # ===========================================================================
