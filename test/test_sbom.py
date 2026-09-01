@@ -516,7 +516,7 @@ def test_validate_sbom_json(hello_world_build: Path) -> None:
 
 
 def test_check_sbom_json(hello_world_build: Path) -> None:
-    """check must accept an SPDX JSON SBOM (sbom.load auto-detects the format)."""
+    """check must accept an SPDX JSON SBOM (formats.load_sbom auto-detects the format)."""
     tmpdir = TemporaryDirectory()
     output_fn = Path(tmpdir.name) / 'sbom.spdx.json'
     proj_desc_path = hello_world_build / 'build' / 'project_description.json'
@@ -544,7 +544,7 @@ def test_validate_sbom_cyclonedx(hello_world_build: Path) -> None:
 
 
 def test_check_sbom_cyclonedx(hello_world_build: Path) -> None:
-    """check must accept a CycloneDX SBOM (sbom.load auto-detects the format)."""
+    """check must accept a CycloneDX SBOM (formats.load_sbom auto-detects the format)."""
     tmpdir = TemporaryDirectory()
     output_fn = Path(tmpdir.name) / 'sbom.cdx.json'
     proj_desc_path = hello_world_build / 'build' / 'project_description.json'
@@ -608,7 +608,7 @@ def test_validate_sbom_spdx_jsonld(hello_world_build: Path) -> None:
 
 
 def test_check_sbom_spdx_jsonld(hello_world_build: Path) -> None:
-    """check must accept an SPDX 3.0 JSON-LD SBOM (sbom.load auto-detects the format)."""
+    """check must accept an SPDX 3.0 JSON-LD SBOM (formats.load_sbom auto-detects the format)."""
     tmpdir = TemporaryDirectory()
     output_fn = Path(tmpdir.name) / 'sbom.spdx3.json'
     proj_desc_path = hello_world_build / 'build' / 'project_description.json'
@@ -1005,25 +1005,25 @@ def test_parse_vex_round_trip() -> None:
 
 
 def test_parse_vex_detects_format(tmp_path: Path) -> None:
-    """vex.load detects the format from the top-level keys, like sbom.load does."""
+    """formats.load_vex detects the format from the top-level keys, like load_sbom does."""
     from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import formats
     from esp_idf_sbom.libsbom import openvex
-    from esp_idf_sbom.libsbom import vex
 
     original = _vex_with_identities()
 
     cdx_file = tmp_path / 'a.vex.cdx.json'
     cdx_file.write_text(cyclonedx.render_vex(original))
-    assert vex.load(str(cdx_file)).sbom_id == original.sbom_id
+    assert formats.load_vex(str(cdx_file)).sbom_id == original.sbom_id
 
     ovx_file = tmp_path / 'a.openvex.json'
     ovx_file.write_text(openvex.render_vex(original))
-    assert len(vex.load(str(ovx_file)).statements) == 2
+    assert len(formats.load_vex(str(ovx_file)).statements) == 2
 
     other = tmp_path / 'other.json'
     other.write_text(json.dumps({'spdxVersion': 'SPDX-2.2'}))
     with pytest.raises(ValueError, match='unrecognized VEX format'):
-        vex.load(str(other))
+        formats.load_vex(str(other))
 
 
 def test_parse_vex_reads_document_reference() -> None:

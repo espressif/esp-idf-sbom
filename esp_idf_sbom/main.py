@@ -13,7 +13,6 @@ from typing import IO
 from typing import Any
 from typing import Dict
 from typing import List
-from typing import NamedTuple
 from typing import Tuple
 
 import rich_click as click
@@ -21,15 +20,13 @@ import yaml
 from rich.table import Table
 
 from esp_idf_sbom import __version__
-from esp_idf_sbom.libsbom import cyclonedx
+from esp_idf_sbom.libsbom import formats
 from esp_idf_sbom.libsbom import git
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import mft
 from esp_idf_sbom.libsbom import nvd
-from esp_idf_sbom.libsbom import openvex
 from esp_idf_sbom.libsbom import report
 from esp_idf_sbom.libsbom import sbom
-from esp_idf_sbom.libsbom import spdx
 from esp_idf_sbom.libsbom import utils
 from esp_idf_sbom.libsbom import vex
 
@@ -73,64 +70,11 @@ def no_sync_excluded_cves_option(func: Any) -> Any:
     )(func)
 
 
-class SbomFormat(NamedTuple):
-    """One create --format choice: the backend that renders it, the backend's
-    render encoding, the spec version to emit, and the conventional file
-    extension (used e.g. by the idf.py wrapper to name the output file)."""
-
-    backend: Any
-    encoding: str
-    version: str
-    ext: str
-
-
-# Maps each create --format choice to its SbomFormat. A bare name (e.g. spdx-json)
-# is an alias for the latest supported version of that format; pinning a specific
-# version uses an @version suffix (e.g. spdx-json@2.2). The bare alias may advance
-# to a newer version on a major esp-idf-sbom release (a breaking change), so pin
-# name@version for reproducible output. Adding a format or a version is just another
-# row here; --format derives its accepted values from these keys.
-SBOM_FORMATS: Dict[str, SbomFormat] = {
-    'spdx-tag-value': SbomFormat(spdx, 'tagvalue', '2.2', '.spdx'),
-    'spdx-tag-value@2.2': SbomFormat(spdx, 'tagvalue', '2.2', '.spdx'),
-    'spdx-json': SbomFormat(spdx, 'json', '2.2', '.spdx.json'),
-    'spdx-json@2.2': SbomFormat(spdx, 'json', '2.2', '.spdx.json'),
-    'spdx-json-ld': SbomFormat(spdx, 'json-ld', '3.0.1', '.spdx.jsonld'),
-    'spdx-json-ld@3.0.1': SbomFormat(spdx, 'json-ld', '3.0.1', '.spdx.jsonld'),
-    'cyclonedx-json': SbomFormat(cyclonedx, 'json', '1.6', '.cdx.json'),
-    'cyclonedx-json@1.6': SbomFormat(cyclonedx, 'json', '1.6', '.cdx.json'),
-}
-
-
-class VexFormat(NamedTuple):
-    """One create --vex-format choice. Same as SbomFormat, plus "linked".
-
-    A linked format points to the SBOM document. A CycloneDX VEX uses a BOM-Link
-    built from the SBOM serialNumber, so it needs a CycloneDX SBOM. OpenVEX names
-    products by PURL and CPE and works with any SBOM format."""
-
-    backend: Any
-    encoding: str
-    version: str
-    linked: bool
-
-
-# --vex values that are not a format: the VEX goes into the SBOM, or nowhere.
-_VEX_IN_SBOM = ('embed', 'none')
-
-VEX_FORMATS: Dict[str, VexFormat] = {
-    'openvex': VexFormat(openvex, 'json', '0.2.0', False),
-    'openvex@0.2.0': VexFormat(openvex, 'json', '0.2.0', False),
-    'cyclonedx-json': VexFormat(cyclonedx, 'json', '1.6', True),
-    'cyclonedx-json@1.6': VexFormat(cyclonedx, 'json', '1.6', True),
-}
-
-
 def _check_vex_options(args: Dict[str, Any]) -> None:
     """Refuse option combinations that cannot do what the user asked for."""
     vex_choice = args['vex']
     vex_output = args['vex_output']
-    separate = vex_choice not in _VEX_IN_SBOM
+    separate = vex_choice not in formats._VEX_IN_SBOM
 
     if separate and not vex_output:
         log.die(f'--vex {vex_choice} writes a separate VEX document, so --vex-output is needed.')
@@ -149,8 +93,8 @@ def _check_vex_options(args: Dict[str, Any]) -> None:
     if args['output_file'] and os.path.realpath(args['output_file']) == os.path.realpath(vex_output):
         log.die('The SBOM and the VEX cannot be written to the same file. Use --vex embed for one document.')
 
-    vexfmt = VEX_FORMATS[vex_choice]
-    fmt = SBOM_FORMATS[args['format']]
+    vexfmt = formats.VEX_FORMATS[vex_choice]
+    fmt = formats.SBOM_FORMATS[args['format']]
     if vexfmt.linked and vexfmt.backend is not fmt.backend:
         log.die(
             f'The "{vex_choice}" VEX format links to the SBOM document, so it needs an SBOM '
@@ -161,8 +105,8 @@ def _check_vex_options(args: Dict[str, Any]) -> None:
 def cmd_create(args: Dict[str, Any]) -> int:
     _check_vex_options(args)
 
-    fmt = SBOM_FORMATS[args['format']]
-    separate = args['vex'] not in _VEX_IN_SBOM
+    fmt = formats.SBOM_FORMATS[args['format']]
+    separate = args['vex'] not in formats._VEX_IN_SBOM
     model = sbom.build(args, args['input_file'])
 
     # Build the VEX model before the exclusion list is cleared below, so the VEX
@@ -181,7 +125,7 @@ def cmd_create(args: Dict[str, Any]) -> int:
     text = fmt.backend.render(model, format=fmt.encoding, version=fmt.version, doc_id=doc_id)
 
     if vexdoc is not None:
-        vexfmt = VEX_FORMATS[args['vex']]
+        vexfmt = formats.VEX_FORMATS[args['vex']]
         if vexfmt.linked:
             vexdoc.sbom_id = doc_id
         # The same helper as the -o file, so both create missing directories.
@@ -203,7 +147,7 @@ def _apply_vex_files(model: sbom.SBOM, paths: Tuple[str, ...]) -> None:
     """
     for path in paths:
         try:
-            vexdoc = vex.load(path)
+            vexdoc = formats.load_vex(path)
         except (OSError, ValueError) as e:
             log.die(f'cannot read VEX file "{path}": {e}')
 
@@ -232,7 +176,7 @@ def _apply_vex_files(model: sbom.SBOM, paths: Tuple[str, ...]) -> None:
 
 def cmd_check(args: Dict[str, Any]) -> int:
     try:
-        model = sbom.load(args['input_file'])
+        model = formats.load_sbom(args['input_file'])
     except (OSError, ValueError) as e:
         log.die(f'cannot read SBOM file: {e}')
 
@@ -899,7 +843,7 @@ def main(
 )
 @click.option(
     '--format',
-    type=click.Choice(list(SBOM_FORMATS)),
+    type=click.Choice(list(formats.SBOM_FORMATS)),
     default=os.environ.get('SBOM_CREATE_FORMAT', 'spdx-tag-value'),
     help=(
         'Output SBOM format. A bare name selects the latest supported spec version; '
@@ -993,7 +937,7 @@ def main(
 )
 @click.option(
     '--vex',
-    type=click.Choice(list(_VEX_IN_SBOM) + list(VEX_FORMATS)),
+    type=click.Choice(list(formats._VEX_IN_SBOM) + list(formats.VEX_FORMATS)),
     default=os.environ.get('SBOM_CREATE_VEX', 'embed'),
     help=(
         'What to do with the vulnerability information, meaning the excluded CVEs. '
