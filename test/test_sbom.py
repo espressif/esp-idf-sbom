@@ -816,6 +816,90 @@ def test_embedded_vex_absent_without_exclusions() -> None:
     assert 'security' not in document['profileConformance']
 
 
+def _vex_with_identities():
+    """A VEX model whose product carries both identities, so the ref-based and the
+    identity-based backends each have something to render."""
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_exclusions()
+    model.packages[1].purl = 'pkg:github/example/lib@2.0'
+    model.packages[1].cpes = ['cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*']
+    return vex.build(model, sbom_id='urn:uuid:11111111-2222-3333-4444-555555555555')
+
+
+def test_render_vex_cyclonedx() -> None:
+    """A standalone CycloneDX VEX is a BOM carrying only assessments, linked to
+    the SBOM it assesses by BOM-Link, and it must validate as a 1.6 document."""
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    from esp_idf_sbom.libsbom import cyclonedx
+
+    text = cyclonedx.render_vex(_vex_with_identities(), version='1.6')
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+
+    bom = json.loads(text)
+    link = 'urn:cdx:11111111-2222-3333-4444-555555555555/1'
+    assert 'components' not in bom
+    assert 'dependencies' not in bom
+    # Its own identity, distinct from the SBOM it points at.
+    assert bom['serialNumber'].startswith('urn:uuid:')
+    assert bom['serialNumber'] != 'urn:uuid:11111111-2222-3333-4444-555555555555'
+    assert bom['externalReferences'] == [{'type': 'bom', 'url': link, 'comment': 'SBOM this VEX applies to: app'}]
+    assert [v['id'] for v in bom['vulnerabilities']] == ['CVE-2020-1', 'CVE-2020-2']
+    assert all(v['affects'][0]['ref'] == f'{link}#COMPONENT-lib' for v in bom['vulnerabilities'])
+
+
+def test_render_vex_cyclonedx_needs_sbom_identity() -> None:
+    """Without the SBOM's serialNumber there is no BOM-Link to build, so failing
+    is better than emitting a document whose refs resolve to nothing."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import vex
+
+    with pytest.raises(ValueError, match='serialNumber'):
+        cyclonedx.render_vex(vex.build(_sbom_with_exclusions()))
+
+
+def test_render_vex_openvex() -> None:
+    """OpenVEX takes the CISA vocabulary verbatim and names products by identity,
+    so it carries no reference to the SBOM document at all."""
+    from esp_idf_sbom.libsbom import openvex
+
+    document = json.loads(openvex.render_vex(_vex_with_identities()))
+
+    assert document['@context'] == 'https://openvex.dev/ns/v0.2.0'
+    assert document['@id'].startswith('urn:uuid:')
+    assert document['author'] == 'Espressif Systems (Shanghai) CO LTD'
+    assert 'esp-idf-sbom' in document['tooling']
+    assert 'urn:cdx' not in json.dumps(document)
+
+    statement = document['statements'][0]
+    assert statement == {
+        'vulnerability': {'name': 'CVE-2020-1'},
+        'products': [
+            {
+                '@id': 'pkg:github/example/lib@2.0',
+                'identifiers': {
+                    'purl': 'pkg:github/example/lib@2.0',
+                    'cpe23': 'cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*',
+                },
+            }
+        ],
+        'status': 'not_affected',
+        'impact_statement': 'not used',
+    }
+
+
+def test_render_vex_openvex_skips_unidentifiable_products() -> None:
+    """A package with neither a PURL nor a CPE cannot be named in a way any
+    consumer could match, so it is dropped with a warning rather than written."""
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+
+    document = json.loads(openvex.render_vex(vex.build(_sbom_with_exclusions())))
+    assert document['statements'] == []
+
+
 def test_create_vex_none(hello_world_build: Path) -> None:
     """--vex none drops the vulnerability information from every format, and only
     that: the SPDX 2.2 comment keeps its cve-keywords block, which is used to
