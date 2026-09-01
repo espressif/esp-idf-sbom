@@ -816,6 +816,49 @@ def test_embedded_vex_absent_without_exclusions() -> None:
     assert 'security' not in document['profileConformance']
 
 
+def test_create_vex_none(hello_world_build: Path) -> None:
+    """--vex none drops the vulnerability information from every format, and only
+    that: the SPDX 2.2 comment keeps its cve-keywords block, which is used to
+    search CVE descriptions and is not an assessment."""
+    manifest = hello_world_build / 'main' / 'sbom.yml'
+    content = """
+              cve-keywords:
+                - helloworld
+              cve-exclude-list:
+                - cve: CVE-2020-1234
+                  reason: not used in this configuration
+              """
+    manifest.write_text(dedent(content))
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+
+    def create(fmt: str, *extra: str) -> str:
+        cmd = [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', fmt, *extra, str(proj_desc_path)]
+        return run(cmd, check=True, capture_output=True, text=True).stdout
+
+    try:
+        # CycloneDX: the whole vulnerabilities array goes.
+        assert 'CVE-2020-1234' in create('cyclonedx-json')
+        assert 'vulnerabilities' not in json.loads(create('cyclonedx-json', '--vex', 'none'))
+
+        # SPDX 3.0.1: the security elements, and the security profile with them.
+        assert 'CVE-2020-1234' in create('spdx-json-ld')
+        graph = json.loads(create('spdx-json-ld', '--vex', 'none'))['@graph']
+        assert not [e for e in graph if e['type'].startswith('security_')]
+        document = next(e for e in graph if e['type'] == 'SpdxDocument')
+        assert 'security' not in document['profileConformance']
+
+        # SPDX 2.2 has no VEX vocabulary, so what goes is the cve-exclude-list
+        # block of the package comment.
+        for fmt in ('spdx-tag-value', 'spdx-json'):
+            assert 'CVE-2020-1234' in create(fmt)
+            text = create(fmt, '--vex', 'none')
+            assert 'CVE-2020-1234' not in text
+            assert 'cve-exclude-list' not in text
+            assert 'cve-keywords' in text and 'helloworld' in text
+    finally:
+        manifest.unlink()
+
+
 def test_multiple_cpes(hello_world_build: Path) -> None:
     """Test that multiple CPE values can be specified in manifest file."""
     manifest = hello_world_build / 'main' / 'sbom.yml'

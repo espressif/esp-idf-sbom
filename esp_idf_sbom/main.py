@@ -98,6 +98,13 @@ SBOM_FORMATS: Dict[str, SbomFormat] = {
 def cmd_create(args: Dict[str, Any]) -> int:
     fmt = SBOM_FORMATS[args['format']]
     model = sbom.build(args, args['input_file'])
+
+    if args['vex'] != 'embed':
+        # All formats write their vulnerability information from this one list.
+        # Clearing it is enough.
+        for pkg in model.packages:
+            pkg.cve_exclude_list = []
+
     # markup=False: the SBOM is data, not a rich-markup message; without it rich
     # strips bracketed content (e.g. JSON arrays, or any '[...]' inside a value).
     log.print(fmt.backend.render(model, format=fmt.encoding, version=fmt.version), markup=False)
@@ -839,6 +846,19 @@ def main(
     '--disable-conditions',
     is_flag=True,
     help='When processing manifest files, disregard the conditions for the "if" key.',
+)
+@click.option(
+    '--vex',
+    type=click.Choice(['embed', 'none']),
+    default=os.environ.get('SBOM_CREATE_VEX', 'embed'),
+    help=(
+        'What to do with the vulnerability information, meaning the excluded CVEs. '
+        'embed - write it into the SBOM (default). It becomes CycloneDX '
+        'vulnerabilities, SPDX 3.0.1 security elements, or the cve-exclude-list '
+        'comment in SPDX 2.2. '
+        'none - write no vulnerability information at all. The excluded CVEs are '
+        'lost, so check will report them again.'
+    ),
 )
 @no_sync_excluded_cves_option
 @click.pass_context
