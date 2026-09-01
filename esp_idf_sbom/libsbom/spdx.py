@@ -23,6 +23,7 @@ import yaml
 
 from esp_idf_sbom import __version__
 from esp_idf_sbom.libsbom import log
+from esp_idf_sbom.libsbom import vex
 from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import TOOL_NAME
 from esp_idf_sbom.libsbom.sbom import TOOL_PURL
@@ -601,35 +602,42 @@ def _render_jsonld(sbom: SBOM, version: str) -> str:
         )
         element_ids.append(crid)
 
-    has_security = False
-    for pkg in sbom.packages:
-        for entry in pkg.cve_exclude_list:
-            has_security = True
-            vid = sid(f'Vuln-{pkg.ref}-{entry["cve"]}')
-            graph.append(
-                {
-                    'type': 'security_Vulnerability',
-                    'spdxId': vid,
-                    'creationInfo': ci,
-                    'externalIdentifier': [
-                        {'type': 'ExternalIdentifier', 'externalIdentifierType': 'cve', 'identifier': entry['cve']}
-                    ],
-                }
-            )
-            element_ids.append(vid)
-            xid = sid(f'Vex-{pkg.ref}-{entry["cve"]}')
-            graph.append(
-                {
-                    'type': 'security_VexNotAffectedVulnAssessmentRelationship',
-                    'spdxId': xid,
-                    'creationInfo': ci,
-                    'from': vid,
-                    'relationshipType': 'doesNotAffect',
-                    'to': [sid(pkg.ref)],
-                    'security_impactStatement': entry['reason'],
-                }
-            )
-            element_ids.append(xid)
+    # SPDX 3.0 has a separate relationship class for each VEX status, and each
+    # class has different fields. This is not a value map like in CycloneDX.
+    # build() creates only not-affected statements, so only that class is written.
+    statements = [s for s in vex.build(sbom).statements if s.status is vex.VexStatus.NOT_AFFECTED]
+    has_security = bool(statements)
+    for statement in statements:
+        ref = statement.products[0].ref
+        vid = sid(f'Vuln-{ref}-{statement.vulnerability}')
+        graph.append(
+            {
+                'type': 'security_Vulnerability',
+                'spdxId': vid,
+                'creationInfo': ci,
+                'externalIdentifier': [
+                    {
+                        'type': 'ExternalIdentifier',
+                        'externalIdentifierType': 'cve',
+                        'identifier': statement.vulnerability,
+                    }
+                ],
+            }
+        )
+        element_ids.append(vid)
+        xid = sid(f'Vex-{ref}-{statement.vulnerability}')
+        graph.append(
+            {
+                'type': 'security_VexNotAffectedVulnAssessmentRelationship',
+                'spdxId': xid,
+                'creationInfo': ci,
+                'from': vid,
+                'relationshipType': 'doesNotAffect',
+                'to': [sid(product.ref) for product in statement.products],
+                'security_impactStatement': statement.impact_statement,
+            }
+        )
+        element_ids.append(xid)
 
     profiles = ['core', 'software']
     if has_licensing:

@@ -763,6 +763,59 @@ def test_vex_vocabulary_is_cisa() -> None:
     }
 
 
+def _sbom_with_exclusions():
+    model = _sbom_with_file()
+    model.packages[1].cve_exclude_list = [
+        {'cve': 'CVE-2020-1', 'reason': 'not used'},
+        {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
+    ]
+    return model
+
+
+def test_embedded_vex_matches_model() -> None:
+    """Embedded VEX is rendered from the same model a standalone document will be,
+    so the two cannot drift: what vex.build produces is exactly what lands in each
+    format that has a VEX vocabulary."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import spdx
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_exclusions()
+    statements = vex.build(model).statements
+
+    bom = json.loads(cyclonedx.render(model, version='1.6'))
+    assert [(v['id'], v['analysis']['state'], v['analysis']['detail']) for v in bom['vulnerabilities']] == [
+        (s.vulnerability, 'not_affected', s.impact_statement) for s in statements
+    ]
+    assert [v['affects'][0]['ref'] for v in bom['vulnerabilities']] == [s.products[0].ref for s in statements]
+
+    graph = json.loads(spdx.render(model, format='json-ld', version='3.0.1'))['@graph']
+    vulns = [e for e in graph if e['type'] == 'security_Vulnerability']
+    assessments = [e for e in graph if e['type'] == 'security_VexNotAffectedVulnAssessmentRelationship']
+    assert [v['externalIdentifier'][0]['identifier'] for v in vulns] == [s.vulnerability for s in statements]
+    assert [a['security_impactStatement'] for a in assessments] == [s.impact_statement for s in statements]
+
+    document = next(e for e in graph if e['type'] == 'SpdxDocument')
+    assert 'security' in document['profileConformance']
+    assert all(e['spdxId'] in document['element'] for e in vulns + assessments)
+
+
+def test_embedded_vex_absent_without_exclusions() -> None:
+    """With nothing excluded no VEX is emitted at all, and SPDX 3.0.1 drops the
+    security profile along with it."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import spdx
+
+    model = _sbom_with_file()
+
+    assert 'vulnerabilities' not in json.loads(cyclonedx.render(model, version='1.6'))
+
+    graph = json.loads(spdx.render(model, format='json-ld', version='3.0.1'))['@graph']
+    assert not [e for e in graph if e['type'].startswith('security_')]
+    document = next(e for e in graph if e['type'] == 'SpdxDocument')
+    assert 'security' not in document['profileConformance']
+
+
 def test_multiple_cpes(hello_world_build: Path) -> None:
     """Test that multiple CPE values can be specified in manifest file."""
     manifest = hello_world_build / 'main' / 'sbom.yml'

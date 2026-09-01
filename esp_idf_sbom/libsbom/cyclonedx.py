@@ -22,6 +22,7 @@ from typing import Any
 from typing import Dict
 from typing import List
 
+from esp_idf_sbom.libsbom import vex
 from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import TOOL_DISTRIBUTION_URL
 from esp_idf_sbom.libsbom.sbom import TOOL_LICENSE
@@ -161,6 +162,42 @@ def _file_component(pkg: Package, file: File, index: int) -> Dict[str, Any]:
     return fcomp
 
 
+# The CISA values used by the model, mapped to the larger CycloneDX ones. Only
+# this backend needs a map. OpenVEX and SPDX 3.0.1 use the CISA values.
+_ANALYSIS_STATE = {
+    vex.VexStatus.NOT_AFFECTED: 'not_affected',
+    vex.VexStatus.AFFECTED: 'exploitable',
+    vex.VexStatus.FIXED: 'resolved',
+    vex.VexStatus.UNDER_INVESTIGATION: 'in_triage',
+}
+
+# component_not_present and vulnerable_code_not_present both map to
+# code_not_present, so this map cannot be reversed. Parsing reads back the status
+# and the detail text, not the justification.
+_ANALYSIS_JUSTIFICATION = {
+    vex.VexJustification.COMPONENT_NOT_PRESENT: 'code_not_present',
+    vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT: 'code_not_present',
+    vex.VexJustification.VULNERABLE_CODE_NOT_IN_EXECUTE_PATH: 'code_not_reachable',
+    vex.VexJustification.VULNERABLE_CODE_CANNOT_BE_CONTROLLED_BY_ADVERSARY: 'protected_at_runtime',
+    vex.VexJustification.INLINE_MITIGATIONS_ALREADY_EXIST: 'protected_by_mitigating_control',
+}
+
+
+def _vulnerability(statement: vex.VexStatement) -> Dict[str, Any]:
+    """A VEX statement as a CycloneDX vulnerability entry."""
+    analysis: Dict[str, Any] = {'state': _ANALYSIS_STATE[statement.status]}
+    if statement.justification is not None:
+        analysis['justification'] = _ANALYSIS_JUSTIFICATION[statement.justification]
+    analysis['detail'] = statement.impact_statement
+
+    return {
+        'bom-ref': f'vex-{statement.products[0].ref}-{statement.vulnerability}',
+        'id': statement.vulnerability,
+        'analysis': analysis,
+        'affects': [{'ref': product.ref} for product in statement.products],
+    }
+
+
 def _render_json(sbom: SBOM, version: str) -> str:
     serial = 'urn:uuid:' + str(uuid.uuid4())
     timestamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -168,18 +205,7 @@ def _render_json(sbom: SBOM, version: str) -> str:
 
     dependencies = [{'ref': pkg.ref, 'dependsOn': list(pkg.depends_on)} for pkg in sbom.packages if pkg.depends_on]
 
-    # Each cve-exclude entry is a VEX not_affected statement on its component.
-    vulnerabilities: List[Dict[str, Any]] = []
-    for pkg in sbom.packages:
-        for entry in pkg.cve_exclude_list:
-            vulnerabilities.append(
-                {
-                    'bom-ref': f'vex-{pkg.ref}-{entry["cve"]}',
-                    'id': entry['cve'],
-                    'analysis': {'state': 'not_affected', 'detail': entry['reason']},
-                    'affects': [{'ref': pkg.ref}],
-                }
-            )
+    vulnerabilities = [_vulnerability(statement) for statement in vex.build(sbom).statements]
 
     bom: Dict[str, Any] = {
         'bomFormat': 'CycloneDX',
