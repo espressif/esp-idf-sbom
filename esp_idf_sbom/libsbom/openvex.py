@@ -108,3 +108,56 @@ def render_vex(vexdoc: vex.Vex, format: str = 'json', version: str = '0.2.0') ->
     if format == 'json':
         return _render_json(vexdoc, version)
     raise ValueError(f'unsupported OpenVEX format: {format!r}')
+
+
+# ===========================================================================
+# Parse: OpenVEX -> VEX model
+# ===========================================================================
+
+
+def _parse_product(product: Dict[str, Any]) -> vex.VexProduct:
+    identifiers = product.get('identifiers', {})
+    cpe = identifiers.get('cpe23') or identifiers.get('cpe22') or ''
+    purl = identifiers.get('purl', '')
+    if not purl and str(product.get('@id', '')).startswith('pkg:'):
+        # render() writes the purl as the @id, so read it back from there when
+        # the file has no identifiers map.
+        purl = str(product['@id'])
+    return vex.VexProduct(purl=purl, cpes=[cpe] if cpe else [])
+
+
+def _parse_statement(statement: Dict[str, Any]) -> Optional[vex.VexStatement]:
+    try:
+        status = vex.VexStatus(statement.get('status', ''))
+    except ValueError:
+        # status is required and its values are fixed, so anything else is not a
+        # statement we can use.
+        log.warn(f'Skipping OpenVEX statement with unknown status "{statement.get("status", "")}".')
+        return None
+
+    justification = None
+    if statement.get('justification'):
+        try:
+            justification = vex.VexJustification(statement['justification'])
+        except ValueError:
+            log.warn(f'Ignoring unknown OpenVEX justification "{statement["justification"]}".')
+
+    return vex.VexStatement(
+        vulnerability=statement.get('vulnerability', {}).get('name', ''),
+        status=status,
+        products=[_parse_product(p) for p in statement.get('products', [])],
+        justification=justification,
+        impact_statement=statement.get('impact_statement', ''),
+        action_statement=statement.get('action_statement', ''),
+    )
+
+
+def parse_vex(text: str) -> vex.Vex:
+    """Parse an OpenVEX document into the format-neutral VEX model.
+
+    OpenVEX uses the CISA values, so status and justification are read as they
+    are. The document does not name an SBOM, so sbom_id stays empty.
+    """
+    document = json.loads(text)
+    statements = [s for s in (_parse_statement(s) for s in document.get('statements', [])) if s]
+    return vex.Vex(statements=statements, author=document.get('author', ''))

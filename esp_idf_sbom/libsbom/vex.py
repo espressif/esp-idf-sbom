@@ -17,12 +17,14 @@ only not_affected today, but with an explicit status, check can later report
 affected or under_investigation without any backend change.
 """
 
+import json
 from dataclasses import dataclass
 from dataclasses import field
 from enum import Enum
 from typing import List
 from typing import Optional
 
+from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import Package
 
@@ -135,3 +137,93 @@ def build(sbom: SBOM, sbom_id: str = '') -> Vex:
     ]
 
     return Vex(statements=statements, sbom_id=sbom_id, sbom_name=sbom.name)
+
+
+def load(path: str) -> Vex:
+    """Read a VEX file, detect its format and parse it into the model.
+
+    This is the parse side entry point, like sbom.load() for SBOM files. Unlike
+    sbom.load() it does not read standard input, because that is where the SBOM
+    itself is read from.
+    """
+    with open(path) as f:
+        text = f.read()
+
+    # Late import: the backends import this module, so importing them at module
+    # level would be circular. load() only detects the format and dispatches.
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+
+    obj = json.loads(text)
+    if not isinstance(obj, dict):
+        raise ValueError('unrecognized VEX format')
+    if 'openvex.dev' in str(obj.get('@context', '')):
+        return openvex.parse_vex(text)
+    if obj.get('bomFormat') == 'CycloneDX':
+        return cyclonedx.parse_vex(text)
+    raise ValueError('unrecognized VEX format')
+
+
+# Statuses that say the CVE does not apply to the product. not_affected means it
+# was never affected, fixed means the product carries the fix. grype and trivy
+# both filter on these two. The other two say the CVE does apply, or that nobody
+# knows yet, so they must not silence anything.
+_SUPPRESSING = (VexStatus.NOT_AFFECTED, VexStatus.FIXED)
+
+
+def _reason(statement: VexStatement) -> str:
+    """The text reported for a suppressed CVE.
+
+    A not_affected statement carries an impact statement or a justification. A
+    fixed one needs neither, so fall back to the status itself.
+    """
+    if statement.impact_statement:
+        return statement.impact_statement
+    if statement.justification is not None:
+        return statement.justification.value
+    return statement.status.value
+
+
+def apply(sbom: SBOM, vexdoc: Vex) -> None:
+    """Merge the statements of a VEX document into the SBOM model.
+
+    The statements end up in Package.cve_exclude_list, which is where every
+    consumer of the model already reads them from, so nothing downstream has to
+    know a VEX file was involved. Only the statuses in _SUPPRESSING are used.
+
+    Products are matched by ref first, then by PURL, then by CPE. Formats that
+    point into an SBOM document give a ref, the others give PURL and CPE.
+    """
+    by_ref = {pkg.ref: pkg for pkg in sbom.packages}
+    by_purl = {pkg.purl: pkg for pkg in sbom.packages if pkg.purl}
+    by_cpe = {cpe: pkg for pkg in sbom.packages for cpe in pkg.cpes}
+
+    def find(product: VexProduct) -> Optional[Package]:
+        pkg = by_ref.get(product.ref) if product.ref else None
+        if pkg is None and product.purl:
+            pkg = by_purl.get(product.purl)
+        for cpe in product.cpes:
+            if pkg is not None:
+                break
+            pkg = by_cpe.get(cpe)
+        return pkg
+
+    unmatched = 0
+    for statement in vexdoc.statements:
+        if statement.status not in _SUPPRESSING:
+            continue
+        for product in statement.products:
+            pkg = find(product)
+            if pkg is None:
+                unmatched += 1
+                continue
+            # The VEX file is the newer document, so it wins over an exclusion
+            # of the same CVE already in the SBOM.
+            entries = [e for e in pkg.cve_exclude_list if e['cve'] != statement.vulnerability]
+            entries.append({'cve': statement.vulnerability, 'reason': _reason(statement)})
+            pkg.cve_exclude_list = entries
+
+    if unmatched:
+        # Not an error. A VEX file may cover a whole product line, so it can name
+        # components that this SBOM does not contain.
+        log.warn(f'{unmatched} VEX statement(s) name a component that is not in the SBOM; they were ignored.')
