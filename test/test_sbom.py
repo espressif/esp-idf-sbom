@@ -1163,6 +1163,134 @@ def test_parse_sbom_reads_document_id() -> None:
 _SPDX_VERSION = {'tagvalue': '2.2', 'json': '2.2', 'json-ld': '3.0.1'}
 
 
+def _freertos_sbom_and_vex(tmp_path, sbom_format='cyclonedx-json', vex_format='cyclonedx-json'):
+    """An SBOM with a CPE the local NVD mirror reports CVEs for, plus a VEX that
+    marks one of them not affected. Returns the two file paths."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    cpe = 'cpe:2.3:o:amazon:freertos:10.0.0:*:*:*:*:*:*:*'
+    proj = Package(
+        ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT, depends_on=['COMPONENT-freertos']
+    )
+    comp = Package(
+        ref='COMPONENT-freertos',
+        name='freertos',
+        package_name='freertos',
+        kind=PackageKind.COMPONENT,
+        version='10.0.0',
+        purl='pkg:generic/freertos@10.0.0',
+        cpes=[cpe],
+        cve_exclude_list=[{'cve': 'CVE-2021-31571', 'reason': 'evaluated in the VEX file'}],
+    )
+    model = SBOM(name='app', root='PROJECT-app', packages=[proj, comp])
+
+    backend = cyclonedx if sbom_format == 'cyclonedx-json' else None
+    doc_id = cyclonedx.new_document_id(model)
+    vexdoc = vex.build(model, sbom_id=doc_id)
+
+    # The SBOM itself is clean, as create --vex writes it.
+    for pkg in model.packages:
+        pkg.cve_exclude_list = []
+
+    sbom_file = tmp_path / 'app.cdx.json'
+    assert backend is not None
+    sbom_file.write_text(cyclonedx.render(model, version='1.6', doc_id=doc_id))
+
+    vex_file = tmp_path / 'app.vex.json'
+    if vex_format == 'cyclonedx-json':
+        vex_file.write_text(cyclonedx.render_vex(vexdoc, version='1.6'))
+    else:
+        vex_file.write_text(openvex.render_vex(vexdoc))
+    return sbom_file, vex_file
+
+
+def _check_freertos(sbom_file, *extra):
+    cmd = [
+        sys.executable, '-m', 'esp_idf_sbom', 'check', '--local-db', '--format', 'csv',
+        *extra, str(sbom_file),
+    ]  # fmt: skip
+    return run(cmd, capture_output=True, text=True)
+
+
+def test_check_vex_excludes_reported_cve() -> None:
+    """The VEX file is the only place the exclusions live once the SBOM is clean,
+    so check --vex has to turn a reported CVE into an excluded one."""
+    with TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        sbom_file, vex_file = _freertos_sbom_and_vex(tmp_path)
+
+        without = _check_freertos(sbom_file)
+        assert re.search(r'YES.+CVE-2021-31571', without.stdout) is not None
+
+        with_vex = _check_freertos(sbom_file, '--vex', str(vex_file))
+        assert re.search(r'EXCLUDED.+CVE-2021-31571', with_vex.stdout) is not None
+        assert re.search(r'YES.+CVE-2021-31571', with_vex.stdout) is None
+        # A CVE the VEX says nothing about is still reported.
+        assert re.search(r'YES.+CVE-2021-31572', with_vex.stdout) is not None
+
+
+def test_check_vex_openvex_matches_by_identity() -> None:
+    """An OpenVEX document carries no link to a document, so it is matched to the
+    package by PURL and CPE."""
+    with TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        sbom_file, vex_file = _freertos_sbom_and_vex(tmp_path, vex_format='openvex')
+        assert 'urn:cdx' not in vex_file.read_text()
+
+        result = _check_freertos(sbom_file, '--vex', str(vex_file))
+        assert re.search(r'EXCLUDED.+CVE-2021-31571', result.stdout) is not None
+
+
+def test_check_vex_rejects_foreign_cyclonedx_vex(tmp_path: Path) -> None:
+    """A CycloneDX VEX links to one SBOM by BOM-Link. Using it with another SBOM
+    would silence CVEs for components it was never written about."""
+    from esp_idf_sbom.libsbom import cyclonedx
+
+    sbom_file, vex_file = _freertos_sbom_and_vex(tmp_path)
+
+    # Same content, but rendered again, so it gets a new serialNumber.
+    other = tmp_path / 'other.cdx.json'
+    other.write_text(cyclonedx.render(cyclonedx.parse(sbom_file.read_text()), version='1.6'))
+
+    result = _check_freertos(other, '--vex', str(vex_file))
+    assert result.returncode != 0
+    assert 'belongs to another SBOM' in result.stderr
+
+
+def test_check_vex_rejects_cyclonedx_vex_with_spdx_sbom(tmp_path: Path) -> None:
+    """An SPDX SBOM has no serialNumber for a BOM-Link to resolve against."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import spdx
+
+    sbom_file, vex_file = _freertos_sbom_and_vex(tmp_path)
+    spdx_file = tmp_path / 'app.spdx'
+    spdx_file.write_text(spdx.render(cyclonedx.parse(sbom_file.read_text()), format='tagvalue', version='2.2'))
+
+    result = _check_freertos(spdx_file, '--vex', str(vex_file))
+    assert result.returncode != 0
+    assert 'is not a CycloneDX document' in result.stderr
+
+
+def test_check_vex_rejects_cyclonedx_vex_without_serial(tmp_path: Path) -> None:
+    """serialNumber is optional in CycloneDX, so a valid SBOM may carry none. The
+    BOM-Link then has nothing to resolve against."""
+    sbom_file, vex_file = _freertos_sbom_and_vex(tmp_path)
+
+    bom = json.loads(sbom_file.read_text())
+    del bom['serialNumber']
+    no_serial = tmp_path / 'no-serial.cdx.json'
+    no_serial.write_text(json.dumps(bom, indent=2))
+
+    result = _check_freertos(no_serial, '--vex', str(vex_file))
+    assert result.returncode != 0
+    assert 'has no serialNumber to match it against' in result.stderr
+
+
 def test_create_vex_output(hello_world_build: Path, tmp_path: Path) -> None:
     """--vex with a format writes the assessments to their own document and leaves
     the SBOM clean. The VEX has to carry the exclusions the clean SBOM no longer

@@ -10,6 +10,7 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import NamedTuple
+from typing import Tuple
 
 import rich_click as click
 import yaml
@@ -191,11 +192,49 @@ def cmd_create(args: Dict[str, Any]) -> int:
     return 0
 
 
+def _apply_vex_files(model: sbom.SBOM, paths: Tuple[str, ...]) -> None:
+    """Merge standalone VEX documents into the SBOM model that was just loaded.
+
+    A VEX that names the SBOM it belongs to, which for CycloneDX is the
+    serialNumber in the BOM-Link, is used only with that SBOM. OpenVEX names
+    products by PURL and CPE and has no such link, so it is used with any SBOM.
+    """
+    for path in paths:
+        try:
+            vexdoc = vex.load(path)
+        except (OSError, ValueError) as e:
+            log.die(f'cannot read VEX file "{path}": {e}')
+
+        if vexdoc.sbom_id and vexdoc.sbom_id != model.doc_id:
+            if not model.doc_id:
+                # serialNumber is optional in CycloneDX, and an SPDX document may
+                # carry no namespace either.
+                log.die(
+                    f'The VEX file "{path}" links to a CycloneDX SBOM with a BOM-Link, but '
+                    f'the SBOM being checked has no serialNumber to match it against.'
+                )
+            if not model.doc_id.startswith('urn:uuid:'):
+                # A CycloneDX serialNumber is a urn:uuid, an SPDX document
+                # namespace is a URL, so the two can be told apart.
+                log.die(
+                    f'The VEX file "{path}" links to a CycloneDX SBOM with a BOM-Link, and '
+                    f'the SBOM being checked is not a CycloneDX document.'
+                )
+            log.die(
+                f'The VEX file "{path}" belongs to another SBOM. It links to '
+                f'"{vexdoc.sbom_id}", but this SBOM is "{model.doc_id}".'
+            )
+
+        vex.apply(model, vexdoc)
+
+
 def cmd_check(args: Dict[str, Any]) -> int:
     try:
         model = sbom.load(args['input_file'])
     except (OSError, ValueError) as e:
         log.die(f'cannot read SBOM file: {e}')
+
+    _apply_vex_files(model, args['vex_files'])
 
     # check is built around SBOMs produced by esp-idf-sbom; for a foreign SBOM the
     # esp-idf-sbom-specific data (excluded CVEs, cve-keywords) is absent and VEX /
@@ -971,6 +1010,18 @@ def create(ctx: click.Context, **params: Any) -> None:
     metavar='OUTPUT_FILE',
     default=None,
     help='Print output to the specified file instead of stdout.',
+)
+@click.option(
+    '--vex',
+    'vex_files',
+    metavar='VEX_FILE',
+    multiple=True,
+    help=(
+        'Read a standalone VEX document, as written by "create --vex", and use its '
+        'not_affected statements when reporting. Can be used more than once. A '
+        'CycloneDX VEX links to one SBOM and is refused for any other one. An '
+        'OpenVEX document names products by PURL and CPE and works with any SBOM.'
+    ),
 )
 @extended_scan_option
 @click.option(
