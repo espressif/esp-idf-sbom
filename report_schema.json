@@ -88,6 +88,10 @@
                     "description": "Summary of identified unknown vulnerabilities.",
                     "$ref": "#/$defs/cves_type_summary"
                 },
+                "kev": {
+                    "description": "Summary of identified vulnerabilities listed in CISA's Known Exploited Vulnerabilities catalog.",
+                    "$ref": "#/$defs/cves_type_summary"
+                },
                 "total_cves_count": {
                     "description": "Total cound of identified vulnerabilities.",
                     "type": "integer"
@@ -180,6 +184,14 @@
                     "status": {
                         "type": "string",
                         "description": "NVD vulnerability status, empty if no vulnerability is identified for given package."
+                    },
+                    "kev_added": {
+                        "type": "string",
+                        "description": "Date the CVE was added to CISA's Known Exploited Vulnerabilities catalog, as reported by NVD. Empty if the CVE is not in the catalog."
+                    },
+                    "kev_name": {
+                        "type": "string",
+                        "description": "Name CISA gives the vulnerability in the Known Exploited Vulnerabilities catalog. Empty if the CVE is not in the catalog."
                     }
                 },
                 "required": [

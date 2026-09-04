@@ -952,6 +952,8 @@ def test_none_severity_handling() -> None:
     # Create test records with different severity levels including NONE
     test_records = [
         {
+            # Spread empty_record so that adding a report field does not break this test.
+            **report.empty_record,
             'vulnerable': 'YES',
             'pkg_name': 'test_package_1',
             'pkg_version': '1.0.0',
@@ -968,6 +970,7 @@ def test_none_severity_handling() -> None:
             'status': '',
         },
         {
+            **report.empty_record,
             'vulnerable': 'YES',
             'pkg_name': 'test_package_2',
             'pkg_version': '2.0.0',
@@ -984,6 +987,7 @@ def test_none_severity_handling() -> None:
             'status': '',
         },
         {
+            **report.empty_record,
             'vulnerable': 'NO',
             'pkg_name': 'test_package_3',
             'pkg_version': '3.0.0',
@@ -1036,6 +1040,55 @@ def test_none_severity_handling() -> None:
     assert 'CVE-2023-00002' in result['cves_summary']['high']['cves'], (
         "CVE-2023-00002 not found in 'high' severity CVEs"
     )
+
+
+def test_kev_fields() -> None:
+    """CVEs in the CISA KEV catalog are reported, the others have empty kev fields."""
+    import io
+
+    from esp_idf_sbom.libsbom import log
+    from esp_idf_sbom.libsbom import report
+
+    def nvd_cve(cve_id: str, kev: bool) -> dict:
+        cve = {
+            'id': cve_id,
+            'vulnStatus': 'Analyzed',
+            'descriptions': [{'lang': 'en', 'value': f'description of {cve_id}'}],
+        }
+        if kev:
+            cve['cisaExploitAdd'] = '2021-12-10'
+            cve['cisaVulnerabilityName'] = 'Test Known Exploited Vulnerability'
+        return {'cve': cve}
+
+    def record(cve_id: str, kev: bool, pkg: str, exclude: bool = False) -> dict:
+        exclude_list = {cve_id: 'not applicable'} if exclude else {}
+        return report.create_vulnerable_record(
+            nvd_cve(cve_id, kev), exclude_list, f'cpe:2.3:a:test:{pkg}:1.0.0:*:*:*:*:*:*:*', '', pkg, '1.0.0'
+        )
+
+    in_kev = record('CVE-2023-10001', True, 'kev_package')
+    assert in_kev['kev_added'] == '2021-12-10'
+    assert in_kev['kev_name'] == 'Test Known Exploited Vulnerability'
+
+    # A CVE outside the catalog has no KEV information.
+    not_in_kev = record('CVE-2023-10002', False, 'plain_package')
+    assert not_in_kev['kev_added'] == ''
+    assert not_in_kev['kev_name'] == ''
+
+    # An already excluded CVE is not counted in the summary, like every other
+    # number there, even though its KEV information is kept in the record.
+    excluded = record('CVE-2023-10003', True, 'excluded_package', exclude=True)
+    assert excluded['vulnerable'] == 'EXCLUDED'
+    assert excluded['kev_added'] == '2021-12-10'
+
+    stdout = io.StringIO()
+    log.set_console(stdout)
+    report.show([in_kev, not_in_kev, excluded], {'format': 'json', 'local_db': False}, 'test_project', '1.0.0')
+    kev_summary = json.loads(stdout.getvalue())['cves_summary']['kev']
+
+    assert kev_summary['count'] == 1
+    assert kev_summary['cves'] == ['CVE-2023-10001']
+    assert kev_summary['packages'] == ['kev_package']
 
 
 def test_aliased_requirements(hello_world_build: Path) -> None:

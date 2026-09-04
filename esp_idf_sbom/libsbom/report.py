@@ -17,7 +17,7 @@ from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import nvd
 from esp_idf_sbom.libsbom import utils
 
-REPORT_VERSION = 1
+REPORT_VERSION = 2
 empty_record = {
     'vulnerable': '',
     'pkg_name': '',
@@ -33,7 +33,20 @@ empty_record = {
     'cve_desc': '',
     'exclude_reason': '',
     'status': '',
+    'kev_added': '',
+    'kev_name': '',
 }
+
+
+def add_kev_rows(info_table: Table, record: Dict[str, str]) -> None:
+    """Add what CISA says about a Known Exploited Vulnerability to a CVE's
+    information table. Nothing is added for a CVE outside the catalog.
+    """
+    if not record['kev_added']:
+        return
+
+    info_table.add_row('[red]KEV', record['kev_name'])
+    info_table.add_row('[red]Added', record['kev_added'])
 
 
 def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '', proj_ver: str = '') -> None:
@@ -104,6 +117,11 @@ def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '
                 'cves': [],
                 'packages': [],
             },
+            'kev': {
+                'count': 0,
+                'cves': [],
+                'packages': [],
+            },
             'total_cves_count': 0,
             'packages_count': pkgs_cnt,
             'all_cves': [],
@@ -125,6 +143,12 @@ def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '
         severity_dict['cves'].append(r['cve_id'])
         if r['pkg_name'] not in severity_dict['packages']:
             severity_dict['packages'].append(r['pkg_name'])
+        if r['kev_added']:
+            kev_dict = summary['cves_summary']['kev']
+            kev_dict['count'] += 1
+            kev_dict['cves'].append(r['cve_id'])
+            if r['pkg_name'] not in kev_dict['packages']:
+                kev_dict['packages'].append(r['pkg_name'])
 
     if args['format'] == 'json':
         summary['records'] = record_list
@@ -195,6 +219,11 @@ def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '
     table.add_row('Packages affected by UNKNOWN CVEs:', ', '.join(severity_dict['packages']))
     table.add_row('Number of UNKNOWN CVEs:', str(severity_dict['count']), end_section=True)
 
+    severity_dict = summary['cves_summary']['kev']
+    table.add_row('[red]KEV CVEs found:', ', '.join(severity_dict['cves']))
+    table.add_row('[red]Packages affected by KEV CVEs:', ', '.join(severity_dict['packages']))
+    table.add_row('[red]Number of KEV CVEs:', str(severity_dict['count']), end_section=True)
+
     table.add_row('[bright_blue]All CVEs found:', ', '.join(summary['cves_summary']['all_cves']))
     table.add_row('[bright_blue]All packages affected by CVEs:', ', '.join(summary['cves_summary']['all_packages']))
     table.add_row('[bright_blue]Total number of CVEs:', str(summary['cves_summary']['total_cves_count']))
@@ -226,6 +255,7 @@ def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '
             info_table.add_row('[yellow]CPE', r['cpe'])
             info_table.add_row('[yellow]Link', r['cve_link'])
             info_table.add_row('[yellow]Desc.', r['cve_desc'])
+            add_kev_rows(info_table, r)
 
         table.add_row(
             '[bright_blue]' + r['pkg_name'],
@@ -261,8 +291,15 @@ def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '
             info_table.add_row('[yellow]Keyword', r['keyword'])
             info_table.add_row('[yellow]Link', r['cve_link'])
             info_table.add_row('[yellow]Desc.', r['cve_desc'])
+            add_kev_rows(info_table, r)
 
-        table.add_row('[bright_blue]' + r['pkg_name'], r['pkg_version'], r['cve_id'], info_table, end_section=True)
+        table.add_row(
+            '[bright_blue]' + r['pkg_name'],
+            r['pkg_version'],
+            r['cve_id'],
+            info_table,
+            end_section=True,
+        )
 
     if table.row_count:
         log.print(table, '\n')
@@ -294,6 +331,7 @@ def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '
             info_table.add_row('[yellow]Link', r['cve_link'])
             info_table.add_row('[yellow]Desc.', r['cve_desc'])
             info_table.add_row('[yellow]Reason', r['exclude_reason'])
+            add_kev_rows(info_table, r)
 
         table.add_row(
             '[bright_blue]' + r['pkg_name'],
@@ -447,6 +485,12 @@ def create_vulnerable_record(
         cvss_base_score = str(cvss['cvssData'].get('baseScore', ''))
         cvss_base_severity = cvss['cvssData'].get('baseSeverity', cvss.get('baseSeverity', ''))
 
+    # NVD embeds CISA's Known Exploited Vulnerabilities catalog in the CVE record
+    # itself, so being in KEV needs no separate feed. kev_added doubles as the
+    # marker: it is set only for a CVE that is in the catalog.
+    kev_added = vuln['cve'].get('cisaExploitAdd', '')
+    kev_name = vuln['cve'].get('cisaVulnerabilityName', '')
+
     if cve_id in cve_exclude_list:
         exclude_reason = cve_exclude_list[cve_id]
         vulnerable = 'EXCLUDED'
@@ -472,6 +516,8 @@ def create_vulnerable_record(
     record['cvss_base_score'] = cvss_base_score
     record['cvss_base_severity'] = cvss_base_severity
     record['status'] = status
+    record['kev_added'] = kev_added
+    record['kev_name'] = kev_name
 
     return record
 

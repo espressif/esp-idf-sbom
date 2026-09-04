@@ -134,6 +134,9 @@ The default report format consists of multiple tables:
 The output format may be changed with the `--format` option, which supports exporting
 the report into **json**, **csv** or **markdown** format.
 
+If NVD reports that a CVE is in CISA's [Known Exploited Vulnerabilities][12] (KEV)
+catalog, this information is included in the report.
+
 If package is not vulnerable to a specific CVE, it can be added to the manifest **cve-exclude-list**
 list and checker will not report it as identified vulnerability, but as excluded vulnerability.
 
@@ -821,3 +824,4 @@ given **project**, **component** or **submodule** (see [Output formats](#output-
 [9]: https://nvd.nist.gov/developers/request-an-api-key
 [10]: https://nvd.nist.gov/developers/start-here
 [11]: https://cyclonedx.org
+[12]: https://www.cisa.gov/known-exploited-vulnerabilities-catalog
