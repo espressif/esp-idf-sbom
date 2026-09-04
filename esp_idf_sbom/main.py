@@ -74,7 +74,7 @@ def _check_vex_options(args: Dict[str, Any]) -> None:
     """Refuse option combinations that cannot do what the user asked for."""
     vex_choice = args['vex']
     vex_output = args['vex_output']
-    separate = vex_choice not in formats._VEX_IN_SBOM
+    separate = vex_choice not in formats.VEX_IN_SBOM
 
     if separate and not vex_output:
         log.die(f'--vex {vex_choice} writes a separate VEX document, so --vex-output is needed.')
@@ -106,7 +106,7 @@ def cmd_create(args: Dict[str, Any]) -> int:
     _check_vex_options(args)
 
     fmt = formats.SBOM_FORMATS[args['format']]
-    separate = args['vex'] not in formats._VEX_IN_SBOM
+    separate = args['vex'] not in formats.VEX_IN_SBOM
     model = sbom.build(args, args['input_file'])
 
     # Build the VEX model before the exclusion list is cleared below, so the VEX
@@ -937,7 +937,7 @@ def main(
 )
 @click.option(
     '--vex',
-    type=click.Choice(list(formats._VEX_IN_SBOM) + list(formats.VEX_FORMATS)),
+    type=click.Choice(list(formats.VEX_IN_SBOM) + list(formats.VEX_FORMATS)),
     default=os.environ.get('SBOM_CREATE_VEX', 'embed'),
     help=(
         'What to do with the vulnerability information, meaning the excluded CVEs. '

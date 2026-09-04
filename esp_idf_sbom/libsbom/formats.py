@@ -57,7 +57,7 @@ SBOM_FORMATS: Dict[str, SbomFormat] = {
 
 
 class VexFormat(NamedTuple):
-    """One create --vex-format choice. Same as SbomFormat, plus "linked".
+    """One create --vex choice that writes a file. Same as SbomFormat, plus "linked".
 
     A linked format points to the SBOM document. A CycloneDX VEX uses a BOM-Link
     built from the SBOM serialNumber, so it needs a CycloneDX SBOM. OpenVEX names
@@ -67,16 +67,17 @@ class VexFormat(NamedTuple):
     encoding: str
     version: str
     linked: bool
+    ext: str
 
 
 # --vex values that are not a format: the VEX goes into the SBOM, or nowhere.
-_VEX_IN_SBOM = ('embed', 'none')
+VEX_IN_SBOM = ('embed', 'none')
 
 VEX_FORMATS: Dict[str, VexFormat] = {
-    'openvex': VexFormat(openvex, 'json', '0.2.0', False),
-    'openvex@0.2.0': VexFormat(openvex, 'json', '0.2.0', False),
-    'cyclonedx-json': VexFormat(cyclonedx, 'json', '1.6', True),
-    'cyclonedx-json@1.6': VexFormat(cyclonedx, 'json', '1.6', True),
+    'openvex': VexFormat(openvex, 'json', '0.2.0', False, '.openvex.json'),
+    'openvex@0.2.0': VexFormat(openvex, 'json', '0.2.0', False, '.openvex.json'),
+    'cyclonedx-json': VexFormat(cyclonedx, 'json', '1.6', True, '.vex.cdx.json'),
+    'cyclonedx-json@1.6': VexFormat(cyclonedx, 'json', '1.6', True, '.vex.cdx.json'),
 }
 
 
