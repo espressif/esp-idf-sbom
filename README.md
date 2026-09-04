@@ -16,6 +16,9 @@ the [National Vulnerability Database][4] (NVD) based on the
 - [Excluding CVEs](#excluding-cves)
   - [ESP-IDF tree local exclusions](#esp-idf-tree-local-exclusions)
   - [Project-local exclusions](#project-local-exclusions)
+- [VEX documents](#vex-documents)
+  - [VEX formats](#vex-formats)
+  - [Using a VEX file with check](#using-a-vex-file-with-check)
 - [Usage example](#usage-example)
 - [SBOM layout](#sbom-layout)
 - [Output formats](#output-formats)
@@ -99,6 +102,10 @@ output.
 
 For example `esp-idf-sbom create --format cyclonedx-json -o sbom.cdx.json build/project_description.json`.
 
+By default the SBOM also carries the excluded CVEs. The `--vex` option can leave
+them out, or write them to a separate VEX document, see
+[VEX documents](#vex-documents).
+
 
 ## Checking vulnerabilities
 
@@ -121,6 +128,10 @@ with
 If *SBOM file* is not provided, the standard input stream is used. The SBOM file may be
 in any format esp-idf-sbom can produce (SPDX tag/value, SPDX JSON, SPDX 3.0 JSON-LD or CycloneDX JSON);
 the format is detected automatically.
+
+If the SBOM was created with `--vex openvex` or `--vex cyclonedx-json`, the
+excluded CVEs are in a separate VEX file. Pass it with `--vex`, see
+[Using a VEX file with check](#using-a-vex-file-with-check).
 
 The default report format consists of multiple tables:
 
@@ -260,6 +271,58 @@ form: the scoped form keeps the CVE visible in the report as *excluded* with a
 reason, while the string form drops it from the scan output entirely. Once the
 fix ships in a bumped version, NVD no longer matches it and the entry can be
 removed.
+
+
+## VEX documents
+
+An excluded CVE is an assessment: the CVE was checked and it does not apply to
+this component. [VEX][12] is the standard format for such statements. The `--vex`
+option says where esp-idf-sbom writes them.
+
+| `--vex`                     | SBOM                     | separate file             |
+|-----------------------------|--------------------------|---------------------------|
+| `embed`                     | contains the assessments | none                      |
+| `none`                      | clean                    | none                      |
+| `openvex`, `cyclonedx-json` | clean                    | written to `--vex-output` |
+
+`embed` is the default.
+
+Use `none` or a VEX format when the SBOM must not contain vulnerability
+information. Some regulations require it. Some tools also ignore VEX that is
+embedded in an SBOM.
+
+    esp-idf-sbom create --vex openvex --vex-output app.openvex.json \
+                        -o app.spdx build/project_description.json
+
+With `--vex none` the assessments are lost. `check` and other scanners then
+report CVEs that were already analyzed and found not applicable. Use a VEX format
+to keep the assessments.
+
+esp-idf-sbom does not update a VEX file. The assessments are kept in the VEX
+document and are maintained there. Building the project again and running
+`create` writes a new SBOM and a new VEX file, replacing both.
+
+### VEX formats
+
+* `openvex` - [OpenVEX][13] 0.2.0. The file is not tied to one SBOM, so it can
+  be used with an SBOM in any format. This matters for SPDX 2.2, which `create`
+  writes by default and which has no VEX format of its own.
+* `cyclonedx-json` - CycloneDX 1.6. The file is linked to one CycloneDX SBOM and
+  can be used only with that SBOM. It needs `--format cyclonedx-json`.
+
+### Using a VEX file with check
+
+`check` reads the assessments from the SBOM. An SBOM written with `--vex none` or
+with a VEX format does not contain them, so `check` reports the already analyzed
+CVEs as vulnerabilities. Pass the VEX file so that `check` can use them:
+
+    esp-idf-sbom check --vex app.openvex.json app.spdx
+
+The option can be used more than once. A CycloneDX VEX is refused for any SBOM
+other than the one it was created with.
+
+A CVE is excluded when the VEX file says that it does not apply, or that it is
+already fixed.
 
 
 ## Usage example
@@ -821,3 +884,5 @@ given **project**, **component** or **submodule** (see [Output formats](#output-
 [9]: https://nvd.nist.gov/developers/request-an-api-key
 [10]: https://nvd.nist.gov/developers/start-here
 [11]: https://cyclonedx.org
+[12]: https://www.cisa.gov/sites/default/files/2023-04/minimum-requirements-for-vex-508c.pdf
+[13]: https://openvex.dev

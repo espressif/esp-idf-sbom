@@ -23,6 +23,7 @@ import yaml
 
 from esp_idf_sbom import __version__
 from esp_idf_sbom.libsbom import log
+from esp_idf_sbom.libsbom import vex
 from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import TOOL_NAME
 from esp_idf_sbom.libsbom.sbom import TOOL_PURL
@@ -208,10 +209,18 @@ def _document_creator(org: Organization) -> str:
     return org.name
 
 
-def _render_tagvalue(sbom: SBOM, version: str) -> str:
+def new_document_id(sbom: SBOM) -> str:
+    """Return a new document namespace for an SBOM.
+
+    Pass it to render() when the caller also needs the id.
+    """
+    return f'https://spdx.org/spdxdocs/{_sanitize_spdxid(sbom.name or "document")}-{uuid.uuid4()}'
+
+
+def _render_tagvalue(sbom: SBOM, version: str, doc_id: str = '') -> str:
     """Render the SBOM as an SPDX 2.2 tag/value document."""
     argv = ' '.join('"' + arg + '"' if ' ' in arg else arg for arg in sys.argv)
-    namespace = 'http://spdx.org/spdxdocs/' + _sanitize_spdxid(sbom.name) + '-' + str(uuid.uuid4())
+    namespace = doc_id or new_document_id(sbom)
     created = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     out = ''
@@ -310,13 +319,13 @@ def _package_json(pkg: Package) -> Dict[str, Any]:
     return pkg_obj
 
 
-def _render_json(sbom: SBOM, version: str) -> str:
+def _render_json(sbom: SBOM, version: str, doc_id: str = '') -> str:
     """Render the SBOM as an SPDX 2.2 JSON document.
 
     The same data as the tag/value form, in the schema's canonical JSON shape:
     relationships and files are top-level arrays (not nested under packages).
     """
-    namespace = 'http://spdx.org/spdxdocs/' + _sanitize_spdxid(sbom.name) + '-' + str(uuid.uuid4())
+    namespace = doc_id or new_document_id(sbom)
     created = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     relationships: List[Dict[str, str]] = [
@@ -364,7 +373,7 @@ def _render_json(sbom: SBOM, version: str) -> str:
     return json.dumps(document, indent=2)
 
 
-def _render_jsonld(sbom: SBOM, version: str) -> str:
+def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
     """Render the model as SPDX 3.0 JSON-LD.
 
     Unlike SPDX 2.x, SPDX 3.0 has no tag/value form -- JSON-LD is the only
@@ -376,7 +385,7 @@ def _render_jsonld(sbom: SBOM, version: str) -> str:
     excluded CVE as a security_Vulnerability plus a not-affected VEX relationship.
     """
     context = f'https://spdx.org/rdf/{version}/spdx-context.jsonld'
-    docns = f'https://spdx.org/spdxdocs/{_sanitize_spdxid(sbom.name or "document")}-{uuid.uuid4()}'
+    docns = doc_id or new_document_id(sbom)
 
     def sid(suffix: str) -> str:
         return f'{docns}#{suffix}'
@@ -601,35 +610,42 @@ def _render_jsonld(sbom: SBOM, version: str) -> str:
         )
         element_ids.append(crid)
 
-    has_security = False
-    for pkg in sbom.packages:
-        for entry in pkg.cve_exclude_list:
-            has_security = True
-            vid = sid(f'Vuln-{pkg.ref}-{entry["cve"]}')
-            graph.append(
-                {
-                    'type': 'security_Vulnerability',
-                    'spdxId': vid,
-                    'creationInfo': ci,
-                    'externalIdentifier': [
-                        {'type': 'ExternalIdentifier', 'externalIdentifierType': 'cve', 'identifier': entry['cve']}
-                    ],
-                }
-            )
-            element_ids.append(vid)
-            xid = sid(f'Vex-{pkg.ref}-{entry["cve"]}')
-            graph.append(
-                {
-                    'type': 'security_VexNotAffectedVulnAssessmentRelationship',
-                    'spdxId': xid,
-                    'creationInfo': ci,
-                    'from': vid,
-                    'relationshipType': 'doesNotAffect',
-                    'to': [sid(pkg.ref)],
-                    'security_impactStatement': entry['reason'],
-                }
-            )
-            element_ids.append(xid)
+    # SPDX 3.0 has a separate relationship class for each VEX status, and each
+    # class has different fields. This is not a value map like in CycloneDX.
+    # build() creates only not-affected statements, so only that class is written.
+    statements = [s for s in vex.build(sbom).statements if s.status is vex.VexStatus.NOT_AFFECTED]
+    has_security = bool(statements)
+    for statement in statements:
+        ref = statement.products[0].ref
+        vid = sid(f'Vuln-{ref}-{statement.vulnerability}')
+        graph.append(
+            {
+                'type': 'security_Vulnerability',
+                'spdxId': vid,
+                'creationInfo': ci,
+                'externalIdentifier': [
+                    {
+                        'type': 'ExternalIdentifier',
+                        'externalIdentifierType': 'cve',
+                        'identifier': statement.vulnerability,
+                    }
+                ],
+            }
+        )
+        element_ids.append(vid)
+        xid = sid(f'Vex-{ref}-{statement.vulnerability}')
+        graph.append(
+            {
+                'type': 'security_VexNotAffectedVulnAssessmentRelationship',
+                'spdxId': xid,
+                'creationInfo': ci,
+                'from': vid,
+                'relationshipType': 'doesNotAffect',
+                'to': [sid(product.ref) for product in statement.products],
+                'security_impactStatement': statement.impact_statement,
+            }
+        )
+        element_ids.append(xid)
 
     profiles = ['core', 'software']
     if has_licensing:
@@ -651,20 +667,21 @@ def _render_jsonld(sbom: SBOM, version: str) -> str:
     return json.dumps({'@context': context, '@graph': graph}, indent=2)
 
 
-def render(sbom: SBOM, format: str = 'tagvalue', version: str = '2.2') -> str:
+def render(sbom: SBOM, format: str = 'tagvalue', version: str = '2.2', doc_id: str = '') -> str:
     """Render a format-neutral SBOM as an SPDX document.
 
     :param sbom: the SBOM model to serialize
     :param format: 'tagvalue' or 'json' for SPDX 2.x, 'json-ld' for SPDX 3.0 JSON-LD
     :param version: the SPDX spec version to emit
+    :param doc_id: document namespace to use. A new one is created when empty.
     :returns: the serialized SPDX document
     """
     if format == 'tagvalue':
-        return _render_tagvalue(sbom, version)
+        return _render_tagvalue(sbom, version, doc_id)
     if format == 'json':
-        return _render_json(sbom, version)
+        return _render_json(sbom, version, doc_id)
     if format == 'json-ld':
-        return _render_jsonld(sbom, version)
+        return _render_jsonld(sbom, version, doc_id)
     raise ValueError(f'unsupported SPDX format: {format!r}')
 
 
@@ -684,6 +701,14 @@ def _unref(spdxid: str) -> str:
     """Strip the SPDXRef- prefix from an SPDXID, leaving the model ref."""
     prefix = 'SPDXRef-'
     return spdxid[len(prefix) :] if spdxid.startswith(prefix) else spdxid
+
+
+def _unref_jsonld(spdxid: str, docns: str) -> str:
+    """Remove our document namespace from an SPDX 3.0 element id and return the
+    model ref. Ids from another namespace are returned unchanged, because only our
+    ids are known to be unique without the namespace."""
+    prefix = f'{docns}#'
+    return spdxid[len(prefix) :] if docns and spdxid.startswith(prefix) else spdxid
 
 
 def _package_from_tags(spdxid: str, tags: Dict[str, List[str]]) -> Package:
@@ -747,15 +772,18 @@ def _parse_tagvalue(text: str) -> SBOM:
     name = ''
     root = ''
     creator = ''
+    doc_id = ''
     for line in text.splitlines():
         line = line.strip()
         if not name and line.startswith('DocumentName:'):
             name = line.split(':', 1)[1].strip()
+        elif not doc_id and line.startswith('DocumentNamespace:'):
+            doc_id = line.split(':', 1)[1].strip()
         elif not root and line.startswith('Relationship:') and ' DESCRIBES ' in line:
             root = _unref(line.split(' DESCRIBES ', 1)[1].strip())
         elif not creator and line.startswith('Creator: Tool:'):
             creator = line[len('Creator: Tool:') :].strip()
-        if name and root and creator:
+        if name and root and creator and doc_id:
             break
     # The project package is emitted first and is the DESCRIBES target; fall back
     # to it if the header did not carry the information.
@@ -764,7 +792,7 @@ def _parse_tagvalue(text: str) -> SBOM:
     if not name and packages:
         name = packages[0].package_name
 
-    return SBOM(name=name, root=root, packages=packages, creator=creator)
+    return SBOM(name=name, root=root, packages=packages, creator=creator, doc_id=doc_id)
 
 
 def _comment_to_dict(comment: str) -> Dict[str, Any]:
@@ -862,7 +890,13 @@ def _parse_json(text: str) -> SBOM:
     if not name and packages:
         name = packages[0].package_name
 
-    return SBOM(name=name, root=root, packages=packages, creator=creator)
+    return SBOM(
+        name=name,
+        root=root,
+        packages=packages,
+        creator=creator,
+        doc_id=document.get('documentNamespace', ''),
+    )
 
 
 def _parse_jsonld(text: str) -> SBOM:
@@ -909,6 +943,7 @@ def _parse_jsonld(text: str) -> SBOM:
     doc_name = ''
     creator = ''
     root = ''
+    docns = ''
     for e in graph:
         t = e.get('type')
         if t == 'Relationship' and e.get('relationshipType') == 'dependsOn':
@@ -919,6 +954,8 @@ def _parse_jsonld(text: str) -> SBOM:
                 excludes.setdefault(_id(to), []).append(entry)
         elif t == 'SpdxDocument':
             doc_name = e.get('name', '')
+            # Our namespace. render writes it as '<docns>#SPDXRef-DOCUMENT'.
+            docns = _id(e.get('spdxId')).rsplit('#', 1)[0]
             roots = _as_list(e.get('rootElement'))
             if roots:
                 root = _id(roots[0])
@@ -927,11 +964,15 @@ def _parse_jsonld(text: str) -> SBOM:
             # esp-idf-sbom (see the provenance note in cmd_check).
             creator = e.get('name', '')
 
+    root = _unref_jsonld(root, docns)
+
     packages: List[Package] = []
     for e in graph:
         if e.get('type') != 'software_Package':
             continue
-        ref = _id(e.get('spdxId'))
+        # The graph uses full ids (see _id). The model uses short refs.
+        spdxid = _id(e.get('spdxId'))
+        ref = _unref_jsonld(spdxid, docns)
         # kind/name are cosmetic on the load path (check keys on
         # package_name/cpes/version); derive them best-effort from the id
         # fragment of our own KIND-name scheme, defaulting to COMPONENT.
@@ -955,9 +996,9 @@ def _parse_jsonld(text: str) -> SBOM:
                 version=e.get('software_packageVersion', ''),
                 purl=e.get('software_packageUrl', ''),
                 cpes=cpes,
-                cve_exclude_list=excludes.get(ref, []),
+                cve_exclude_list=excludes.get(spdxid, []),
                 cve_keywords=cve_keywords,
-                depends_on=depends.get(ref, []),
+                depends_on=[_unref_jsonld(d, docns) for d in depends.get(spdxid, [])],
             )
         )
 
@@ -965,7 +1006,7 @@ def _parse_jsonld(text: str) -> SBOM:
         root = packages[0].ref
     if not doc_name and packages:
         doc_name = packages[0].package_name
-    return SBOM(name=doc_name, root=root, packages=packages, creator=creator)
+    return SBOM(name=doc_name, root=root, packages=packages, creator=creator, doc_id=docns)
 
 
 def parse(text: str, format: str = 'tagvalue') -> SBOM:

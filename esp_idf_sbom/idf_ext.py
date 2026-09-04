@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 import json
+import os
 import sys
 from pathlib import Path
 from subprocess import CalledProcessError
@@ -36,15 +37,25 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
         args: PropertyDict,
         sbom_file: str,
         sbom_format: str,
+        vex: str,
+        vex_output: str,
         **action_args: Any,
     ) -> None:
-        # Imported lazily: SBOM_FORMATS pulls in the render backends and is only
-        # needed when this action actually runs, so idf.py startup stays light.
-        from esp_idf_sbom.main import SBOM_FORMATS
+        # Imported here and not at module level, so that idf.py startup stays
+        # light; the format tables pull in the render backends.
+        from esp_idf_sbom.libsbom.formats import SBOM_FORMATS
+        from esp_idf_sbom.libsbom.formats import VEX_FORMATS
+        from esp_idf_sbom.libsbom.formats import VEX_IN_SBOM
 
         fmt = SBOM_FORMATS.get(sbom_format)
         if fmt is None:
             raise FatalError(f'unknown SBOM format "{sbom_format}"; choose from: {", ".join(SBOM_FORMATS)}')
+
+        # None for embed and none, which write no separate file.
+        vexfmt = VEX_FORMATS.get(vex)
+        if vexfmt is None and vex not in VEX_IN_SBOM:
+            choices = ', '.join(list(VEX_IN_SBOM) + list(VEX_FORMATS))
+            raise FatalError(f'unknown --vex value "{vex}"; choose from: {choices}')
 
         proj_desc_path = get_proj_desc_path(args)
         proj_desc = get_proj_desc(proj_desc_path)
@@ -54,6 +65,9 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
             # Default output: build/<app><ext>, extension matching the format.
             sbom_file = str(Path(args.build_dir) / (Path(app_bin).stem + fmt.ext))
 
+        if vexfmt is not None and not vex_output:
+            vex_output = str(Path(args.build_dir) / (Path(app_bin).stem + vexfmt.ext))
+
         cmd = [
             sys.executable,
             '-m',
@@ -61,18 +75,29 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
             'create',
             '--format',
             sbom_format,
+            '--vex',
+            vex,
             '--rem-unused',
             '--rem-config',
             '--output-file',
             str(sbom_file),
-            str(proj_desc_path),
         ]
+
+        # Passed on even with embed and none, so that esp-idf-sbom reports the
+        # combination as an error instead of the option being dropped here.
+        if vex_output:
+            cmd += ['--vex-output', str(vex_output)]
+
+        cmd.append(str(proj_desc_path))
+
         try:
             run(cmd, check=True)
         except CalledProcessError as e:
             raise FatalError(f'cannot create SBOM file "{sbom_file}": {e}')
 
         log.note(f'SBOM for "{app_bin}" created in "{sbom_file}"')
+        if vexfmt is not None:
+            log.note(f'VEX for "{app_bin}" created in "{vex_output}"')
 
     def sbom_check(
         subcommand_name: str,
@@ -139,6 +164,29 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
                         ),
                         'type': str,
                         'default': 'spdx-tag-value',
+                    },
+                    {
+                        'names': ['--vex'],
+                        'help': (
+                            'What to do with the vulnerability information, meaning the '
+                            'excluded CVEs. embed - write it into the SBOM (default). '
+                            'none - write no vulnerability information at all. '
+                            'openvex or cyclonedx-json - write a separate VEX document and '
+                            'leave the SBOM clean. cyclonedx-json links to the SBOM, so it '
+                            'needs --format cyclonedx-json.'
+                        ),
+                        'type': str,
+                        'default': os.environ.get('SBOM_CREATE_VEX', 'embed'),
+                    },
+                    {
+                        'names': ['--vex-output', 'vex_output'],
+                        'help': (
+                            'Output VEX file path. Used only when --vex selects a VEX format. '
+                            'By default the VEX is created in the project build directory, '
+                            'named after the application, with an extension matching --vex '
+                            '(e.g. .openvex.json, .vex.cdx.json).'
+                        ),
+                        'type': str,
                     },
                 ],
                 'dependencies': ['app'],
