@@ -1,3 +1,15 @@
+## v1.4.0 (2026-09-10)
+
+### ✨ New Features
+
+- report CVEs listed in the CISA KEV catalog *(Frantisek Hrbata - 3d09e8d)*
+- derive Package URLs from the commit a package was built from *(Frantisek Hrbata - 685e8ef)*
+- declare the ESP-IDF framework license *(Frantisek Hrbata - 5e20a7b)*
+- record the SBOM supplier and manufacturer *(Frantisek Hrbata - a06c05d)*
+- attribute generated SBOMs to their producing tool *(Frantisek Hrbata - ad99965)*
+- Add project specific cve exclusion list *(Dalton Verhagen - dc47bf7)*
+
+
 ## v1.3.1 (2026-07-23)
 
 ### 🐛 Bug Fixes
