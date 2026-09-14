@@ -272,3 +272,16 @@ CVE-2026-75466:
     bundled by the idf-extra-components libjpeg-turbo component has no
     src/rdpng.c, and the component builds with WITH_TURBOJPEG=FALSE, so the
     TurboJPEG API is not built at all.
+
+CVE-2026-45747: Related to Suricata (< 7.0.16), whose Lua TLS certificate helper (TlsGetCertInfo) dereferences NULL certificate fields when a Lua script asks for certificate information of TLS traffic with absent fields. Not a vulnerability in Lua itself
+CVE-2026-45763: Related to Suricata (8.0.0 to 8.0.4), whose Lua sandbox does not consistently enforce the security.lua.max-bytes memory limit for new allocations. Not a vulnerability in Lua itself
+CVE-2026-45770: Related to Suricata (8.0.0 to 8.0.4), where a Lua rule registering too many flow variables corrupts the Lua detection state and can escape the restricted Lua sandbox. Not a vulnerability in Lua itself
+CVE-2026-78552: Related to Okta Access Gateway, which interpolates the application-level custom configuration field into the nginx server block without applying its Lua directive restriction. Not a vulnerability in Lua itself
+CVE-2026-90651: Related to Socket Firewall (socket-registry-firewall < 2.0.0), whose OpenResty/Lua HTTP client accepts any upstream TLS certificate when api_ssl_verify and upstream_ssl_verify are omitted. Not a vulnerability in Lua itself
+CVE-2026-46387: Related to Suricata (< 7.0.16 and < 8.0.5), whose HTTP/2 decompression path grows the decompressed response body buffer without an upper bound for gzip, deflate or brotli payloads. Not a vulnerability in the brotli C library
+CVE-2026-80710: Related to the Linux kernel s390 DASD driver, where the int-typed fmt_buffer_size in dasd_eckd_check_device_format() truncates the buffer size and the channel program writes past the undersized allocation. Matched on the "fmt" keyword; not a vulnerability in the C++ fmtlib/fmt library
+CVE-2026-85024: Related to the undici WebSocket client, whose permessage-deflate size-limit cleanup removes the error listener from its zlib inflate stream so a malformed DEFLATE byte crashes the Node.js process. Same class as CVE-2026-2229, already excluded. Not a vulnerability in the zlib C library
+CVE-2026-87776: Related to the Node.js compression middleware (< 1.8.2), which never destroys the zlib stream of a compressed response when the client aborts the connection and so leaks native zlib memory. Not a vulnerability in the zlib C library
+CVE-2026-89716: Related to the Linux kernel zram driver, which passes unvalidated user-supplied deflate winbits to zlib_deflate_workspacesize() and hits a BUG_ON() in the kernel's zlib_deflate library. Not a vulnerability in the zlib C library
+CVE-2026-89717: Related to the Linux kernel zram driver, where zram_destroy_comps() leaves the primary compressor NULL and comp_algorithm_show() dereferences it. Not a vulnerability in the zlib C library
+CVE-2026-89598: Related to the Linux kernel ssd1307fb fbdev driver, which runs sleeping I2C transfers from atomic context in its damage callbacks. Matched on "lz4" in the module list of the crash report; not a vulnerability in the LZ4 C library
