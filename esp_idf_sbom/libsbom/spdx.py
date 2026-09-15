@@ -151,6 +151,9 @@ def _render_package(pkg: Package) -> str:
     else:
         out += 'FilesAnalyzed: false\n'
 
+    if pkg.checksum_sha256:
+        out += f'PackageChecksum: SHA256: {pkg.checksum_sha256}\n'
+
     out += f'PackageLicenseConcluded: {simplify_licenses(pkg.licenses_concluded) or "NOASSERTION"}\n'
     out += f'PackageLicenseDeclared: {simplify_licenses(pkg.licenses_declared) or "NOASSERTION"}\n'
 
@@ -170,11 +173,10 @@ def _render_package(pkg: Package) -> str:
     if comment:
         out += f'PackageComment: <text>\n{comment}</text>\n'
 
+    # Relationship starts a new element in tag/value, so it must come after
+    # all package tags.
     for dep in pkg.depends_on:
         out += f'Relationship: SPDXRef-{pkg.ref} DEPENDS_ON SPDXRef-{dep}\n'
-
-    if pkg.checksum_sha256:
-        out += f'PackageChecksum: SHA256: {pkg.checksum_sha256}\n'
 
     if pkg.files:
         out += '\n'
