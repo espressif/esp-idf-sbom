@@ -11,7 +11,6 @@ from typing import Set
 import schema
 import yaml
 from license_expression import ExpressionError
-from license_expression import get_spdx_licensing
 
 from esp_idf_sbom.libsbom import CPE
 from esp_idf_sbom.libsbom import expr
@@ -63,9 +62,6 @@ def build_idf_framework_manifest(idf_path: str) -> Dict[str, Any]:
     if remote:
         manifest['repository'] = remote
     return manifest
-
-
-licensing = get_spdx_licensing()
 
 
 def fix(manifest: Dict[str, Any], version: str = '') -> None:
@@ -383,7 +379,7 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
 
     def check_license(lic: str) -> bool:
         try:
-            licensing.parse(lic, validate=True)
+            utils.parse_license(lic)
         except ExpressionError as e:
             raise schema.SchemaError(f'License expression "{lic}" is not valid: {e}')
         return True

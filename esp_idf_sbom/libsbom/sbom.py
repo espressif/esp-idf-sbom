@@ -42,7 +42,6 @@ from typing import Set
 from typing import Tuple
 
 from license_expression import ExpressionError
-from license_expression import get_spdx_licensing
 
 from esp_idf_sbom import __version__
 from esp_idf_sbom.libsbom import expr
@@ -223,9 +222,6 @@ class SBOM:
 # ===========================================================================
 
 
-_LICENSING = get_spdx_licensing()
-
-
 def simplify_licenses(licenses: Set[str]) -> str:
     """Combine a set of SPDX license expressions with AND and return the
     simplified expression. Returns '' when there is nothing to simplify.
@@ -238,7 +234,7 @@ def simplify_licenses(licenses: Set[str]) -> str:
     # license stays correct.
     exprs = [f'({expr})' for expr in licenses]
     expr = ' AND '.join(exprs)
-    parsed = _LICENSING.parse(expr)
+    parsed = utils.licensing.parse(expr)
     if parsed is None:
         return ''
     return str(parsed.simplify())
@@ -266,8 +262,6 @@ class SBOMTags:
         # C / CSS / JS block on a single line: /* CONTENT */
         re.compile(r'^\s*/\*\s*(.*?)\s*\*/\s*$'),
     ]
-    # SPDX license parser/validator
-    licensing = get_spdx_licensing()
 
     @classmethod
     def _strip_comment_wrappers(cls, line: str) -> str:
@@ -424,17 +418,13 @@ class SBOMFileTags(SBOMTags):
                     expr = match.group(1)
                     parsed = None
                     try:
-                        parsed = self.licensing.parse(expr, validate=True)
+                        parsed = utils.parse_license(expr)
                     except ExpressionError as e:
-                        # validate=True can fail for two reasons:
-                        #   - syntactic error    -> lenient parse will also fail
-                        #   - unknown identifier -> lenient parse succeeds
-                        # Try the lenient parse to recover the second case; if it
-                        # also fails, the expression is genuinely malformed and we
-                        # skip it rather than crash the tool.
+                        # The expression has an unknown license key. Parse it
+                        # again without that check, so the tag is not lost.
                         log.warn(f'License expression "{expr}" found in "{self.path}" is not valid: {e}')
                         try:
-                            parsed = self.licensing.parse(expr)
+                            parsed = utils.licensing.parse(expr)
                         except ExpressionError as e2:
                             log.warn(
                                 f'License expression "{expr}" found in "{self.path}" '
