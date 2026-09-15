@@ -387,6 +387,7 @@ detects the format automatically. The model concepts map to each format as follo
 | PURL          | `ExternalRef PACKAGE-MANAGER purl`     | `software_packageUrl`                        | `purl`                               |
 | license       | `PackageLicenseConcluded` / `Declared` | `hasConcludedLicense` / `hasDeclaredLicense` | `licenses`                           |
 | copyright     | `PackageCopyrightText`                 | `software_copyrightText`                     | `copyright`                          |
+| custom-licenses | `LicenseID` / `ExtractedText`        | `expandedlicensing_CustomLicense`            | not available                        |
 | checksum      | `PackageChecksum`                      | `verifiedUsing` (Hash)                       | `hashes`                             |
 | excluded CVEs | `PackageComment`                       | `security_Vulnerability` + VEX               | `not_affected` VEX `vulnerabilities` |
 | cve-keywords  | `PackageComment`                       | `comment` (YAML)                             | `properties`                         |
@@ -551,6 +552,31 @@ cve-exclude-list:
 * **copyright**:
     Copyright explicitly declared by the author. This can be single string or a
     list of copyrights.
+* **custom-licenses**:
+    Description of licenses that are not on the [SPDX license list][15]. Such a license is
+    referred to as `LicenseRef-<id>` in a license expression, and the SBOM has to say what
+    the identifier means. Each entry is a dictionary with the following keys.
+
+    * id: the full identifier, for example `LicenseRef-Acme-Proprietary`
+    * name: license name
+    * text: license text
+    * file: file with the license text, relative to the manifest directory
+    * url: where the license is published
+    * comment: any additional note
+
+    Use either `text` or `file`, not both. A license used in a license expression but not
+    described here is still added to the SBOM, with `NOASSERTION` instead of the text.
+    Describing a license that no expression uses is allowed.
+
+```
+license: LicenseRef-Acme-Proprietary AND MIT
+custom-licenses:
+  - id: LicenseRef-Acme-Proprietary
+    name: Acme Proprietary License
+    file: LICENSE
+    url: https://acme.example/license
+```
+
 * **cve-exclude-list**:
     List of already evaluated CVEs, which do not apply to this package. This can be used
     to exclude CVEs from the `esp-idf-sbom` checker report in case the package is not
@@ -723,6 +749,7 @@ CycloneDX fields.
 | originator       | PackageOriginator            | publisher                         |
 | license          | PackageLicenseDeclared       | licenses                          |
 | copyright        | PackageCopyrightText         | copyright                         |
+| custom-licenses  | LicenseID / ExtractedText    | not available                     |
 | cve-exclude-list | PackageComment               | not_affected VEX                  |
 | cve-keywords     | PackageComment               | properties                        |
 
@@ -860,6 +887,14 @@ The license can be also explicitly declared by the author in the `sbom.yml` file
 variable. This information is used as the declared license of the
 given **project**, **component** or **submodule** (see [Output formats](#output-formats)).
 
+A license that is not on the [SPDX license list][15] is referred to as `LicenseRef-<id>`,
+both in the `license` variable and in the `SPDX-License-Identifier` file tag. The SPDX
+formats require the document to say what such an identifier means, so every one of them is
+described in the SBOM. Use the `custom-licenses` manifest key to provide the license text
+and name. Without it the license is reported with `NOASSERTION`. The CycloneDX 1.6 schema
+has no place for a license text next to a license expression, so CycloneDX carries the
+identifier only.
+
 
 ## Return Values
 
@@ -890,3 +925,4 @@ given **project**, **component** or **submodule** (see [Output formats](#output-
 [12]: https://www.cisa.gov/known-exploited-vulnerabilities-catalog
 [13]: https://www.cisa.gov/sites/default/files/2023-04/minimum-requirements-for-vex-508c.pdf
 [14]: https://openvex.dev
+[15]: https://spdx.org/licenses/
