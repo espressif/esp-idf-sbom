@@ -172,6 +172,21 @@ class Organization:
 
 
 @dataclass
+class LicenseRef:
+    """A license that is not on the SPDX license list.
+
+    License expressions refer to it as LicenseRef-<id>. The document has to
+    define it, see SPDX 2.2 clause 10.
+    """
+
+    id: str  # the full identifier, e.g. 'LicenseRef-Acme-Proprietary'
+    name: str = ''  # human readable license name
+    text: str = ''  # the license text
+    urls: List[str] = field(default_factory=list)  # where the license is published
+    comment: str = ''
+
+
+@dataclass
 class SBOM:
     """A whole SBOM: a flat, ordered set of packages plus document metadata.
 
@@ -198,6 +213,9 @@ class SBOM:
     # SPDX records this as the document creator.
     manufacturer: Organization = field(default_factory=Organization)
     packages: List[Package] = field(default_factory=list)
+    # Custom licenses used anywhere in the document. Every LicenseRef- in a
+    # license field has an entry here, so a backend can define what it emits.
+    license_refs: List[LicenseRef] = field(default_factory=list)
 
 
 # ===========================================================================
@@ -1666,6 +1684,22 @@ def _flatten(pkg: SBOMPackage, out: List[Package]) -> None:
         _flatten(subpkg, out)
 
 
+def _license_refs(packages: List[Package]) -> List[LicenseRef]:
+    """Collect the custom licenses used by packages, sorted by identifier.
+
+    Only the concluded expressions are searched. They hold every license found
+    in the package files, with --files add and without it. The license text is
+    not known here, it comes from the manifest and is merged in later.
+    """
+    refs: Dict[str, LicenseRef] = {}
+    for pkg in packages:
+        for expression in pkg.licenses_concluded:
+            for ref_id in utils.find_license_refs(expression):
+                refs.setdefault(ref_id, LicenseRef(id=ref_id))
+
+    return [refs[ref_id] for ref_id in sorted(refs)]
+
+
 def _organization(entity: Dict[str, str]) -> Organization:
     """Build an Organization from one entity of the manifest "document" key.
     An absent entity yields an empty Organization, which backends skip."""
@@ -1723,6 +1757,7 @@ def build(args: Dict[str, Any], proj_desc_path: str) -> SBOM:
         supplier=_organization(document.get('supplier', {})),
         manufacturer=_organization(document.get('manufacturer', {})),
         packages=packages,
+        license_refs=_license_refs(packages),
     )
 
 
