@@ -137,6 +137,8 @@ class Package:
     # via simplify_licenses().
     licenses_concluded: Set[str] = field(default_factory=set)
     licenses_declared: Set[str] = field(default_factory=set)
+    # Custom licenses described by this package's manifest.
+    license_refs: List['LicenseRef'] = field(default_factory=list)
     copyrights: Set[str] = field(default_factory=set)
 
     # --- vulnerability metadata -----------------------------------------
@@ -513,6 +515,7 @@ class SBOMObject:
         'description': '',
         'license': '',
         'copyright': [],
+        'custom-licenses': [],
         'hash': '',
         'cve-exclude-list': [],
         'cve-keywords': [],
@@ -838,6 +841,7 @@ class SBOMPackage(SBOMObject):
             licenses_from_files=licenses_from_files,
             licenses_concluded=set(self.tags.licenses_expressions),
             licenses_declared=set(self.tags.licenses_expressions_declared),
+            license_refs=self.get_license_refs(),
             copyrights=set(self.tags.copyrights),
             cve_exclude_list=[{'cve': cve_id, 'reason': reason} for cve_id, reason in merged_excludes.items()],
             cve_keywords=list(self.manifest['cve-keywords']),
@@ -845,6 +849,26 @@ class SBOMPackage(SBOMObject):
         )
 
         self.add_relationships()
+
+    def get_license_refs(self) -> List['LicenseRef']:
+        """Custom licenses described by the manifest "custom-licenses" key."""
+        refs = []
+        for entry in self.manifest['custom-licenses']:
+            text = entry.get('text', '')
+            if entry.get('file'):
+                path = utils.pjoin(self.dir, entry['file'])
+                with open(path, encoding='utf-8', errors='replace') as f:
+                    text = f.read()
+            refs.append(
+                LicenseRef(
+                    id=entry['id'],
+                    name=entry.get('name', ''),
+                    text=text,
+                    urls=[entry['url']] if entry.get('url') else [],
+                    comment=entry.get('comment', ''),
+                )
+            )
+        return refs
 
     def purl_from_commit(self) -> str:
         """Derive a PURL from the commit the package was built from, with the
@@ -1687,13 +1711,20 @@ def _flatten(pkg: SBOMPackage, out: List[Package]) -> None:
 def _license_refs(packages: List[Package]) -> List[LicenseRef]:
     """Collect the custom licenses used by packages, sorted by identifier.
 
-    Only the concluded expressions are searched. They hold every license found
-    in the package files, with --files add and without it. The license text is
-    not known here, it comes from the manifest and is merged in later.
+    Both expression sets are searched. The concluded one holds the licenses
+    found in the package files, with --files add and without it. A license that
+    no manifest describes is reported too, so the document defines every
+    license it uses.
     """
     refs: Dict[str, LicenseRef] = {}
     for pkg in packages:
-        for expression in pkg.licenses_concluded:
+        for ref in pkg.license_refs:
+            described = refs.setdefault(ref.id, ref)
+            if described != ref:
+                log.warn(f'Custom license "{ref.id}" is described more than once, using the first description.')
+
+    for pkg in packages:
+        for expression in pkg.licenses_concluded | pkg.licenses_declared:
             for ref_id in utils.find_license_refs(expression):
                 refs.setdefault(ref_id, LicenseRef(id=ref_id))
 

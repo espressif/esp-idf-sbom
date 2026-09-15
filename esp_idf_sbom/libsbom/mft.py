@@ -384,6 +384,21 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
             raise schema.SchemaError(f'License expression "{lic}" is not valid: {e}')
         return True
 
+    def check_custom_license(entry: dict) -> bool:
+        if not utils.is_license_ref(entry['id']):
+            raise schema.SchemaError(
+                f'Value "{entry["id"]}" is not a custom license identifier. '
+                'It has to be "LicenseRef-" followed by letters, numbers, "." or "-".'
+            )
+        if 'text' in entry and 'file' in entry:
+            raise schema.SchemaError(f'Both "text" and "file" specified for "{entry["id"]}"')
+        return True
+
+    def check_custom_license_file(path: str) -> bool:
+        if os.path.isfile(utils.pjoin(directory, path)):
+            return True
+        raise schema.SchemaError(f'License file "{utils.pjoin(directory, path)}" does not exist or is not a file')
+
     def check_manifest(data: dict) -> bool:
         if 'path' in data and 'manifest' in data:
             raise schema.SchemaError('Both "path" and "manifest" keys specified for "manifest" entry')
@@ -448,6 +463,23 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
         ignore_extra_keys=True,
     )
 
+    custom_licenses_schema = schema.Schema(
+        [
+            schema.And(
+                {
+                    'id': str,
+                    schema.Optional('name'): str,
+                    schema.Optional('text'): str,
+                    schema.Optional('file'): schema.And(str, check_custom_license_file),
+                    schema.Optional('url'): schema.And(str, check_url),
+                    schema.Optional('comment'): str,
+                },
+                check_custom_license,
+                ignore_extra_keys=True,
+            )
+        ],
+    )
+
     manifest_entry_schema = schema.Schema(
         schema.And(
             {
@@ -495,6 +527,7 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
             schema.Optional('description'): str,
             schema.Optional('license'): schema.And(str, check_license),
             schema.Optional('copyright'): list,
+            schema.Optional('custom-licenses'): custom_licenses_schema,
             schema.Optional('hash'): schema.And(str, check_hash),
             schema.Optional('cve-exclude-list'): cve_exclude_list_schema,
             schema.Optional('cve-keywords'): list,
