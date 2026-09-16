@@ -385,8 +385,10 @@ detects the format automatically. The model concepts map to each format as follo
 | download URL  | `PackageDownloadLocation`              | `software_downloadLocation`                  | `externalReferences` (distribution)  |
 | CPE           | `ExternalRef SECURITY cpe23Type`       | `cpe23` externalIdentifier                   | `cpe` (+ `evidence.identity`)        |
 | PURL          | `ExternalRef PACKAGE-MANAGER purl`     | `software_packageUrl`                        | `purl`                               |
-| license       | `PackageLicenseConcluded` / `Declared` | `hasConcludedLicense` / `hasDeclaredLicense` | `licenses`                           |
+| license       | `PackageLicenseDeclared`               | `hasDeclaredLicense`                         | `licenses`                           |
+| scanned license | `PackageLicenseConcluded`            | `hasConcludedLicense`                        | `evidence.licenses`                  |
 | copyright     | `PackageCopyrightText`                 | `software_copyrightText`                     | `copyright`                          |
+| scanned copyright | `PackageAttributionText`           | `software_attributionText`                   | `evidence.copyright`                 |
 | custom-licenses | `LicenseID` / `ExtractedText`        | `expandedlicensing_CustomLicense`            | not available                        |
 | checksum      | `PackageChecksum`                      | `verifiedUsing` (Hash)                       | `hashes`                             |
 | excluded CVEs | `PackageComment`                       | `security_Vulnerability` + VEX               | `not_affected` VEX `vulnerabilities` |
@@ -749,7 +751,9 @@ CycloneDX fields.
 | originator       | PackageOriginator            | publisher                         |
 | license          | PackageLicenseDeclared       | licenses                          |
 | copyright        | PackageCopyrightText         | copyright                         |
-| custom-licenses  | LicenseID / ExtractedText    | not available                     |
+| scanned license  | PackageLicenseConcluded      | evidence.licenses                 |
+| scanned copyright | PackageAttributionText      | evidence.copyright                |
+| custom-licenses  | LicenseID / ExtractedText    | licenses (name, text, url)        |
 | cve-exclude-list | PackageComment               | not_affected VEX                  |
 | cve-keywords     | PackageComment               | properties                        |
 
@@ -886,14 +890,34 @@ and **submodules** used in the final project binary.
 The license can be also explicitly declared by the author in the `sbom.yml` file with the `license`
 variable. This information is used as the declared license of the
 given **project**, **component** or **submodule** (see [Output formats](#output-formats)).
+The same holds for the `copyright` variable.
+
+What the author declares and what the file scan finds are kept apart. The declared license
+and copyright describe the package itself. The license and the copyright notices collected
+from the files describe the code the package carries, which usually belongs to somebody
+else, so they are reported separately.
+
+* SPDX keeps the declared license in `PackageLicenseDeclared` and the scanned one in
+  `PackageLicenseConcluded`. The declared copyright is the `PackageCopyrightText` and the
+  scanned notices are written as `PackageAttributionText`.
+* CycloneDX 1.6 holds one license expression per component, so the declared license and
+  copyright stay in `licenses` and `copyright`, and the scanned ones are reported under
+  `evidence`. Both carry the `acknowledgement` field saying which kind they are.
+
+With nothing declared, the scanned license and copyright are all there is, so they are
+reported as the license and the copyright of the package, and nothing is reported
+separately.
 
 A license that is not on the [SPDX license list][15] is referred to as `LicenseRef-<id>`,
 both in the `license` variable and in the `SPDX-License-Identifier` file tag. The SPDX
 formats require the document to say what such an identifier means, so every one of them is
 described in the SBOM. Use the `custom-licenses` manifest key to provide the license text
-and name. Without it the license is reported with `NOASSERTION`. The CycloneDX 1.6 schema
-has no place for a license text next to a license expression, so CycloneDX carries the
-identifier only.
+and name. Without it the license is reported with `NOASSERTION`.
+
+CycloneDX reports the name, the text and the url as a license object when a license field
+is a single license or a plain `AND` of licenses. This is done for the declared license and
+for the scan results in `evidence`. An `OR` or a `WITH` expression has no license object, so
+there the license keeps its identifier only.
 
 
 ## Return Values
