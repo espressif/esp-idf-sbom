@@ -661,6 +661,210 @@ def test_spdx_jsonld_parses_bare_refs() -> None:
     assert all(e.get('spdxId', '').count('#') <= 1 for e in graph)
 
 
+def _sbom_with_licenses():
+    """A component that declares a custom license and a copyright, and has a
+    license and copyright notices found in its files."""
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import LicenseRef
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    proj = Package(
+        ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT, depends_on=['COMPONENT-lib']
+    )
+    lib = Package(
+        ref='COMPONENT-lib',
+        name='lib',
+        package_name='lib',
+        kind=PackageKind.COMPONENT,
+        licenses_declared={'LicenseRef-Acme'},
+        licenses_concluded={'MIT'},
+        copyrights_declared={'2026 Acme Corp'},
+        copyrights_concluded={'2010 Somebody Else'},
+    )
+    return SBOM(
+        name='app',
+        root='PROJECT-app',
+        packages=[proj, lib],
+        license_refs=[LicenseRef(id='LicenseRef-Acme', name='Acme License', text='Acme terms.')],
+    )
+
+
+def _component(text: str, name: str):
+    """One component of a rendered CycloneDX document, by name."""
+    return [c for c in json.loads(text)['components'] if c['name'] == name][0]
+
+
+def test_spdx_defines_custom_license() -> None:
+    """A LicenseRef- used in the document must be defined, or the document is
+    not valid."""
+    from esp_idf_sbom.libsbom import spdx
+
+    text = spdx.render(_sbom_with_licenses(), version='2.2')
+    assert 'PackageLicenseDeclared: LicenseRef-Acme' in text
+    assert 'LicenseID: LicenseRef-Acme' in text
+    assert 'ExtractedText: <text>Acme terms.</text>' in text
+
+    tmpdir = TemporaryDirectory()
+    output_fn = Path(tmpdir.name) / 'sbom.spdx'
+    output_fn.write_text(text)
+    run(['pyspdxtools', '-i', output_fn], check=True)
+
+
+def test_spdx_copyright_and_attribution() -> None:
+    """The declared copyright is the package copyright, the notices found in
+    the files are attribution."""
+    from esp_idf_sbom.libsbom import spdx
+
+    text = spdx.render(_sbom_with_licenses(), version='2.2')
+    assert 'PackageCopyrightText: <text>2026 Acme Corp</text>' in text
+    assert 'PackageAttributionText: <text>2010 Somebody Else</text>' in text
+
+
+def test_cyclonedx_declared_and_evidence() -> None:
+    """What the author declared stays in the component, what the file scan
+    found goes to evidence. The declared custom license carries its name and
+    text as a license object, the scan result stays an expression."""
+    from esp_idf_sbom.libsbom import cyclonedx
+
+    comp = _component(cyclonedx.render(_sbom_with_licenses(), version='1.6'), 'lib')
+    assert comp['licenses'] == [
+        {
+            'license': {
+                'name': 'Acme License',
+                'text': {'contentType': 'text/plain', 'content': 'Acme terms.'},
+                'acknowledgement': 'declared',
+            }
+        }
+    ]
+    assert comp['copyright'] == '2026 Acme Corp'
+    assert comp['evidence']['licenses'] == [{'expression': 'MIT', 'acknowledgement': 'concluded'}]
+    assert comp['evidence']['copyright'] == [{'text': '2010 Somebody Else'}]
+
+
+def test_cyclonedx_without_declared_values() -> None:
+    """With nothing declared the scanned license and copyright are all there
+    is, so they stay in the component and no evidence is reported."""
+    from esp_idf_sbom.libsbom import cyclonedx
+
+    sbom = _sbom_with_licenses()
+    sbom.packages[1].licenses_declared = set()
+    sbom.packages[1].copyrights_declared = set()
+
+    comp = _component(cyclonedx.render(sbom, version='1.6'), 'lib')
+    assert comp['licenses'] == [{'expression': 'MIT', 'acknowledgement': 'concluded'}]
+    assert comp['copyright'] == '2010 Somebody Else'
+    assert 'evidence' not in comp
+
+
+def _lib_licenses(declared: str, refs=None):
+    """The "licenses" of a component that declares the given expression."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    proj = Package(
+        ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT, depends_on=['COMPONENT-lib']
+    )
+    lib = Package(
+        ref='COMPONENT-lib', name='lib', package_name='lib', kind=PackageKind.COMPONENT, licenses_declared={declared}
+    )
+    sbom = SBOM(name='app', root='PROJECT-app', packages=[proj, lib], license_refs=refs or [])
+    return _component(cyclonedx.render(sbom, version='1.6'), 'lib')['licenses']
+
+
+def test_cyclonedx_custom_license_carries_url() -> None:
+    """A custom license with a url reports it in the license object."""
+    from esp_idf_sbom.libsbom.sbom import LicenseRef
+
+    ref = LicenseRef(id='LicenseRef-Acme', name='Acme License', text='Acme terms.', urls=['https://acme.example/l'])
+    assert _lib_licenses('LicenseRef-Acme', [ref]) == [
+        {
+            'license': {
+                'name': 'Acme License',
+                'text': {'contentType': 'text/plain', 'content': 'Acme terms.'},
+                'url': 'https://acme.example/l',
+                'acknowledgement': 'declared',
+            }
+        }
+    ]
+
+
+def test_cyclonedx_custom_license_in_and() -> None:
+    """A "AND" of an SPDX license and a custom one becomes one license object
+    each. The SPDX license uses "id", the custom one its name and text."""
+    from esp_idf_sbom.libsbom.sbom import LicenseRef
+
+    ref = LicenseRef(id='LicenseRef-Acme', name='Acme License', text='Acme terms.')
+    assert _lib_licenses('MIT AND LicenseRef-Acme', [ref]) == [
+        {
+            'license': {
+                'name': 'Acme License',
+                'text': {'contentType': 'text/plain', 'content': 'Acme terms.'},
+                'acknowledgement': 'declared',
+            }
+        },
+        {'license': {'id': 'MIT', 'acknowledgement': 'declared'}},
+    ]
+
+
+def test_cyclonedx_custom_license_in_or_stays_expression() -> None:
+    """An "OR" has no license object list, so the whole expression stays, and
+    the custom license keeps its identifier only."""
+    from esp_idf_sbom.libsbom.sbom import LicenseRef
+
+    ref = LicenseRef(id='LicenseRef-Acme', name='Acme License', text='Acme terms.')
+    assert _lib_licenses('MIT OR LicenseRef-Acme', [ref]) == [
+        {'expression': 'LicenseRef-Acme OR MIT', 'acknowledgement': 'declared'}
+    ]
+
+
+def test_cyclonedx_spdx_license_stays_expression() -> None:
+    """A component with only SPDX licenses is unchanged, it stays an
+    expression."""
+    assert _lib_licenses('Apache-2.0') == [{'expression': 'Apache-2.0', 'acknowledgement': 'declared'}]
+
+
+def test_cyclonedx_custom_license_only_in_evidence() -> None:
+    """A custom license declared standard but found by the scan reports its name
+    and text in evidence, not just in the declared field."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import LicenseRef
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    proj = Package(
+        ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT, depends_on=['COMPONENT-lib']
+    )
+    lib = Package(
+        ref='COMPONENT-lib',
+        name='lib',
+        package_name='lib',
+        kind=PackageKind.COMPONENT,
+        licenses_declared={'MIT'},
+        licenses_concluded={'LicenseRef-Acme'},
+    )
+    sbom = SBOM(
+        name='app',
+        root='PROJECT-app',
+        packages=[proj, lib],
+        license_refs=[LicenseRef(id='LicenseRef-Acme', name='Acme License', text='Acme terms.')],
+    )
+    comp = _component(cyclonedx.render(sbom, version='1.6'), 'lib')
+    assert comp['licenses'] == [{'expression': 'MIT', 'acknowledgement': 'declared'}]
+    assert comp['evidence']['licenses'] == [
+        {
+            'license': {
+                'name': 'Acme License',
+                'text': {'contentType': 'text/plain', 'content': 'Acme terms.'},
+                'acknowledgement': 'concluded',
+            }
+        }
+    ]
+
+
 def test_producer_attribution() -> None:
     """Every format must attribute the document to the tool that produced it:
     name and version, the organization supplying the tool, and the tool's purl
