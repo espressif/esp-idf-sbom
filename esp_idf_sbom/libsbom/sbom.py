@@ -244,6 +244,17 @@ class SBOM:
 # ===========================================================================
 
 
+def declared_first(declared: Set[str], concluded: Set[str]) -> Tuple[List[str], List[str]]:
+    """Return the values for the main field and for the supporting field.
+
+    What the author declared goes to the main field. With nothing declared the
+    concluded values go there instead and the supporting field stays empty.
+    """
+    if not declared:
+        return sorted(concluded), []
+    return sorted(declared), sorted(concluded)
+
+
 def simplify_licenses(licenses: Set[str]) -> str:
     """Combine a set of SPDX license expressions with AND and return the
     simplified expression. Returns '' when there is nothing to simplify.
