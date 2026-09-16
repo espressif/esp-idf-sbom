@@ -30,6 +30,7 @@ from license_expression import AND
 from license_expression import LicenseSymbol
 
 from esp_idf_sbom.libsbom import log
+from esp_idf_sbom.libsbom import utils
 from esp_idf_sbom.libsbom import vex
 from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import TOOL_DISTRIBUTION_URL
@@ -66,6 +67,12 @@ _KIND_TYPE = {
 # ===========================================================================
 
 
+# SPDX 2.2 clause 7.5 writes the supplier email in parentheses after the name.
+# Only a trailing group holding an email address is taken, a name may have
+# parentheses of its own, as in "ACME (Europe) Ltd".
+_SPDX_EMAIL_RE = re.compile(r'^(.*?)\s*\(([^()]+)\)$')
+
+
 def _supplier_name(supplier: str) -> str:
     """Drop the SPDX-style 'Organization: ' / 'Person: ' prefix; a CycloneDX
     supplier is already an organizational entity."""
@@ -73,6 +80,21 @@ def _supplier_name(supplier: str) -> str:
         if supplier.startswith(prefix):
             return supplier[len(prefix) :]
     return supplier
+
+
+def _supplier_entity(supplier: str) -> Dict[str, Any]:
+    """Render an SPDX supplier value as a CycloneDX organizationalEntity.
+
+    The email SPDX keeps inside the name becomes a contact, which is where
+    CycloneDX expects it.
+    """
+    name = _supplier_name(supplier)
+    if not name:
+        return {}
+    match = _SPDX_EMAIL_RE.match(name)
+    if match and utils.is_email(match.group(2)):
+        return {'name': match.group(1), 'contact': [{'email': match.group(2)}]}
+    return {'name': name}
 
 
 def _entity(org: Organization) -> Dict[str, Any]:
@@ -170,9 +192,9 @@ def _component(pkg: Package, refs: Dict[str, LicenseRef]) -> Dict[str, Any]:
     }
     if pkg.version:
         comp['version'] = pkg.version
-    supplier = _supplier_name(pkg.supplier)
+    supplier = _supplier_entity(pkg.supplier)
     if supplier:
-        comp['supplier'] = {'name': supplier}
+        comp['supplier'] = supplier
     if pkg.originator:
         comp['publisher'] = _supplier_name(pkg.originator)
     if pkg.description:
@@ -520,6 +542,19 @@ def _entity_to_organization(entity: Dict[str, Any]) -> Organization:
     )
 
 
+def _entity_supplier(entity: Dict[str, Any]) -> str:
+    """Read a CycloneDX organizationalEntity back into a package supplier.
+
+    The email is put back into the name, where the SPDX form keeps it, so a
+    re-render produces the same entity.
+    """
+    name = entity.get('name', '')
+    if not name:
+        return ''
+    email = next((c.get('email', '') for c in entity.get('contact', []) if c.get('email')), '')
+    return f'{name} ({email})' if email else name
+
+
 def _package_from_component(
     comp: Dict[str, Any], depends_on: List[str], cve_exclude_list: List[Dict[str, str]]
 ) -> Package:
@@ -564,7 +599,7 @@ def _package_from_component(
         kind=kind,
         version=comp.get('version', ''),
         description=comp.get('description', ''),
-        supplier=comp.get('supplier', {}).get('name', ''),
+        supplier=_entity_supplier(comp.get('supplier', {})),
         originator=comp.get('publisher', ''),
         repository=repository,
         download_url=download_url,
