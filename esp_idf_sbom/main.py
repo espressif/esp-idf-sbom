@@ -3,28 +3,32 @@
 # SPDX-FileCopyrightText: 2023-2026 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: Apache-2.0
 
+import io
 import json
+import locale
 import os
 import sys
+from pathlib import Path
+from typing import IO
 from typing import Any
 from typing import Dict
 from typing import List
-from typing import NamedTuple
+from typing import Tuple
 
 import rich_click as click
 import yaml
 from rich.table import Table
 
 from esp_idf_sbom import __version__
-from esp_idf_sbom.libsbom import cyclonedx
+from esp_idf_sbom.libsbom import formats
 from esp_idf_sbom.libsbom import git
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import mft
 from esp_idf_sbom.libsbom import nvd
 from esp_idf_sbom.libsbom import report
 from esp_idf_sbom.libsbom import sbom
-from esp_idf_sbom.libsbom import spdx
 from esp_idf_sbom.libsbom import utils
+from esp_idf_sbom.libsbom import vex
 
 EXTENDED_SCAN_HELP = (
     'If available, use the product part of the CPE and the keywords found '
@@ -66,49 +70,117 @@ def no_sync_excluded_cves_option(func: Any) -> Any:
     )(func)
 
 
-class SbomFormat(NamedTuple):
-    """One create --format choice: the backend that renders it, the backend's
-    render encoding, the spec version to emit, and the conventional file
-    extension (used e.g. by the idf.py wrapper to name the output file)."""
+def _check_vex_options(args: Dict[str, Any]) -> None:
+    """Refuse option combinations that cannot do what the user asked for."""
+    vex_choice = args['vex']
+    vex_output = args['vex_output']
+    separate = vex_choice not in formats.VEX_IN_SBOM
 
-    backend: Any
-    encoding: str
-    version: str
-    ext: str
+    if separate and not vex_output:
+        log.die(f'--vex {vex_choice} writes a separate VEX document, so --vex-output is needed.')
 
+    if not separate and vex_output:
+        log.die(
+            f'--vex {vex_choice} writes no separate file, so --vex-output cannot be used. '
+            f'"embed" puts the VEX into the SBOM and "none" writes no VEX at all.'
+        )
 
-# Maps each create --format choice to its SbomFormat. A bare name (e.g. spdx-json)
-# is an alias for the latest supported version of that format; pinning a specific
-# version uses an @version suffix (e.g. spdx-json@2.2). The bare alias may advance
-# to a newer version on a major esp-idf-sbom release (a breaking change), so pin
-# name@version for reproducible output. Adding a format or a version is just another
-# row here; --format derives its accepted values from these keys.
-SBOM_FORMATS: Dict[str, SbomFormat] = {
-    'spdx-tag-value': SbomFormat(spdx, 'tagvalue', '2.2', '.spdx'),
-    'spdx-tag-value@2.2': SbomFormat(spdx, 'tagvalue', '2.2', '.spdx'),
-    'spdx-json': SbomFormat(spdx, 'json', '2.2', '.spdx.json'),
-    'spdx-json@2.2': SbomFormat(spdx, 'json', '2.2', '.spdx.json'),
-    'spdx-json-ld': SbomFormat(spdx, 'json-ld', '3.0.1', '.spdx.jsonld'),
-    'spdx-json-ld@3.0.1': SbomFormat(spdx, 'json-ld', '3.0.1', '.spdx.jsonld'),
-    'cyclonedx-json': SbomFormat(cyclonedx, 'json', '1.6', '.cdx.json'),
-    'cyclonedx-json@1.6': SbomFormat(cyclonedx, 'json', '1.6', '.cdx.json'),
-}
+    if not separate:
+        return
+
+    # Both documents would be written through their own file handle, so neither
+    # would survive.
+    if args['output_file'] and os.path.realpath(args['output_file']) == os.path.realpath(vex_output):
+        log.die('The SBOM and the VEX cannot be written to the same file. Use --vex embed for one document.')
+
+    vexfmt = formats.VEX_FORMATS[vex_choice]
+    fmt = formats.SBOM_FORMATS[args['format']]
+    if vexfmt.linked and vexfmt.backend is not fmt.backend:
+        log.die(
+            f'The "{vex_choice}" VEX format links to the SBOM document, so it needs an SBOM '
+            f'in the same format, not "{args["format"]}".'
+        )
 
 
 def cmd_create(args: Dict[str, Any]) -> int:
-    fmt = SBOM_FORMATS[args['format']]
+    _check_vex_options(args)
+
+    fmt = formats.SBOM_FORMATS[args['format']]
+    separate = args['vex'] not in formats.VEX_IN_SBOM
     model = sbom.build(args, args['input_file'])
+
+    # Build the VEX model before the exclusion list is cleared below, so the VEX
+    # file keeps all the exclusions.
+    vexdoc = vex.build(model) if separate else None
+
+    if args['vex'] != 'embed':
+        # All formats write their vulnerability information from this one list.
+        # Clearing it is enough.
+        for pkg in model.packages:
+            pkg.cve_exclude_list = []
+
+    # Create the document id here and pass it to render(). The VEX file needs the
+    # same id to link to this SBOM.
+    doc_id = fmt.backend.new_document_id(model)
+    text = fmt.backend.render(model, format=fmt.encoding, version=fmt.version, doc_id=doc_id)
+
+    if vexdoc is not None:
+        vexfmt = formats.VEX_FORMATS[args['vex']]
+        if vexfmt.linked:
+            vexdoc.sbom_id = doc_id
+        # The same helper as the -o file, so both create missing directories.
+        vex_text = vexfmt.backend.render_vex(vexdoc, format=vexfmt.encoding, version=vexfmt.version)
+        _write_output_file(args['vex_output'], vex_text)
+
     # markup=False: the SBOM is data, not a rich-markup message; without it rich
     # strips bracketed content (e.g. JSON arrays, or any '[...]' inside a value).
-    log.print(fmt.backend.render(model, format=fmt.encoding, version=fmt.version), markup=False)
+    log.print(text, markup=False)
     return 0
+
+
+def _apply_vex_files(model: sbom.SBOM, paths: Tuple[str, ...]) -> None:
+    """Merge standalone VEX documents into the SBOM model that was just loaded.
+
+    A VEX that names the SBOM it belongs to, which for CycloneDX is the
+    serialNumber in the BOM-Link, is used only with that SBOM. OpenVEX names
+    products by PURL and CPE and has no such link, so it is used with any SBOM.
+    """
+    for path in paths:
+        try:
+            vexdoc = formats.load_vex(path)
+        except (OSError, ValueError) as e:
+            log.die(f'cannot read VEX file "{path}": {e}')
+
+        if vexdoc.sbom_id and vexdoc.sbom_id != model.doc_id:
+            if not model.doc_id:
+                # serialNumber is optional in CycloneDX, and an SPDX document may
+                # carry no namespace either.
+                log.die(
+                    f'The VEX file "{path}" links to a CycloneDX SBOM with a BOM-Link, but '
+                    f'the SBOM being checked has no serialNumber to match it against.'
+                )
+            if not model.doc_id.startswith('urn:uuid:'):
+                # A CycloneDX serialNumber is a urn:uuid, an SPDX document
+                # namespace is a URL, so the two can be told apart.
+                log.die(
+                    f'The VEX file "{path}" links to a CycloneDX SBOM with a BOM-Link, and '
+                    f'the SBOM being checked is not a CycloneDX document.'
+                )
+            log.die(
+                f'The VEX file "{path}" belongs to another SBOM. It links to '
+                f'"{vexdoc.sbom_id}", but this SBOM is "{model.doc_id}".'
+            )
+
+        vex.apply(model, vexdoc)
 
 
 def cmd_check(args: Dict[str, Any]) -> int:
     try:
-        model = sbom.load(args['input_file'])
+        model = formats.load_sbom(args['input_file'])
     except (OSError, ValueError) as e:
         log.die(f'cannot read SBOM file: {e}')
+
+    _apply_vex_files(model, args['vex_files'])
 
     # check is built around SBOMs produced by esp-idf-sbom; for a foreign SBOM the
     # esp-idf-sbom-specific data (excluded CVEs, cve-keywords) is absent and VEX /
@@ -632,6 +704,26 @@ def cmd_manifest_aggregate(args: Dict[str, Any]) -> int:
     return 0
 
 
+class _OutputBuffer(io.StringIO):
+    # rich replaces characters that the encoding of the console file cannot
+    # represent with an ASCII counterpart. io.StringIO reports no encoding, and
+    # rich then assumes UTF-8. Report the encoding _write_output_file() writes
+    # with, so the output is rendered as if it went into the file directly.
+    encoding = locale.getpreferredencoding(False)
+
+
+def _write_output_file(fn: str, data: str) -> None:
+    try:
+        path = Path(fn)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Escape characters that the output file encoding cannot represent, for
+        # example a package name with non-ASCII characters in a cp1252 locale, so
+        # that one name does not stop the whole file from being written.
+        path.write_text(data, encoding=_OutputBuffer.encoding, errors='backslashreplace')
+    except OSError as e:
+        log.die(f'cannot write to "{fn}": {e}')
+
+
 def _dispatch(ctx: click.Context, func: Any, **params: Any) -> None:
     # Merge the global options (stored on ctx.obj by the group) and the
     # subcommand options into a single args dict, configure the console, run the
@@ -639,14 +731,17 @@ def _dispatch(ctx: click.Context, func: Any, **params: Any) -> None:
     options = ctx.obj
     args = {**options, **params}
 
-    ofile = sys.stdout
+    # The output is collected in a buffer and the file is written only after the
+    # command succeeded. Creating the file upfront leaves an empty file behind on
+    # a failure and destroys the output of a previous run. Opening it just before
+    # the output is written is not enough either, because a command may fail in
+    # the middle of writing.
     output_file = params.get('output_file')
-    if output_file:
-        # set_console pins stdout to this file and drops --force-terminal there,
-        # so the written report stays ANSI-free.
-        ofile = open(output_file, 'w')
+    ofile: IO[str] = _OutputBuffer() if output_file else sys.stdout
 
     log.set_console(
+        # set_console pins stdout to this file and drops --force-terminal there,
+        # so the written report stays ANSI-free.
         ofile,
         options['quiet'],
         options['no_color'],
@@ -663,11 +758,11 @@ def _dispatch(ctx: click.Context, func: Any, **params: Any) -> None:
     # excluded_cves.yaml fetch is skipped on subcommands that consult it.
     nvd.EXCLUDED_CVES_NO_SYNC = bool(args.get('no_sync_excluded_cves', False))
 
-    try:
-        exit_code = func(args)
-    finally:
-        if ofile is not sys.stdout:
-            ofile.close()
+    # log.die raises SystemExit, so a failure in a command skips the write below
+    # and the file is left as it was.
+    exit_code = func(args)
+    if output_file:
+        _write_output_file(output_file, ofile.getvalue())  # type: ignore[attr-defined]
 
     ctx.exit(exit_code)
 
@@ -748,7 +843,7 @@ def main(
 )
 @click.option(
     '--format',
-    type=click.Choice(list(SBOM_FORMATS)),
+    type=click.Choice(list(formats.SBOM_FORMATS)),
     default=os.environ.get('SBOM_CREATE_FORMAT', 'spdx-tag-value'),
     help=(
         'Output SBOM format. A bare name selects the latest supported spec version; '
@@ -840,6 +935,33 @@ def main(
     is_flag=True,
     help='When processing manifest files, disregard the conditions for the "if" key.',
 )
+@click.option(
+    '--vex',
+    type=click.Choice(list(formats.VEX_IN_SBOM) + list(formats.VEX_FORMATS)),
+    default=os.environ.get('SBOM_CREATE_VEX', 'embed'),
+    help=(
+        'What to do with the vulnerability information, meaning the excluded CVEs. '
+        'embed - write it into the SBOM (default). It becomes CycloneDX '
+        'vulnerabilities, SPDX 3.0.1 security elements, or the cve-exclude-list '
+        'comment in SPDX 2.2. '
+        'none - write no vulnerability information at all. The excluded CVEs are '
+        'lost, so check will report them again. '
+        'A VEX format writes a separate VEX document and leaves the SBOM clean. '
+        'openvex - OpenVEX 0.2.0. It names components by PURL and CPE, so it works '
+        'with any SBOM format. '
+        'cyclonedx-json - CycloneDX 1.6. It links to the components with a '
+        'BOM-Link, so it needs --format cyclonedx-json.'
+    ),
+)
+@click.option(
+    '--vex-output',
+    metavar='VEX_FILE',
+    default=None,
+    help=(
+        'Write the separate VEX document to VEX_FILE. Needed when --vex selects a '
+        'VEX format, and cannot be used with --vex embed or --vex none.'
+    ),
+)
 @no_sync_excluded_cves_option
 @click.pass_context
 def create(ctx: click.Context, **params: Any) -> None:
@@ -857,6 +979,18 @@ def create(ctx: click.Context, **params: Any) -> None:
     metavar='OUTPUT_FILE',
     default=None,
     help='Print output to the specified file instead of stdout.',
+)
+@click.option(
+    '--vex',
+    'vex_files',
+    metavar='VEX_FILE',
+    multiple=True,
+    help=(
+        'Read a standalone VEX document, as written by "create --vex", and use its '
+        'not_affected statements when reporting. Can be used more than once. A '
+        'CycloneDX VEX links to one SBOM and is refused for any other one. An '
+        'OpenVEX document names products by PURL and CPE and works with any SBOM.'
+    ),
 )
 @extended_scan_option
 @click.option(

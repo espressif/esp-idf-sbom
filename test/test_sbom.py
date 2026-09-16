@@ -516,7 +516,7 @@ def test_validate_sbom_json(hello_world_build: Path) -> None:
 
 
 def test_check_sbom_json(hello_world_build: Path) -> None:
-    """check must accept an SPDX JSON SBOM (sbom.load auto-detects the format)."""
+    """check must accept an SPDX JSON SBOM (formats.load_sbom auto-detects the format)."""
     tmpdir = TemporaryDirectory()
     output_fn = Path(tmpdir.name) / 'sbom.spdx.json'
     proj_desc_path = hello_world_build / 'build' / 'project_description.json'
@@ -544,7 +544,7 @@ def test_validate_sbom_cyclonedx(hello_world_build: Path) -> None:
 
 
 def test_check_sbom_cyclonedx(hello_world_build: Path) -> None:
-    """check must accept a CycloneDX SBOM (sbom.load auto-detects the format)."""
+    """check must accept a CycloneDX SBOM (formats.load_sbom auto-detects the format)."""
     tmpdir = TemporaryDirectory()
     output_fn = Path(tmpdir.name) / 'sbom.cdx.json'
     proj_desc_path = hello_world_build / 'build' / 'project_description.json'
@@ -608,7 +608,7 @@ def test_validate_sbom_spdx_jsonld(hello_world_build: Path) -> None:
 
 
 def test_check_sbom_spdx_jsonld(hello_world_build: Path) -> None:
-    """check must accept an SPDX 3.0 JSON-LD SBOM (sbom.load auto-detects the format)."""
+    """check must accept an SPDX 3.0 JSON-LD SBOM (formats.load_sbom auto-detects the format)."""
     tmpdir = TemporaryDirectory()
     output_fn = Path(tmpdir.name) / 'sbom.spdx3.json'
     proj_desc_path = hello_world_build / 'build' / 'project_description.json'
@@ -637,6 +637,28 @@ def test_spdx_jsonld_renders_files() -> None:
         pytest.skip(f'cannot fetch the SPDX 3.0.1 schema: {e}')
     errors = list(jsonschema.Draft202012Validator(schema).iter_errors(json.loads(text)))
     assert not errors, f'SPDX 3.0 file validation failed: {errors[:2]}'
+
+
+def test_spdx_jsonld_parses_bare_refs() -> None:
+    """SPDX 3.0 element ids carry the document namespace. Parsing must drop our own
+    so the refs match what the other backends produce, and so re-rendering does not
+    nest the old namespace inside the new one."""
+    from esp_idf_sbom.libsbom import spdx
+
+    model = _sbom_with_file()
+    model.packages[1].cve_exclude_list = [{'cve': 'CVE-2020-1', 'reason': 'not used'}]
+
+    back = spdx.parse(spdx.render(model, format='json-ld', version='3.0.1'), format='json-ld')
+
+    by_ref = {pkg.ref: pkg for pkg in back.packages}
+    assert back.root == 'PROJECT-app'
+    assert set(by_ref) == {'PROJECT-app', 'COMPONENT-lib'}
+    assert by_ref['PROJECT-app'].depends_on == ['COMPONENT-lib']
+    # The graph is still keyed on full ids, so this breaks if the two ever drift.
+    assert by_ref['COMPONENT-lib'].cve_exclude_list == [{'cve': 'CVE-2020-1', 'reason': 'not used'}]
+
+    graph = json.loads(spdx.render(back, format='json-ld', version='3.0.1'))['@graph']
+    assert all(e.get('spdxId', '').count('#') <= 1 for e in graph)
 
 
 def test_producer_attribution() -> None:
@@ -676,6 +698,723 @@ def test_producer_attribution() -> None:
     assert component['version'] == TOOL_VERSION
     assert component['supplier']['name'] == org
     assert component['purl'] == TOOL_PURL
+
+
+def test_vex_build() -> None:
+    """vex.build turns each cve-exclude-list entry into one not-affected statement
+    about its own package, carrying both product identities."""
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_file()
+    lib = model.packages[1]
+    lib.purl = 'pkg:github/example/lib@2.0'
+    lib.cpes = ['cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*']
+    lib.cve_exclude_list = [
+        {'cve': 'CVE-2020-1', 'reason': 'not used'},
+        {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
+    ]
+
+    doc = vex.build(model, sbom_id='urn:uuid:11111111-2222-3333-4444-555555555555')
+
+    assert doc.sbom_id == 'urn:uuid:11111111-2222-3333-4444-555555555555'
+    assert doc.sbom_name == 'app'
+    assert [s.vulnerability for s in doc.statements] == ['CVE-2020-1', 'CVE-2020-2']
+
+    statement = doc.statements[0]
+    assert statement.status is vex.VexStatus.NOT_AFFECTED
+    assert statement.justification is None
+    assert statement.impact_statement == 'not used'
+
+    product = statement.products[0]
+    assert product.ref == 'COMPONENT-lib'
+    assert product.purl == 'pkg:github/example/lib@2.0'
+    assert product.cpes == ['cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*']
+    assert product.name == 'lib'
+    assert product.version == '2.0'
+    # A copy, so editing the statement cannot reach back into the SBOM model.
+    assert product.cpes is not lib.cpes
+
+
+def test_vex_build_without_exclusions() -> None:
+    """An SBOM with nothing excluded yields no statements at all."""
+    from esp_idf_sbom.libsbom import vex
+
+    assert vex.build(_sbom_with_file()).statements == []
+
+
+def test_vex_vocabulary_is_cisa() -> None:
+    """The model vocabulary has to stay CISA's. OpenVEX and the SPDX 3.0.1 security
+    profile use it verbatim, so only the CycloneDX backend maps out of it; changing
+    these values would push that mapping into every backend."""
+    from esp_idf_sbom.libsbom import vex
+
+    assert {s.value for s in vex.VexStatus} == {
+        'not_affected',
+        'affected',
+        'fixed',
+        'under_investigation',
+    }
+    assert {j.value for j in vex.VexJustification} == {
+        'component_not_present',
+        'vulnerable_code_not_present',
+        'vulnerable_code_not_in_execute_path',
+        'vulnerable_code_cannot_be_controlled_by_adversary',
+        'inline_mitigations_already_exist',
+    }
+
+
+def _sbom_with_exclusions():
+    model = _sbom_with_file()
+    model.packages[1].cve_exclude_list = [
+        {'cve': 'CVE-2020-1', 'reason': 'not used'},
+        {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
+    ]
+    return model
+
+
+def test_embedded_vex_matches_model() -> None:
+    """Embedded VEX is rendered from the same model a standalone document will be,
+    so the two cannot drift: what vex.build produces is exactly what lands in each
+    format that has a VEX vocabulary."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import spdx
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_exclusions()
+    statements = vex.build(model).statements
+
+    bom = json.loads(cyclonedx.render(model, version='1.6'))
+    assert [(v['id'], v['analysis']['state'], v['analysis']['detail']) for v in bom['vulnerabilities']] == [
+        (s.vulnerability, 'not_affected', s.impact_statement) for s in statements
+    ]
+    assert [v['affects'][0]['ref'] for v in bom['vulnerabilities']] == [s.products[0].ref for s in statements]
+
+    graph = json.loads(spdx.render(model, format='json-ld', version='3.0.1'))['@graph']
+    vulns = [e for e in graph if e['type'] == 'security_Vulnerability']
+    assessments = [e for e in graph if e['type'] == 'security_VexNotAffectedVulnAssessmentRelationship']
+    assert [v['externalIdentifier'][0]['identifier'] for v in vulns] == [s.vulnerability for s in statements]
+    assert [a['security_impactStatement'] for a in assessments] == [s.impact_statement for s in statements]
+
+    document = next(e for e in graph if e['type'] == 'SpdxDocument')
+    assert 'security' in document['profileConformance']
+    assert all(e['spdxId'] in document['element'] for e in vulns + assessments)
+
+
+def test_embedded_vex_absent_without_exclusions() -> None:
+    """With nothing excluded no VEX is emitted at all, and SPDX 3.0.1 drops the
+    security profile along with it."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import spdx
+
+    model = _sbom_with_file()
+
+    assert 'vulnerabilities' not in json.loads(cyclonedx.render(model, version='1.6'))
+
+    graph = json.loads(spdx.render(model, format='json-ld', version='3.0.1'))['@graph']
+    assert not [e for e in graph if e['type'].startswith('security_')]
+    document = next(e for e in graph if e['type'] == 'SpdxDocument')
+    assert 'security' not in document['profileConformance']
+
+
+def test_render_honours_supplied_document_id() -> None:
+    """render() must use the doc_id it is given, and create a new one when there is
+    none. All four formats must do this."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import spdx
+
+    model = _sbom_with_file()
+
+    doc_id = cyclonedx.new_document_id(model)
+    assert doc_id.startswith('urn:uuid:')
+    assert json.loads(cyclonedx.render(model, version='1.6', doc_id=doc_id))['serialNumber'] == doc_id
+    assert json.loads(cyclonedx.render(model, version='1.6'))['serialNumber'] != doc_id
+
+    doc_id = spdx.new_document_id(model)
+    assert doc_id.startswith('https://spdx.org/spdxdocs/app-')
+
+    tagvalue = spdx.render(model, format='tagvalue', version='2.2', doc_id=doc_id)
+    assert f'DocumentNamespace: {doc_id}\n' in tagvalue
+    assert f'DocumentNamespace: {doc_id}\n' not in spdx.render(model, format='tagvalue', version='2.2')
+
+    document = json.loads(spdx.render(model, format='json', version='2.2', doc_id=doc_id))
+    assert document['documentNamespace'] == doc_id
+
+    graph = json.loads(spdx.render(model, format='json-ld', version='3.0.1', doc_id=doc_id))['@graph']
+    spdx_document = next(e for e in graph if e['type'] == 'SpdxDocument')
+    assert spdx_document['spdxId'] == f'{doc_id}#SPDXRef-DOCUMENT'
+
+
+def _vex_with_identities():
+    """A VEX model whose product carries both identities, so the ref-based and the
+    identity-based backends each have something to render."""
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_exclusions()
+    model.packages[1].purl = 'pkg:github/example/lib@2.0'
+    model.packages[1].cpes = ['cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*']
+    return vex.build(model, sbom_id='urn:uuid:11111111-2222-3333-4444-555555555555')
+
+
+def test_render_vex_cyclonedx() -> None:
+    """A standalone CycloneDX VEX is a BOM carrying only assessments, linked to
+    the SBOM it assesses by BOM-Link, and it must validate as a 1.6 document."""
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    from esp_idf_sbom.libsbom import cyclonedx
+
+    text = cyclonedx.render_vex(_vex_with_identities(), version='1.6')
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+
+    bom = json.loads(text)
+    link = 'urn:cdx:11111111-2222-3333-4444-555555555555/1'
+    assert 'components' not in bom
+    assert 'dependencies' not in bom
+    # Its own identity, distinct from the SBOM it points at.
+    assert bom['serialNumber'].startswith('urn:uuid:')
+    assert bom['serialNumber'] != 'urn:uuid:11111111-2222-3333-4444-555555555555'
+    assert bom['externalReferences'] == [{'type': 'bom', 'url': link, 'comment': 'SBOM this VEX applies to: app'}]
+    assert [v['id'] for v in bom['vulnerabilities']] == ['CVE-2020-1', 'CVE-2020-2']
+    assert all(v['affects'][0]['ref'] == f'{link}#COMPONENT-lib' for v in bom['vulnerabilities'])
+
+
+def test_render_vex_cyclonedx_needs_sbom_identity() -> None:
+    """Without the SBOM's serialNumber there is no BOM-Link to build, so failing
+    is better than emitting a document whose refs resolve to nothing."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import vex
+
+    with pytest.raises(ValueError, match='serialNumber'):
+        cyclonedx.render_vex(vex.build(_sbom_with_exclusions()))
+
+
+def test_render_vex_openvex() -> None:
+    """OpenVEX takes the CISA vocabulary verbatim and names products by identity,
+    so it carries no reference to the SBOM document at all."""
+    from esp_idf_sbom.libsbom import openvex
+
+    document = json.loads(openvex.render_vex(_vex_with_identities()))
+
+    assert document['@context'] == 'https://openvex.dev/ns/v0.2.0'
+    assert document['@id'].startswith('urn:uuid:')
+    assert document['author'] == 'Espressif Systems (Shanghai) CO LTD'
+    assert 'esp-idf-sbom' in document['tooling']
+    assert 'urn:cdx' not in json.dumps(document)
+
+    statement = document['statements'][0]
+    assert statement == {
+        'vulnerability': {'name': 'CVE-2020-1'},
+        'products': [
+            {
+                '@id': 'pkg:github/example/lib@2.0',
+                'identifiers': {
+                    'purl': 'pkg:github/example/lib@2.0',
+                    'cpe23': 'cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*',
+                },
+            }
+        ],
+        'status': 'not_affected',
+        'impact_statement': 'not used',
+    }
+
+
+def test_render_vex_openvex_skips_unidentifiable_products() -> None:
+    """A package with neither a PURL nor a CPE cannot be named in a way any
+    consumer could match, so it is dropped with a warning rather than written."""
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+
+    document = json.loads(openvex.render_vex(vex.build(_sbom_with_exclusions())))
+    assert document['statements'] == []
+
+
+def test_create_vex_none(hello_world_build: Path) -> None:
+    """--vex none drops the vulnerability information from every format, and only
+    that: the SPDX 2.2 comment keeps its cve-keywords block, which is used to
+    search CVE descriptions and is not an assessment."""
+    manifest = hello_world_build / 'main' / 'sbom.yml'
+    content = """
+              cve-keywords:
+                - helloworld
+              cve-exclude-list:
+                - cve: CVE-2020-1234
+                  reason: not used in this configuration
+              """
+    manifest.write_text(dedent(content))
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+
+    def create(fmt: str, *extra: str) -> str:
+        cmd = [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', fmt, *extra, str(proj_desc_path)]
+        return run(cmd, check=True, capture_output=True, text=True).stdout
+
+    try:
+        # CycloneDX: the whole vulnerabilities array goes.
+        assert 'CVE-2020-1234' in create('cyclonedx-json')
+        assert 'vulnerabilities' not in json.loads(create('cyclonedx-json', '--vex', 'none'))
+
+        # SPDX 3.0.1: the security elements, and the security profile with them.
+        assert 'CVE-2020-1234' in create('spdx-json-ld')
+        graph = json.loads(create('spdx-json-ld', '--vex', 'none'))['@graph']
+        assert not [e for e in graph if e['type'].startswith('security_')]
+        document = next(e for e in graph if e['type'] == 'SpdxDocument')
+        assert 'security' not in document['profileConformance']
+
+        # SPDX 2.2 has no VEX vocabulary, so what goes is the cve-exclude-list
+        # block of the package comment.
+        for fmt in ('spdx-tag-value', 'spdx-json'):
+            assert 'CVE-2020-1234' in create(fmt)
+            text = create(fmt, '--vex', 'none')
+            assert 'CVE-2020-1234' not in text
+            assert 'cve-exclude-list' not in text
+            assert 'cve-keywords' in text and 'helloworld' in text
+    finally:
+        manifest.unlink()
+
+
+def test_parse_vex_round_trip() -> None:
+    """render_vex then parse_vex must give back the same statements. The CycloneDX
+    document also carries the id of the SBOM it belongs to, OpenVEX does not."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+
+    original = _vex_with_identities()
+
+    back = cyclonedx.parse_vex(cyclonedx.render_vex(original))
+    assert back.sbom_id == original.sbom_id
+    assert back.sbom_version == 1
+    assert [(s.vulnerability, s.status, s.impact_statement) for s in back.statements] == [
+        (s.vulnerability, s.status, s.impact_statement) for s in original.statements
+    ]
+    # CycloneDX names components by ref, so that is what comes back.
+    assert [s.products[0].ref for s in back.statements] == ['COMPONENT-lib', 'COMPONENT-lib']
+
+    back = openvex.parse_vex(openvex.render_vex(original))
+    assert back.sbom_id == ''
+    assert back.author == 'Espressif Systems (Shanghai) CO LTD'
+    assert [(s.vulnerability, s.status, s.impact_statement) for s in back.statements] == [
+        (s.vulnerability, s.status, s.impact_statement) for s in original.statements
+    ]
+    # OpenVEX names products by identity, so there is no ref.
+    product = back.statements[0].products[0]
+    assert product.ref == ''
+    assert product.purl == 'pkg:github/example/lib@2.0'
+    assert product.cpes == ['cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*']
+
+    assert vex.VexStatus.NOT_AFFECTED is back.statements[0].status
+
+
+def test_parse_vex_detects_format(tmp_path: Path) -> None:
+    """formats.load_vex detects the format from the top-level keys, like load_sbom does."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import formats
+    from esp_idf_sbom.libsbom import openvex
+
+    original = _vex_with_identities()
+
+    cdx_file = tmp_path / 'a.vex.cdx.json'
+    cdx_file.write_text(cyclonedx.render_vex(original))
+    assert formats.load_vex(str(cdx_file)).sbom_id == original.sbom_id
+
+    ovx_file = tmp_path / 'a.openvex.json'
+    ovx_file.write_text(openvex.render_vex(original))
+    assert len(formats.load_vex(str(ovx_file)).statements) == 2
+
+    other = tmp_path / 'other.json'
+    other.write_text(json.dumps({'spdxVersion': 'SPDX-2.2'}))
+    with pytest.raises(ValueError, match='unrecognized VEX format'):
+        formats.load_vex(str(other))
+
+
+def test_parse_vex_reads_document_reference() -> None:
+    """The SBOM a VEX belongs to is named in its document level externalReferences,
+    so it survives even when the document has no statements to carry a BOM-Link."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import vex
+
+    empty = vex.Vex(statements=[], sbom_id='urn:uuid:11111111-2222-3333-4444-555555555555', sbom_name='app')
+    back = cyclonedx.parse_vex(cyclonedx.render_vex(empty))
+    assert back.statements == []
+    assert back.sbom_id == empty.sbom_id
+
+    # Without the document reference, the links in affects[] still say it.
+    document = json.loads(cyclonedx.render_vex(_vex_with_identities()))
+    del document['externalReferences']
+    assert cyclonedx.parse_vex(json.dumps(document)).sbom_id == _vex_with_identities().sbom_id
+
+
+def test_parse_vex_rejects_two_sboms() -> None:
+    """A statement pointing somewhere other than the document reference would be
+    applied to the wrong SBOM, because the model keeps only the component ref."""
+    from esp_idf_sbom.libsbom import cyclonedx
+
+    document = json.loads(cyclonedx.render_vex(_vex_with_identities()))
+    other = 'urn:cdx:99999999-8888-7777-6666-555555555555/1'
+    document['vulnerabilities'][1]['affects'][0]['ref'] = f'{other}#COMPONENT-lib'
+    with pytest.raises(ValueError, match='more than one SBOM'):
+        cyclonedx.parse_vex(json.dumps(document))
+
+
+def test_vex_apply() -> None:
+    """apply() puts the statements into cve_exclude_list, which is where the rest
+    of the tool already reads exclusions from."""
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+
+    document = openvex.parse_vex(openvex.render_vex(_vex_with_identities()))
+
+    model = _sbom_with_file()
+    model.packages[1].purl = 'pkg:github/example/lib@2.0'
+    assert model.packages[1].cve_exclude_list == []
+
+    vex.apply(model, document)
+    assert model.packages[1].cve_exclude_list == [
+        {'cve': 'CVE-2020-1', 'reason': 'not used'},
+        {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
+    ]
+    assert model.packages[0].cve_exclude_list == []
+
+
+def test_vex_apply_suppresses_not_affected_and_fixed() -> None:
+    """not_affected and fixed both mean the CVE does not apply, and both grype and
+    trivy filter on the two of them. affected and under_investigation say the CVE
+    does apply, or that nobody knows yet, so they must not silence anything."""
+    from esp_idf_sbom.libsbom import vex
+
+    def statement(cve, status, **kwargs):
+        return vex.VexStatement(
+            vulnerability=cve, status=status, products=[vex.VexProduct(ref='COMPONENT-lib')], **kwargs
+        )
+
+    model = _sbom_with_file()
+    vex.apply(
+        model,
+        vex.Vex(
+            statements=[
+                statement('CVE-2020-7', vex.VexStatus.AFFECTED),
+                statement('CVE-2020-8', vex.VexStatus.UNDER_INVESTIGATION),
+                statement('CVE-2020-9', vex.VexStatus.FIXED),
+                statement('CVE-2020-10', vex.VexStatus.NOT_AFFECTED, impact_statement='not used'),
+                # A not_affected statement may carry a justification instead of text.
+                statement(
+                    'CVE-2020-11',
+                    vex.VexStatus.NOT_AFFECTED,
+                    justification=vex.VexJustification.COMPONENT_NOT_PRESENT,
+                ),
+            ]
+        ),
+    )
+
+    # A fixed statement needs no text of its own, so the status is reported.
+    assert model.packages[1].cve_exclude_list == [
+        {'cve': 'CVE-2020-9', 'reason': 'fixed'},
+        {'cve': 'CVE-2020-10', 'reason': 'not used'},
+        {'cve': 'CVE-2020-11', 'reason': 'component_not_present'},
+    ]
+
+
+def test_vex_apply_replaces_existing_entry() -> None:
+    """The VEX file is the newer document, so it wins over the same CVE already in
+    the SBOM. A statement that matches no package is ignored, not an error."""
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_exclusions()
+    document = vex.Vex(
+        statements=[
+            vex.VexStatement(
+                vulnerability='CVE-2020-1',
+                status=vex.VexStatus.NOT_AFFECTED,
+                products=[vex.VexProduct(ref='COMPONENT-lib')],
+                impact_statement='re-checked, still not used',
+            ),
+            vex.VexStatement(
+                vulnerability='CVE-2020-7',
+                status=vex.VexStatus.NOT_AFFECTED,
+                products=[vex.VexProduct(purl='pkg:github/other/thing@1.0')],
+                impact_statement='not in this SBOM',
+            ),
+        ]
+    )
+
+    vex.apply(model, document)
+    assert model.packages[1].cve_exclude_list == [
+        {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
+        {'cve': 'CVE-2020-1', 'reason': 're-checked, still not used'},
+    ]
+
+
+def test_parse_sbom_reads_document_id() -> None:
+    """Every format must read back the id of the document it was parsed from.
+    check needs it to tell whether a CycloneDX VEX belongs to this SBOM."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import spdx
+
+    model = _sbom_with_file()
+
+    doc_id = cyclonedx.new_document_id(model)
+    assert cyclonedx.parse(cyclonedx.render(model, doc_id=doc_id)).doc_id == doc_id
+
+    doc_id = spdx.new_document_id(model)
+    for fmt in ('tagvalue', 'json', 'json-ld'):
+        parsed = spdx.parse(spdx.render(model, format=fmt, version=_SPDX_VERSION[fmt], doc_id=doc_id), format=fmt)
+        assert parsed.doc_id == doc_id, fmt
+
+
+_SPDX_VERSION = {'tagvalue': '2.2', 'json': '2.2', 'json-ld': '3.0.1'}
+
+
+def _freertos_sbom_and_vex(tmp_path, sbom_format='cyclonedx-json', vex_format='cyclonedx-json'):
+    """An SBOM with a CPE the local NVD mirror reports CVEs for, plus a VEX that
+    marks one of them not affected. Returns the two file paths."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    cpe = 'cpe:2.3:o:amazon:freertos:10.0.0:*:*:*:*:*:*:*'
+    proj = Package(
+        ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT, depends_on=['COMPONENT-freertos']
+    )
+    comp = Package(
+        ref='COMPONENT-freertos',
+        name='freertos',
+        package_name='freertos',
+        kind=PackageKind.COMPONENT,
+        version='10.0.0',
+        purl='pkg:generic/freertos@10.0.0',
+        cpes=[cpe],
+        cve_exclude_list=[{'cve': 'CVE-2021-31571', 'reason': 'evaluated in the VEX file'}],
+    )
+    model = SBOM(name='app', root='PROJECT-app', packages=[proj, comp])
+
+    backend = cyclonedx if sbom_format == 'cyclonedx-json' else None
+    doc_id = cyclonedx.new_document_id(model)
+    vexdoc = vex.build(model, sbom_id=doc_id)
+
+    # The SBOM itself is clean, as create --vex writes it.
+    for pkg in model.packages:
+        pkg.cve_exclude_list = []
+
+    sbom_file = tmp_path / 'app.cdx.json'
+    assert backend is not None
+    sbom_file.write_text(cyclonedx.render(model, version='1.6', doc_id=doc_id))
+
+    vex_file = tmp_path / 'app.vex.json'
+    if vex_format == 'cyclonedx-json':
+        vex_file.write_text(cyclonedx.render_vex(vexdoc, version='1.6'))
+    else:
+        vex_file.write_text(openvex.render_vex(vexdoc))
+    return sbom_file, vex_file
+
+
+def _check_freertos(sbom_file, *extra):
+    cmd = [
+        sys.executable, '-m', 'esp_idf_sbom', 'check', '--local-db', '--format', 'csv',
+        *extra, str(sbom_file),
+    ]  # fmt: skip
+    return run(cmd, capture_output=True, text=True)
+
+
+def test_check_vex_excludes_reported_cve() -> None:
+    """The VEX file is the only place the exclusions live once the SBOM is clean,
+    so check --vex has to turn a reported CVE into an excluded one."""
+    with TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        sbom_file, vex_file = _freertos_sbom_and_vex(tmp_path)
+
+        without = _check_freertos(sbom_file)
+        assert re.search(r'YES.+CVE-2021-31571', without.stdout) is not None
+
+        with_vex = _check_freertos(sbom_file, '--vex', str(vex_file))
+        assert re.search(r'EXCLUDED.+CVE-2021-31571', with_vex.stdout) is not None
+        assert re.search(r'YES.+CVE-2021-31571', with_vex.stdout) is None
+        # A CVE the VEX says nothing about is still reported.
+        assert re.search(r'YES.+CVE-2021-31572', with_vex.stdout) is not None
+
+
+def test_check_vex_openvex_matches_by_identity() -> None:
+    """An OpenVEX document carries no link to a document, so it is matched to the
+    package by PURL and CPE."""
+    with TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        sbom_file, vex_file = _freertos_sbom_and_vex(tmp_path, vex_format='openvex')
+        assert 'urn:cdx' not in vex_file.read_text()
+
+        result = _check_freertos(sbom_file, '--vex', str(vex_file))
+        assert re.search(r'EXCLUDED.+CVE-2021-31571', result.stdout) is not None
+
+
+def test_check_vex_rejects_foreign_cyclonedx_vex(tmp_path: Path) -> None:
+    """A CycloneDX VEX links to one SBOM by BOM-Link. Using it with another SBOM
+    would silence CVEs for components it was never written about."""
+    from esp_idf_sbom.libsbom import cyclonedx
+
+    sbom_file, vex_file = _freertos_sbom_and_vex(tmp_path)
+
+    # Same content, but rendered again, so it gets a new serialNumber.
+    other = tmp_path / 'other.cdx.json'
+    other.write_text(cyclonedx.render(cyclonedx.parse(sbom_file.read_text()), version='1.6'))
+
+    result = _check_freertos(other, '--vex', str(vex_file))
+    assert result.returncode != 0
+    assert 'belongs to another SBOM' in result.stderr
+
+
+def test_check_vex_rejects_cyclonedx_vex_with_spdx_sbom(tmp_path: Path) -> None:
+    """An SPDX SBOM has no serialNumber for a BOM-Link to resolve against."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import spdx
+
+    sbom_file, vex_file = _freertos_sbom_and_vex(tmp_path)
+    spdx_file = tmp_path / 'app.spdx'
+    spdx_file.write_text(spdx.render(cyclonedx.parse(sbom_file.read_text()), format='tagvalue', version='2.2'))
+
+    result = _check_freertos(spdx_file, '--vex', str(vex_file))
+    assert result.returncode != 0
+    assert 'is not a CycloneDX document' in result.stderr
+
+
+def test_check_vex_rejects_cyclonedx_vex_without_serial(tmp_path: Path) -> None:
+    """serialNumber is optional in CycloneDX, so a valid SBOM may carry none. The
+    BOM-Link then has nothing to resolve against."""
+    sbom_file, vex_file = _freertos_sbom_and_vex(tmp_path)
+
+    bom = json.loads(sbom_file.read_text())
+    del bom['serialNumber']
+    no_serial = tmp_path / 'no-serial.cdx.json'
+    no_serial.write_text(json.dumps(bom, indent=2))
+
+    result = _check_freertos(no_serial, '--vex', str(vex_file))
+    assert result.returncode != 0
+    assert 'has no serialNumber to match it against' in result.stderr
+
+
+def test_output_file_kept_on_failure(hello_world_build: Path, tmp_path: Path) -> None:
+    """A failing command must not touch the output file. Creating it upfront left
+    an empty file behind and destroyed the output of a previous run."""
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    output = tmp_path / 'app.spdx'
+    run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '-o', str(output), str(proj_desc_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    before = output.read_text()
+    assert before.startswith('# Generated by esp-idf-sbom')
+
+    # --vex none writes no separate file, so this run fails after the output file
+    # would have been opened.
+    failed = run(
+        [
+            sys.executable,
+            '-m',
+            'esp_idf_sbom',
+            'create',
+            '-o',
+            str(output),
+            '--vex',
+            'none',
+            '--vex-output',
+            str(tmp_path / 'vex.json'),
+            str(proj_desc_path),
+        ],  # fmt: skip
+        capture_output=True,
+        text=True,
+    )
+    assert failed.returncode != 0
+    assert output.read_text() == before
+
+
+def test_output_file_creates_parent_directory(hello_world_build: Path, tmp_path: Path) -> None:
+    """The output file may name a directory that does not exist yet."""
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    output = tmp_path / 'reports' / 'sub' / 'app.spdx'
+    run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', '-o', str(output), str(proj_desc_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert output.read_text().startswith('# Generated by esp-idf-sbom')
+
+
+def test_create_vex_output(hello_world_build: Path, tmp_path: Path) -> None:
+    """--vex with a format writes the assessments to their own document and leaves
+    the SBOM clean. The VEX has to carry the exclusions the clean SBOM no longer
+    can, which is why both files come out of one run."""
+    manifest = hello_world_build / 'main' / 'sbom.yml'
+    content = """
+              cpe: cpe:2.3:a:espressif:hello_world:1.0:*:*:*:*:*:*:*
+              cve-exclude-list:
+                - cve: CVE-2020-1234
+                  reason: not used in this configuration
+              """
+    manifest.write_text(dedent(content))
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+
+    def create(fmt: str, vex_fmt: str, vex_file: Path) -> str:
+        cmd = [
+            sys.executable, '-m', 'esp_idf_sbom', 'create',
+            '--format', fmt, '--vex', vex_fmt, '--vex-output', str(vex_file),
+            str(proj_desc_path),
+        ]  # fmt: skip
+        return run(cmd, check=True, capture_output=True, text=True).stdout
+
+    try:
+        # OpenVEX works with the default SPDX 2.2 output, which has no VEX format
+        # of its own.
+        vex_file = tmp_path / 'app.openvex.json'
+        text = create('spdx-tag-value', 'openvex', vex_file)
+        assert 'CVE-2020-1234' not in text
+        assert 'cve-exclude-list' not in text
+        document = json.loads(vex_file.read_text())
+        statement = next(s for s in document['statements'] if s['vulnerability']['name'] == 'CVE-2020-1234')
+        assert statement['status'] == 'not_affected'
+        assert statement['impact_statement'] == 'not used in this configuration'
+
+        # CycloneDX links the VEX back to the SBOM it was written with.
+        vex_file = tmp_path / 'app.vex.cdx.json'
+        bom = json.loads(create('cyclonedx-json', 'cyclonedx-json', vex_file))
+        assert 'vulnerabilities' not in bom
+        vex_bom = json.loads(vex_file.read_text())
+        link = 'urn:cdx:{}/{}'.format(bom['serialNumber'][len('urn:uuid:') :], bom['version'])
+        assert vex_bom['externalReferences'][0]['url'] == link
+        affected = next(v for v in vex_bom['vulnerabilities'] if v['id'] == 'CVE-2020-1234')
+        assert affected['affects'][0]['ref'].startswith(f'{link}#')
+    finally:
+        manifest.unlink()
+
+
+@pytest.mark.parametrize(
+    'extra, message',
+    [
+        # A VEX format writes its own document, so it needs a path.
+        (['--vex', 'openvex'], '--vex-output is needed'),
+        # A VEX that stays in the SBOM has no separate file to name.
+        (['--vex', 'embed', '--vex-output', 'vex.json'], 'writes no separate file'),
+        (['--vex', 'none', '--vex-output', 'vex.json'], 'writes no separate file'),
+        # Two documents written through two file handles would overwrite each other.
+        (['--vex', 'openvex', '-o', 'same.json', '--vex-output', 'same.json'], 'same file'),
+        # A CycloneDX VEX links by BOM-Link, so it needs a CycloneDX SBOM.
+        (['--vex', 'cyclonedx-json', '--vex-output', 'vex.json'], 'same format'),
+    ],
+)
+def test_create_vex_option_errors(hello_world_build: Path, tmp_path: Path, extra, message) -> None:
+    """Combinations that cannot do what was asked for must fail, not do something
+    else quietly."""
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+    p = run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'create', *extra, str(proj_desc_path)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert p.returncode != 0
+    assert message in p.stderr
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_multiple_cpes(hello_world_build: Path) -> None:

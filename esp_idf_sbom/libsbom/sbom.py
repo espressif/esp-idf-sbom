@@ -186,6 +186,12 @@ class SBOM:
     # records it; empty if it does not say or the model was built, not parsed.
     # Render does not read it and writes the TOOL_* identity above.
     creator: str = ''
+    # Id of the document this model was parsed from: the CycloneDX serialNumber
+    # or the SPDX document namespace. Empty if the model was built and not
+    # parsed. Like creator, render ignores it and writes its own id, so this
+    # says what the input file was, not what the output will be. A standalone
+    # VEX names the SBOM it belongs to by this id.
+    doc_id: str = ''
     # Who supplies the product this document describes. CycloneDX has a slot
     # for it, SPDX does not.
     supplier: Organization = field(default_factory=Organization)
@@ -1728,46 +1734,6 @@ def build(args: Dict[str, Any], proj_desc_path: str) -> SBOM:
         manufacturer=_organization(document.get('manufacturer', {})),
         packages=packages,
     )
-
-
-def load(path: str) -> SBOM:
-    """Read an SBOM file (or stdin when path is '-'), detect its format and parse
-    it into the format-neutral model.
-
-    This is the parse-side entry point, mirroring build() on the gather side.
-    """
-    if path == '-':
-        text = sys.stdin.read()
-    else:
-        with open(path) as f:
-            text = f.read()
-
-    # Late import: the backends import this module, so importing them at module
-    # scope would be circular. load() is just a format-sniffing dispatcher.
-    from esp_idf_sbom.libsbom import cyclonedx
-    from esp_idf_sbom.libsbom import spdx
-
-    # Parse the structure first and dispatch on the top-level keys, rather than
-    # substring-matching the raw text (which misroutes a JSON SBOM that merely
-    # mentions e.g. "SPDXID:" in a path or description). Tag/value SPDX is the
-    # only non-JSON serialization, so it is the fallback.
-    try:
-        obj = json.loads(text)
-    except ValueError:
-        obj = None
-
-    if isinstance(obj, dict):
-        if 'bomFormat' in obj:
-            return cyclonedx.parse(text)
-        if '@context' in obj or '@graph' in obj:
-            return spdx.parse(text, format='json-ld')
-        if 'spdxVersion' in obj:
-            return spdx.parse(text, format='json')
-        raise ValueError('unrecognized JSON SBOM format')
-
-    if 'SPDXVersion:' in text or 'SPDXID:' in text:
-        return spdx.parse(text)
-    raise ValueError('unrecognized SBOM format')
 
 
 @dataclass
