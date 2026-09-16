@@ -116,8 +116,9 @@ def _component(pkg: Package) -> Dict[str, Any]:
     expr = simplify_licenses(pkg.licenses_concluded | pkg.licenses_declared)
     if expr:
         comp['licenses'] = [{'expression': expr}]
-    if pkg.copyrights:
-        comp['copyright'] = '\n'.join(sorted(pkg.copyrights))
+    copyrights = pkg.copyrights_declared | pkg.copyrights_concluded
+    if copyrights:
+        comp['copyright'] = '\n'.join(sorted(copyrights))
     if pkg.cpes:
         comp['cpe'] = pkg.cpes[0]
     if pkg.purl:

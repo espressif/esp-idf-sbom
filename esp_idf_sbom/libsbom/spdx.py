@@ -159,8 +159,9 @@ def _render_package(pkg: Package) -> str:
     out += f'PackageLicenseConcluded: {simplify_licenses(pkg.licenses_concluded) or "NOASSERTION"}\n'
     out += f'PackageLicenseDeclared: {simplify_licenses(pkg.licenses_declared) or "NOASSERTION"}\n'
 
-    if pkg.copyrights:
-        out += 'PackageCopyrightText: <text>{}</text>\n'.format('\n'.join(sorted(pkg.copyrights)))
+    copyrights = pkg.copyrights_declared | pkg.copyrights_concluded
+    if copyrights:
+        out += 'PackageCopyrightText: <text>{}</text>\n'.format('\n'.join(sorted(copyrights)))
     else:
         out += 'PackageCopyrightText: NOASSERTION\n'
 
@@ -306,7 +307,7 @@ def _package_json(pkg: Package) -> Dict[str, Any]:
         'supplier': pkg.supplier or 'NOASSERTION',
         'licenseConcluded': simplify_licenses(pkg.licenses_concluded) or 'NOASSERTION',
         'licenseDeclared': simplify_licenses(pkg.licenses_declared) or 'NOASSERTION',
-        'copyrightText': '\n'.join(sorted(pkg.copyrights)) or 'NOASSERTION',
+        'copyrightText': '\n'.join(sorted(pkg.copyrights_declared | pkg.copyrights_concluded)) or 'NOASSERTION',
     }
     if pkg.description:
         pkg_obj['summary'] = pkg.description
@@ -565,8 +566,9 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
             comp['software_downloadLocation'] = pkg.download_url
         if pkg.purl:
             comp['software_packageUrl'] = pkg.purl
-        if pkg.copyrights:
-            comp['software_copyrightText'] = '\n'.join(sorted(pkg.copyrights))
+        copyrights = pkg.copyrights_declared | pkg.copyrights_concluded
+        if copyrights:
+            comp['software_copyrightText'] = '\n'.join(sorted(copyrights))
         if pkg.cpes:
             comp['externalIdentifier'] = [
                 {'type': 'ExternalIdentifier', 'externalIdentifierType': 'cpe23', 'identifier': cpe} for cpe in pkg.cpes

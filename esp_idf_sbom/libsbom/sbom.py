@@ -137,9 +137,11 @@ class Package:
     # via simplify_licenses().
     licenses_concluded: Set[str] = field(default_factory=set)
     licenses_declared: Set[str] = field(default_factory=set)
+    # Copyright notices stated by the author, and the ones found in the files.
+    copyrights_declared: Set[str] = field(default_factory=set)
+    copyrights_concluded: Set[str] = field(default_factory=set)
     # Custom licenses described by this package's manifest.
     license_refs: List['LicenseRef'] = field(default_factory=list)
-    copyrights: Set[str] = field(default_factory=set)
 
     # --- vulnerability metadata -----------------------------------------
     # CVEs evaluated and found not to apply, each {'cve': ..., 'reason': ...},
@@ -385,6 +387,7 @@ class SBOMTags:
         self.licenses_expressions: Set[str] = set()
         self.licenses_expressions_declared: Set[str] = set()
         self.copyrights: Set[str] = set()
+        self.copyrights_declared: Set[str] = set()
         self.contributors: Set[str] = set()
 
     def get_license_concluded(self) -> str:
@@ -405,6 +408,7 @@ class SBOMTags:
         self.licenses_expressions_declared |= other.licenses_expressions_declared
         self.licenses |= other.licenses
         self.copyrights |= other.copyrights
+        self.copyrights_declared |= other.copyrights_declared
         self.contributors |= other.contributors
         return self
 
@@ -795,9 +799,7 @@ class SBOMPackage(SBOMObject):
         self.tags = self.get_tags(exclude_dirs)
 
         if self.manifest['copyright']:
-            # The model has no separate "declared" channel for copyrights, so
-            # merge manifest copyrights into the package copyright set.
-            self.tags.copyrights |= set(self.manifest['copyright'])
+            self.tags.copyrights_declared |= set(self.manifest['copyright'])
 
         if self.manifest['license']:
             # Store license declared in manifest, so we can use it later in
@@ -842,7 +844,8 @@ class SBOMPackage(SBOMObject):
             licenses_concluded=set(self.tags.licenses_expressions),
             licenses_declared=set(self.tags.licenses_expressions_declared),
             license_refs=self.get_license_refs(),
-            copyrights=set(self.tags.copyrights),
+            copyrights_declared=set(self.tags.copyrights_declared),
+            copyrights_concluded=set(self.tags.copyrights),
             cve_exclude_list=[{'cve': cve_id, 'reason': reason} for cve_id, reason in merged_excludes.items()],
             cve_keywords=list(self.manifest['cve-keywords']),
             files=[f.file for f in self.files],
@@ -1844,7 +1847,7 @@ def summarize_licenses(packages: List[Package], unify_copyrights: bool = False) 
     for pkg in packages:
         licenses |= pkg.licenses_concluded
         licenses |= pkg.licenses_declared
-        copyrights |= pkg.copyrights
+        copyrights |= pkg.copyrights_declared | pkg.copyrights_concluded
 
     if unify_copyrights:
         copyrights = SBOMTags.simplify_copyrights(copyrights)
