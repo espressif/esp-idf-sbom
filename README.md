@@ -504,16 +504,19 @@ The `sbom.yml` is a simple yaml file, which may contain the following entries.
     sbom-purl = pkg:github/Mbed-TLS/mbedtls@{}
     ```
 * **supplier**:
-    Package supplier. Person or organization distributing the package. Should be prefixed
-    with *Person:* or *Organization:* as described in SPDX specification.
+    Package supplier. Person or organization distributing the package. The value has to
+    start with *Person:* or *Organization:*, as the SPDX specification requires, and SBOM
+    creation fails without it. An email address can be added in parentheses after the
+    name, for example `Organization: Acme Corp (psirt@acme.example)`. SPDX keeps the
+    value as it is and CycloneDX reports the email as the contact of the entity.
 * **originator**:
     Package originator. If the package comes from another person or organization
     that has been identified as a supplier. For example if a component is based
     on 3rd party code with some modifications, the originator is the 3rd party code
     author, but the supplier is the person or organization distributing the final
     component. For more detailed information please see the SPDX specification.
-    As for supplier, *Person:* or *Organization:* prefix should be used for
-    originator value.
+    The value has the same form as `supplier`, so it has to start with *Person:* or
+    *Organization:* and can carry an email address in parentheses.
 * **hash**:
     SHA of the directory(`git-tree` object) the manifest file describes or HEAD SHA of a submodule. This value
     is used during the manifest file validation to check if the hash in the manifest file matches the
@@ -705,7 +708,8 @@ custom-licenses:
     for an application that another organization then redistributes. Each takes the
     following entries.
 
-    * **name**: prefixed with *Person:* or *Organization:*, as for `supplier`.
+    * **name**: has to start with *Person:* or *Organization:*, as for `supplier`. A
+      plain name is rejected.
     * **url**: link to the organization, for example its home or security page.
     * **contact**: email address for reporting vulnerabilities.
 
