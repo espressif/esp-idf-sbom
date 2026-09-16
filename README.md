@@ -550,7 +550,11 @@ cve-exclude-list:
 ```
 
 * **license**:
-    License expression explicitly declared by the author.
+    License expression explicitly declared by the author. It has to be a valid SPDX license
+    expression, meaning license identifiers from the [SPDX license list][15] combined with
+    `AND`, `OR` and `WITH`. The expression is validated and SBOM creation fails if it is
+    not valid. A license that is not on the SPDX license list is used as `LicenseRef-<id>`
+    and described with the **custom-licenses** key below.
 * **copyright**:
     Copyright explicitly declared by the author. This can be single string or a
     list of copyrights.
