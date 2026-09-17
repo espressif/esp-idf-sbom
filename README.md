@@ -25,6 +25,9 @@ the [National Vulnerability Database][4] (NVD) based on the
 - [Manifest file](#manifest-file)
   - [Validating manifest files](#validating-manifest-files)
   - [Checking manifest files for vulnerabilities](#checking-manifest-files-for-vulnerabilities)
+- [Describing your own project](#describing-your-own-project)
+  - [The project](#the-project)
+  - [Your components](#your-components)
 - [Licenses and Copyrights](#licenses-and-copyrights)
 - [Return Values](#return-values)
 - [Resources](#resources)
@@ -880,6 +883,51 @@ Usage example:
     $ esp-idf-sbom manifest check ~/work/esp-idf/.gitmodules ~/work/esp-idf/components/freertos/FreeRTOS-Kernel/sbom.yml
     # Use a local NVD mirror for vulnerability checks.
     $ esp-idf-sbom manifest check --local-db ~/work/esp-idf ~/work/idf-extra-components/
+
+
+## Describing your own project
+
+ESP-IDF and managed components should already carry SBOM data. Your own code does not.
+Add a small `sbom.yml` so the project and each of your components have an identifier and
+a license. SBOM validators, for example the EU Cyber Resilience Act profile, expect every
+component to have both.
+
+### The project
+
+Put a `sbom.yml` in the project root, next to the top `CMakeLists.txt`. Describe the
+application, and describe the SBOM document itself with the `document` key.
+
+    # <project>/sbom.yml
+    version: 1.0.0
+    description: ACME thermostat firmware
+    supplier: 'Organization: ACME Corp (psirt@acme.example)'
+    license: LicenseRef-Proprietary
+    purl: pkg:generic/acme/thermostat@{}
+    custom-licenses:
+      - id: LicenseRef-Proprietary
+        name: ACME Proprietary License
+        file: LICENSE
+    document:
+      manufacturer:
+        name: 'Organization: ACME Corp'
+        contact: 'psirt@acme.example'
+
+### Your components
+
+Put a `sbom.yml` in the component directory, for `main` and for every component you
+wrote. Give it an identifier and a license.
+
+    # main/sbom.yml
+    license: LicenseRef-Proprietary
+    purl: pkg:generic/acme/thermostat-main@{}
+
+`purl` is an identifier some validators require, for example the Cyber Resilience Act
+profile. It is not the only one. The esp-idf-sbom `check` command matches vulnerabilities
+by CPE, not by `purl`. So when a component has a CPE in the NVD, define `cpe` as well.
+`{}` in `purl` is replaced with the component version. `license` is the license. Use an
+SPDX identifier for a standard license, or `LicenseRef-<id>` for your own, defined once
+with `custom-licenses` in the project manifest and then known to the whole document. For
+the other keys a manifest can hold, see [Manifest file](#manifest-file).
 
 
 ## Licenses and Copyrights
