@@ -18,6 +18,10 @@ from typing import Optional
 from typing import Tuple
 from urllib.parse import urlparse
 
+from license_expression import ExpressionError
+from license_expression import LicenseExpression
+from license_expression import get_spdx_licensing
+
 # Path inside an ESP-IDF tree to tools/cmake/version.cmake; presence of this
 # file at a path is the marker that identifies the path as an IDF root.
 IDF_VERSION_CMAKE = 'tools/cmake/version.cmake'
@@ -149,6 +153,47 @@ _EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 def is_email(email: str = '') -> bool:
     """Minimal syntactic check for an email address."""
     return bool(_EMAIL_RE.match(email))
+
+
+# Shared SPDX license expression parser. Building it reads a license index, so
+# keep one instance for the whole tool.
+licensing = get_spdx_licensing()
+
+# A custom license reference, SPDX 2.2 Annex D:
+#   [DocumentRef-<idstring>:]LicenseRef-<idstring>
+# where <idstring> is made of letters, numbers, "." and "-".
+_LICENSE_REF_PATTERN = r'(?:DocumentRef-[A-Za-z0-9.\-]+:)?LicenseRef-[A-Za-z0-9.\-]+'
+_LICENSE_REF_RE = re.compile(f'^{_LICENSE_REF_PATTERN}$')
+_LICENSE_REF_FIND_RE = re.compile(_LICENSE_REF_PATTERN)
+
+
+def is_license_ref(key: str) -> bool:
+    """True if key is a custom license reference, for example
+    LicenseRef-Acme-Proprietary."""
+    return bool(_LICENSE_REF_RE.match(key))
+
+
+def find_license_refs(expression: str) -> List[str]:
+    """Return the custom license references used in a license expression."""
+    return _LICENSE_REF_FIND_RE.findall(expression)
+
+
+def parse_license(expression: str) -> Optional[LicenseExpression]:
+    """Parse an SPDX license expression.
+
+    Licenses from the SPDX license list and custom LicenseRef identifiers are
+    accepted. Raises ExpressionError on a syntax error or an unknown license
+    key. Returns None for an empty expression.
+    """
+    parsed = licensing.parse(expression, strict=True)
+    if parsed is None:
+        return None
+    # unknown_license_keys() reports every key the license index does not know.
+    # A LicenseRef is defined by the document itself, so it is not an error.
+    unknown = [key for key in licensing.unknown_license_keys(parsed) if not is_license_ref(key)]
+    if unknown:
+        raise ExpressionError('Unknown license key(s): {}'.format(', '.join(unknown)))
+    return parsed
 
 
 # Matches a github.com or gitlab.com repository URL pointing at the repository

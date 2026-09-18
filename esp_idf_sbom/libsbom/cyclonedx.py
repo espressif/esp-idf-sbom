@@ -22,9 +22,15 @@ from collections import defaultdict
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
+from typing import Set
 from typing import Tuple
 
+from license_expression import AND
+from license_expression import LicenseSymbol
+
 from esp_idf_sbom.libsbom import log
+from esp_idf_sbom.libsbom import utils
 from esp_idf_sbom.libsbom import vex
 from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import TOOL_DISTRIBUTION_URL
@@ -36,9 +42,11 @@ from esp_idf_sbom.libsbom.sbom import TOOL_SUPPLIER_URL
 from esp_idf_sbom.libsbom.sbom import TOOL_URL
 from esp_idf_sbom.libsbom.sbom import TOOL_VERSION
 from esp_idf_sbom.libsbom.sbom import File
+from esp_idf_sbom.libsbom.sbom import LicenseRef
 from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
 from esp_idf_sbom.libsbom.sbom import PackageKind
+from esp_idf_sbom.libsbom.sbom import declared_first
 from esp_idf_sbom.libsbom.sbom import kind_and_name
 from esp_idf_sbom.libsbom.sbom import simplify_licenses
 
@@ -59,6 +67,12 @@ _KIND_TYPE = {
 # ===========================================================================
 
 
+# SPDX 2.2 clause 7.5 writes the supplier email in parentheses after the name.
+# Only a trailing group holding an email address is taken, a name may have
+# parentheses of its own, as in "ACME (Europe) Ltd".
+_SPDX_EMAIL_RE = re.compile(r'^(.*?)\s*\(([^()]+)\)$')
+
+
 def _supplier_name(supplier: str) -> str:
     """Drop the SPDX-style 'Organization: ' / 'Person: ' prefix; a CycloneDX
     supplier is already an organizational entity."""
@@ -66,6 +80,21 @@ def _supplier_name(supplier: str) -> str:
         if supplier.startswith(prefix):
             return supplier[len(prefix) :]
     return supplier
+
+
+def _supplier_entity(supplier: str) -> Dict[str, Any]:
+    """Render an SPDX supplier value as a CycloneDX organizationalEntity.
+
+    The email SPDX keeps inside the name becomes a contact, which is where
+    CycloneDX expects it.
+    """
+    name = _supplier_name(supplier)
+    if not name:
+        return {}
+    match = _SPDX_EMAIL_RE.match(name)
+    if match and utils.is_email(match.group(2)):
+        return {'name': match.group(1), 'contact': [{'email': match.group(2)}]}
+    return {'name': name}
 
 
 def _entity(org: Organization) -> Dict[str, Any]:
@@ -98,7 +127,64 @@ def _tool_component() -> Dict[str, Any]:
     }
 
 
-def _component(pkg: Package) -> Dict[str, Any]:
+def _and_terms(expr: str) -> Optional[List[str]]:
+    """Return the licenses of a "AND" only expression, or None.
+
+    A single license or a plain "AND" of licenses gives the list of license
+    keys. An expression with "OR" or "WITH" gives None, because CycloneDX has no
+    license object list for it.
+    """
+    parsed = utils.licensing.parse(expr)
+    if parsed is None:
+        return None
+    parsed = parsed.simplify()
+    if isinstance(parsed, LicenseSymbol):
+        return [parsed.key]
+    if isinstance(parsed, AND) and all(isinstance(arg, LicenseSymbol) for arg in parsed.args):
+        return [arg.key for arg in parsed.args]
+    return None
+
+
+def _license_choice(
+    licenses: Set[str], acknowledgement: str, refs: Dict[str, LicenseRef]
+) -> Optional[List[Dict[str, Any]]]:
+    """Return the CycloneDX "licenses" value for one license field.
+
+    A "AND" only expression is emitted as a list of license objects, so a custom
+    LicenseRef- carries its name, text and url. Every other expression stays a
+    single expression and a LicenseRef- in it keeps its identifier only, because
+    a CycloneDX expression has no place for the text. refs maps a LicenseRef-
+    identifier to its description.
+    """
+    expr = simplify_licenses(licenses)
+    if not expr:
+        return None
+
+    terms = _and_terms(expr)
+    if terms is None or not any(term in refs for term in terms):
+        return [{'expression': expr, 'acknowledgement': acknowledgement}]
+
+    out = []
+    for term in terms:
+        ref = refs.get(term)
+        if ref is not None:
+            lic: Dict[str, Any] = {'name': ref.name or ref.id}
+            if ref.text:
+                lic['text'] = {'contentType': 'text/plain', 'content': ref.text}
+            if ref.urls:
+                lic['url'] = ref.urls[0]
+        elif utils.is_license_ref(term):
+            # A LicenseRef- with no description. "id" takes an SPDX identifier
+            # only, so the identifier goes to "name".
+            lic = {'name': term}
+        else:
+            lic = {'id': term}
+        lic['acknowledgement'] = acknowledgement
+        out.append({'license': lic})
+    return out
+
+
+def _component(pkg: Package, refs: Dict[str, LicenseRef]) -> Dict[str, Any]:
     comp: Dict[str, Any] = {
         'type': _KIND_TYPE.get(pkg.kind, 'library'),
         'bom-ref': pkg.ref,
@@ -106,18 +192,33 @@ def _component(pkg: Package) -> Dict[str, Any]:
     }
     if pkg.version:
         comp['version'] = pkg.version
-    supplier = _supplier_name(pkg.supplier)
+    supplier = _supplier_entity(pkg.supplier)
     if supplier:
-        comp['supplier'] = {'name': supplier}
+        comp['supplier'] = supplier
     if pkg.originator:
         comp['publisher'] = _supplier_name(pkg.originator)
     if pkg.description:
         comp['description'] = pkg.description
-    expr = simplify_licenses(pkg.licenses_concluded | pkg.licenses_declared)
-    if expr:
-        comp['licenses'] = [{'expression': expr}]
-    if pkg.copyrights:
-        comp['copyright'] = '\n'.join(sorted(pkg.copyrights))
+    # CycloneDX has one "licenses" field per component, so the declared and the
+    # concluded license cannot both go there. The declared one stays there, the
+    # scan results go to "evidence".
+    evidence: Dict[str, Any] = {}
+    licenses, found_licenses = declared_first(pkg.licenses_declared, pkg.licenses_concluded)
+    acknowledgement = 'declared' if pkg.licenses_declared else 'concluded'
+    choice = _license_choice(set(licenses), acknowledgement, refs)
+    if choice:
+        comp['licenses'] = choice
+    found_choice = _license_choice(set(found_licenses), 'concluded', refs)
+    if found_choice:
+        evidence['licenses'] = found_choice
+
+    copyrights, found_copyrights = declared_first(pkg.copyrights_declared, pkg.copyrights_concluded)
+    if copyrights:
+        comp['copyright'] = '\n'.join(copyrights)
+    if found_copyrights:
+        evidence['copyright'] = [{'text': copyright} for copyright in found_copyrights]
+    if evidence:
+        comp['evidence'] = evidence
     if pkg.cpes:
         comp['cpe'] = pkg.cpes[0]
     if pkg.purl:
@@ -239,10 +340,13 @@ def _render_json(sbom: SBOM, version: str, doc_id: str = '') -> str:
         bom['metadata']['supplier'] = _entity(sbom.supplier)
     if sbom.manufacturer:
         bom['metadata']['manufacturer'] = _entity(sbom.manufacturer)
+    # Custom licenses that carry a description, by identifier. Bare LicenseRef-
+    # entries hold no text, so they are left out and stay expressions.
+    refs = {ref.id: ref for ref in sbom.license_refs if ref.name or ref.text or ref.urls}
     root = by_ref.get(sbom.root)
     if root is not None:
-        bom['metadata']['component'] = _component(root)
-    components = [_component(pkg) for pkg in sbom.packages if pkg.ref != sbom.root]
+        bom['metadata']['component'] = _component(root, refs)
+    components = [_component(pkg, refs) for pkg in sbom.packages if pkg.ref != sbom.root]
     if components:
         bom['components'] = components
     if dependencies:
@@ -438,6 +542,19 @@ def _entity_to_organization(entity: Dict[str, Any]) -> Organization:
     )
 
 
+def _entity_supplier(entity: Dict[str, Any]) -> str:
+    """Read a CycloneDX organizationalEntity back into a package supplier.
+
+    The email is put back into the name, where the SPDX form keeps it, so a
+    re-render produces the same entity.
+    """
+    name = entity.get('name', '')
+    if not name:
+        return ''
+    email = next((c.get('email', '') for c in entity.get('contact', []) if c.get('email')), '')
+    return f'{name} ({email})' if email else name
+
+
 def _package_from_component(
     comp: Dict[str, Any], depends_on: List[str], cve_exclude_list: List[Dict[str, str]]
 ) -> Package:
@@ -482,7 +599,7 @@ def _package_from_component(
         kind=kind,
         version=comp.get('version', ''),
         description=comp.get('description', ''),
-        supplier=comp.get('supplier', {}).get('name', ''),
+        supplier=_entity_supplier(comp.get('supplier', {})),
         originator=comp.get('publisher', ''),
         repository=repository,
         download_url=download_url,

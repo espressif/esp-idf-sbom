@@ -23,6 +23,7 @@ import yaml
 
 from esp_idf_sbom import __version__
 from esp_idf_sbom.libsbom import log
+from esp_idf_sbom.libsbom import utils
 from esp_idf_sbom.libsbom import vex
 from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import TOOL_NAME
@@ -31,9 +32,11 @@ from esp_idf_sbom.libsbom.sbom import TOOL_SUPPLIER
 from esp_idf_sbom.libsbom.sbom import TOOL_URL
 from esp_idf_sbom.libsbom.sbom import TOOL_VERSION
 from esp_idf_sbom.libsbom.sbom import File
+from esp_idf_sbom.libsbom.sbom import LicenseRef
 from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
 from esp_idf_sbom.libsbom.sbom import PackageKind
+from esp_idf_sbom.libsbom.sbom import declared_first
 from esp_idf_sbom.libsbom.sbom import kind_and_name
 from esp_idf_sbom.libsbom.sbom import simplify_licenses
 
@@ -151,13 +154,21 @@ def _render_package(pkg: Package) -> str:
     else:
         out += 'FilesAnalyzed: false\n'
 
+    if pkg.checksum_sha256:
+        out += f'PackageChecksum: SHA256: {pkg.checksum_sha256}\n'
+
     out += f'PackageLicenseConcluded: {simplify_licenses(pkg.licenses_concluded) or "NOASSERTION"}\n'
     out += f'PackageLicenseDeclared: {simplify_licenses(pkg.licenses_declared) or "NOASSERTION"}\n'
 
-    if pkg.copyrights:
-        out += 'PackageCopyrightText: <text>{}</text>\n'.format('\n'.join(sorted(pkg.copyrights)))
+    # The declared copyright is the copyright of the package. The notices found
+    # in the files belong to the code it contains, so they go to attribution.
+    copyrights, attributions = declared_first(pkg.copyrights_declared, pkg.copyrights_concluded)
+    if copyrights:
+        out += 'PackageCopyrightText: <text>{}</text>\n'.format('\n'.join(copyrights))
     else:
         out += 'PackageCopyrightText: NOASSERTION\n'
+    for attribution in attributions:
+        out += f'PackageAttributionText: <text>{attribution}</text>\n'
 
     if pkg.repository:
         out += f'ExternalRef: OTHER repository {pkg.repository}\n'
@@ -170,11 +181,10 @@ def _render_package(pkg: Package) -> str:
     if comment:
         out += f'PackageComment: <text>\n{comment}</text>\n'
 
+    # Relationship starts a new element in tag/value, so it must come after
+    # all package tags.
     for dep in pkg.depends_on:
         out += f'Relationship: SPDXRef-{pkg.ref} DEPENDS_ON SPDXRef-{dep}\n'
-
-    if pkg.checksum_sha256:
-        out += f'PackageChecksum: SHA256: {pkg.checksum_sha256}\n'
 
     if pkg.files:
         out += '\n'
@@ -183,6 +193,21 @@ def _render_package(pkg: Package) -> str:
             out += '\n'
             out += _render_file(pkg, file)
 
+    return out
+
+
+def _render_license_ref(ref: LicenseRef) -> str:
+    """Render a custom license as SPDX Other Licensing Information tag/values.
+
+    SPDX 2.2 clause 10.2 requires ExtractedText once LicenseID is given.
+    """
+    out = f'LicenseID: {ref.id}\n'
+    out += f'ExtractedText: <text>{ref.text or "NOASSERTION"}</text>\n'
+    out += f'LicenseName: {ref.name or "NOASSERTION"}\n'
+    for url in ref.urls:
+        out += f'LicenseCrossReference: {url}\n'
+    if ref.comment:
+        out += f'LicenseComment: <text>{ref.comment}</text>\n'
     return out
 
 
@@ -248,6 +273,14 @@ def _render_tagvalue(sbom: SBOM, version: str, doc_id: str = '') -> str:
         out += _package_header(pkg)
         out += _render_package(pkg)
 
+    # LicenseID starts a new element, so the custom licenses go after the last
+    # package tag.
+    if sbom.license_refs:
+        out += '\n# custom licenses\n'
+        for ref in sbom.license_refs:
+            out += '\n'
+            out += _render_license_ref(ref)
+
     return out
 
 
@@ -271,6 +304,7 @@ def _file_json(pkg: Package, file: File) -> Dict[str, Any]:
 
 def _package_json(pkg: Package) -> Dict[str, Any]:
     """Render a single Package as an SPDX 2.2 JSON package object."""
+    copyrights, attributions = declared_first(pkg.copyrights_declared, pkg.copyrights_concluded)
     pkg_obj: Dict[str, Any] = {
         'SPDXID': f'SPDXRef-{pkg.ref}',
         'name': pkg.package_name,
@@ -279,7 +313,7 @@ def _package_json(pkg: Package) -> Dict[str, Any]:
         'supplier': pkg.supplier or 'NOASSERTION',
         'licenseConcluded': simplify_licenses(pkg.licenses_concluded) or 'NOASSERTION',
         'licenseDeclared': simplify_licenses(pkg.licenses_declared) or 'NOASSERTION',
-        'copyrightText': '\n'.join(sorted(pkg.copyrights)) or 'NOASSERTION',
+        'copyrightText': '\n'.join(copyrights) or 'NOASSERTION',
     }
     if pkg.description:
         pkg_obj['summary'] = pkg.description
@@ -294,6 +328,9 @@ def _package_json(pkg: Package) -> Dict[str, Any]:
         }
         pkg_obj['licenseInfoFromFiles'] = sorted(pkg.licenses_from_files) or ['NOASSERTION']
         pkg_obj['hasFiles'] = [_file_spdxid(pkg, f) for f in pkg.files]
+
+    if attributions:
+        pkg_obj['attributionTexts'] = attributions
 
     external_refs: List[Dict[str, str]] = []
     if pkg.repository:
@@ -317,6 +354,20 @@ def _package_json(pkg: Package) -> Dict[str, Any]:
         pkg_obj['checksums'] = [{'algorithm': 'SHA256', 'checksumValue': pkg.checksum_sha256}]
 
     return pkg_obj
+
+
+def _license_ref_json(ref: LicenseRef) -> Dict[str, Any]:
+    """Render a custom license as one SPDX 2.2 hasExtractedLicensingInfos entry."""
+    obj: Dict[str, Any] = {
+        'licenseId': ref.id,
+        'extractedText': ref.text or 'NOASSERTION',
+        'name': ref.name or 'NOASSERTION',
+    }
+    if ref.urls:
+        obj['seeAlsos'] = list(ref.urls)
+    if ref.comment:
+        obj['comment'] = ref.comment
+    return obj
 
 
 def _render_json(sbom: SBOM, version: str, doc_id: str = '') -> str:
@@ -369,6 +420,8 @@ def _render_json(sbom: SBOM, version: str, doc_id: str = '') -> str:
     }
     if files:
         document['files'] = files
+    if sbom.license_refs:
+        document['hasExtractedLicensingInfos'] = [_license_ref_json(ref) for ref in sbom.license_refs]
 
     return json.dumps(document, indent=2)
 
@@ -467,20 +520,47 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
         }
     )
 
+    # Define every custom license as a CustomLicense element and map the
+    # identifier to it, so a consumer can resolve the reference.
+    custom_licenses: Dict[str, str] = {}
+    for license_ref in sbom.license_refs:
+        cid = sid('CustomLicense-' + _sanitize_spdxid(license_ref.id))
+        custom_licenses[license_ref.id] = cid
+        custom: Dict[str, Any] = {
+            'type': 'expandedlicensing_CustomLicense',
+            'spdxId': cid,
+            'creationInfo': ci,
+            'simplelicensing_licenseText': license_ref.text or 'NOASSERTION',
+        }
+        if license_ref.name:
+            custom['name'] = license_ref.name
+        if license_ref.urls:
+            custom['expandedlicensing_seeAlso'] = list(license_ref.urls)
+        if license_ref.comment:
+            custom['comment'] = license_ref.comment
+        graph.append(custom)
+        element_ids.append(cid)
+
     licenses: Dict[str, str] = {}
 
     def license_id(expr: str) -> str:
         if expr not in licenses:
             lid = sid(f'License-{len(licenses)}')
             licenses[expr] = lid
-            graph.append(
-                {
-                    'type': 'simplelicensing_LicenseExpression',
-                    'spdxId': lid,
-                    'creationInfo': ci,
-                    'simplelicensing_licenseExpression': expr,
-                }
-            )
+            obj: Dict[str, Any] = {
+                'type': 'simplelicensing_LicenseExpression',
+                'spdxId': lid,
+                'creationInfo': ci,
+                'simplelicensing_licenseExpression': expr,
+            }
+            mapping = [
+                {'type': 'DictionaryEntry', 'key': ref_id, 'value': custom_licenses[ref_id]}
+                for ref_id in utils.find_license_refs(expr)
+                if ref_id in custom_licenses
+            ]
+            if mapping:
+                obj['simplelicensing_customIdToUri'] = mapping
+            graph.append(obj)
             element_ids.append(lid)
         return licenses[expr]
 
@@ -495,8 +575,11 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
             comp['software_downloadLocation'] = pkg.download_url
         if pkg.purl:
             comp['software_packageUrl'] = pkg.purl
-        if pkg.copyrights:
-            comp['software_copyrightText'] = '\n'.join(sorted(pkg.copyrights))
+        copyrights, attributions = declared_first(pkg.copyrights_declared, pkg.copyrights_concluded)
+        if copyrights:
+            comp['software_copyrightText'] = '\n'.join(copyrights)
+        if attributions:
+            comp['software_attributionText'] = attributions
         if pkg.cpes:
             comp['externalIdentifier'] = [
                 {'type': 'ExternalIdentifier', 'externalIdentifierType': 'cpe23', 'identifier': cpe} for cpe in pkg.cpes
@@ -1065,9 +1148,9 @@ def parse_packages(buf: str) -> Dict[str, Dict[str, List[str]]]:
         tag, val = line.split(':', maxsplit=1)
 
         tag = tag.strip()
-        if tag == 'FileName':
-            # files are listed after package, so this is
-            # end of current package if any
+        if tag in ('FileName', 'LicenseID'):
+            # files and custom licenses are listed after the package, so this
+            # is the end of the current package if any
             in_package = False
             continue
 

@@ -42,7 +42,6 @@ from typing import Set
 from typing import Tuple
 
 from license_expression import ExpressionError
-from license_expression import get_spdx_licensing
 
 from esp_idf_sbom import __version__
 from esp_idf_sbom.libsbom import expr
@@ -138,7 +137,11 @@ class Package:
     # via simplify_licenses().
     licenses_concluded: Set[str] = field(default_factory=set)
     licenses_declared: Set[str] = field(default_factory=set)
-    copyrights: Set[str] = field(default_factory=set)
+    # Copyright notices stated by the author, and the ones found in the files.
+    copyrights_declared: Set[str] = field(default_factory=set)
+    copyrights_concluded: Set[str] = field(default_factory=set)
+    # Custom licenses described by this package's manifest.
+    license_refs: List['LicenseRef'] = field(default_factory=list)
 
     # --- vulnerability metadata -----------------------------------------
     # CVEs evaluated and found not to apply, each {'cve': ..., 'reason': ...},
@@ -173,6 +176,21 @@ class Organization:
 
 
 @dataclass
+class LicenseRef:
+    """A license that is not on the SPDX license list.
+
+    License expressions refer to it as LicenseRef-<id>. The document has to
+    define it, see SPDX 2.2 clause 10.
+    """
+
+    id: str  # the full identifier, e.g. 'LicenseRef-Acme-Proprietary'
+    name: str = ''  # human readable license name
+    text: str = ''  # the license text
+    urls: List[str] = field(default_factory=list)  # where the license is published
+    comment: str = ''
+
+
+@dataclass
 class SBOM:
     """A whole SBOM: a flat, ordered set of packages plus document metadata.
 
@@ -199,6 +217,9 @@ class SBOM:
     # SPDX records this as the document creator.
     manufacturer: Organization = field(default_factory=Organization)
     packages: List[Package] = field(default_factory=list)
+    # Custom licenses used anywhere in the document. Every LicenseRef- in a
+    # license field has an entry here, so a backend can define what it emits.
+    license_refs: List[LicenseRef] = field(default_factory=list)
 
 
 # ===========================================================================
@@ -223,7 +244,15 @@ class SBOM:
 # ===========================================================================
 
 
-_LICENSING = get_spdx_licensing()
+def declared_first(declared: Set[str], concluded: Set[str]) -> Tuple[List[str], List[str]]:
+    """Return the values for the main field and for the supporting field.
+
+    What the author declared goes to the main field. With nothing declared the
+    concluded values go there instead and the supporting field stays empty.
+    """
+    if not declared:
+        return sorted(concluded), []
+    return sorted(declared), sorted(concluded)
 
 
 def simplify_licenses(licenses: Set[str]) -> str:
@@ -238,7 +267,7 @@ def simplify_licenses(licenses: Set[str]) -> str:
     # license stays correct.
     exprs = [f'({expr})' for expr in licenses]
     expr = ' AND '.join(exprs)
-    parsed = _LICENSING.parse(expr)
+    parsed = utils.licensing.parse(expr)
     if parsed is None:
         return ''
     return str(parsed.simplify())
@@ -266,8 +295,6 @@ class SBOMTags:
         # C / CSS / JS block on a single line: /* CONTENT */
         re.compile(r'^\s*/\*\s*(.*?)\s*\*/\s*$'),
     ]
-    # SPDX license parser/validator
-    licensing = get_spdx_licensing()
 
     @classmethod
     def _strip_comment_wrappers(cls, line: str) -> str:
@@ -371,6 +398,7 @@ class SBOMTags:
         self.licenses_expressions: Set[str] = set()
         self.licenses_expressions_declared: Set[str] = set()
         self.copyrights: Set[str] = set()
+        self.copyrights_declared: Set[str] = set()
         self.contributors: Set[str] = set()
 
     def get_license_concluded(self) -> str:
@@ -391,6 +419,7 @@ class SBOMTags:
         self.licenses_expressions_declared |= other.licenses_expressions_declared
         self.licenses |= other.licenses
         self.copyrights |= other.copyrights
+        self.copyrights_declared |= other.copyrights_declared
         self.contributors |= other.contributors
         return self
 
@@ -424,17 +453,13 @@ class SBOMFileTags(SBOMTags):
                     expr = match.group(1)
                     parsed = None
                     try:
-                        parsed = self.licensing.parse(expr, validate=True)
+                        parsed = utils.parse_license(expr)
                     except ExpressionError as e:
-                        # validate=True can fail for two reasons:
-                        #   - syntactic error    -> lenient parse will also fail
-                        #   - unknown identifier -> lenient parse succeeds
-                        # Try the lenient parse to recover the second case; if it
-                        # also fails, the expression is genuinely malformed and we
-                        # skip it rather than crash the tool.
+                        # The expression has an unknown license key. Parse it
+                        # again without that check, so the tag is not lost.
                         log.warn(f'License expression "{expr}" found in "{self.path}" is not valid: {e}')
                         try:
-                            parsed = self.licensing.parse(expr)
+                            parsed = utils.licensing.parse(expr)
                         except ExpressionError as e2:
                             log.warn(
                                 f'License expression "{expr}" found in "{self.path}" '
@@ -505,6 +530,7 @@ class SBOMObject:
         'description': '',
         'license': '',
         'copyright': [],
+        'custom-licenses': [],
         'hash': '',
         'cve-exclude-list': [],
         'cve-keywords': [],
@@ -763,7 +789,7 @@ class SBOMPackage(SBOMObject):
             self.manifest['version'] = self.guess_version(self.dir, self.name)
 
         if not self.manifest['repository']:
-            self.manifest['repository'] = git.get_remote_location(self.dir)
+            self.manifest['repository'] = self.guess_repository()
 
         if not self.manifest['supplier']:
             self.manifest['supplier'] = self.guess_supplier(self.dir, self.manifest['url'], self.manifest['repository'])
@@ -784,9 +810,7 @@ class SBOMPackage(SBOMObject):
         self.tags = self.get_tags(exclude_dirs)
 
         if self.manifest['copyright']:
-            # The model has no separate "declared" channel for copyrights, so
-            # merge manifest copyrights into the package copyright set.
-            self.tags.copyrights |= set(self.manifest['copyright'])
+            self.tags.copyrights_declared |= set(self.manifest['copyright'])
 
         if self.manifest['license']:
             # Store license declared in manifest, so we can use it later in
@@ -830,13 +854,43 @@ class SBOMPackage(SBOMObject):
             licenses_from_files=licenses_from_files,
             licenses_concluded=set(self.tags.licenses_expressions),
             licenses_declared=set(self.tags.licenses_expressions_declared),
-            copyrights=set(self.tags.copyrights),
+            license_refs=self.get_license_refs(),
+            copyrights_declared=set(self.tags.copyrights_declared),
+            copyrights_concluded=set(self.tags.copyrights),
             cve_exclude_list=[{'cve': cve_id, 'reason': reason} for cve_id, reason in merged_excludes.items()],
             cve_keywords=list(self.manifest['cve-keywords']),
             files=[f.file for f in self.files],
         )
 
         self.add_relationships()
+
+    def guess_repository(self) -> str:
+        """Return the package remote as "<url>@<sha>#<path>".
+
+        Read from the package's own git checkout. A submodule overrides this to
+        fall back to the superproject when git fails in the submodule directory.
+        """
+        return git.get_remote_location(self.dir)
+
+    def get_license_refs(self) -> List['LicenseRef']:
+        """Custom licenses described by the manifest "custom-licenses" key."""
+        refs = []
+        for entry in self.manifest['custom-licenses']:
+            text = entry.get('text', '')
+            if entry.get('file'):
+                path = utils.pjoin(self.dir, entry['file'])
+                with open(path, encoding='utf-8', errors='replace') as f:
+                    text = f.read()
+            refs.append(
+                LicenseRef(
+                    id=entry['id'],
+                    name=entry.get('name', ''),
+                    text=text,
+                    urls=[entry['url']] if entry.get('url') else [],
+                    comment=entry.get('comment', ''),
+                )
+            )
+        return refs
 
     def purl_from_commit(self) -> str:
         """Derive a PURL from the commit the package was built from, with the
@@ -961,6 +1015,11 @@ class SBOMPackage(SBOMObject):
             git_wdir = git.get_gitwdir(self.dir)
             if git_wdir:
                 submodules_info = git.submodule_foreach_enum(git_wdir)
+            elif self.mark == PackageKind.SUBMODULE.value and os.path.isfile(utils.pjoin(self.dir, '.gitmodules')):
+                # git failed in this submodule and it has its own submodules, so
+                # they cannot be enumerated. The submodule's own repository is
+                # still recovered by guess_repository.
+                log.warn(f'git failed in submodule "{self.dir}"; its nested submodules will be missing from the SBOM.')
 
         submodules_info_dict = {i['path']: i for i in submodules_info}
 
@@ -1580,6 +1639,22 @@ class SBOMSubmodule(SBOMPackage):
 
         return manifest
 
+    def guess_repository(self) -> str:
+        # Normal path: read the submodule's own git remote.
+        repository = super().guess_repository()
+        if repository:
+            return repository
+        # git failed in the submodule directory, for example a broken worktree
+        # path in the submodule config on Windows. The superproject pins the
+        # commit and holds the url, so build the remote from there, without
+        # running git in the submodule.
+        cfg = git.get_config(utils.pjoin(self.info['git_dir'], 'config'))
+        url = cfg.get_value(f'submodule.{self.info["name"]}.url', '')
+        sha = self.info['sha1']
+        if not utils.is_remote_url(url) or not sha:
+            return ''
+        return f'{url}@{sha}'
+
 
 class SBOMFile(SBOMObject):
     """SBOMObject for a single analyzed file."""
@@ -1676,6 +1751,29 @@ def _flatten(pkg: SBOMPackage, out: List[Package]) -> None:
         _flatten(subpkg, out)
 
 
+def _license_refs(packages: List[Package]) -> List[LicenseRef]:
+    """Collect the custom licenses used by packages, sorted by identifier.
+
+    Both expression sets are searched. The concluded one holds the licenses
+    found in the package files, with --files add and without it. A license that
+    no manifest describes is reported too, so the document defines every
+    license it uses.
+    """
+    refs: Dict[str, LicenseRef] = {}
+    for pkg in packages:
+        for ref in pkg.license_refs:
+            described = refs.setdefault(ref.id, ref)
+            if described != ref:
+                log.warn(f'Custom license "{ref.id}" is described more than once, using the first description.')
+
+    for pkg in packages:
+        for expression in pkg.licenses_concluded | pkg.licenses_declared:
+            for ref_id in utils.find_license_refs(expression):
+                refs.setdefault(ref_id, LicenseRef(id=ref_id))
+
+    return [refs[ref_id] for ref_id in sorted(refs)]
+
+
 def _organization(entity: Dict[str, str]) -> Organization:
     """Build an Organization from one entity of the manifest "document" key.
     An absent entity yields an empty Organization, which backends skip."""
@@ -1733,6 +1831,7 @@ def build(args: Dict[str, Any], proj_desc_path: str) -> SBOM:
         supplier=_organization(document.get('supplier', {})),
         manufacturer=_organization(document.get('manufacturer', {})),
         packages=packages,
+        license_refs=_license_refs(packages),
     )
 
 
@@ -1788,7 +1887,7 @@ def summarize_licenses(packages: List[Package], unify_copyrights: bool = False) 
     for pkg in packages:
         licenses |= pkg.licenses_concluded
         licenses |= pkg.licenses_declared
-        copyrights |= pkg.copyrights
+        copyrights |= pkg.copyrights_declared | pkg.copyrights_concluded
 
     if unify_copyrights:
         copyrights = SBOMTags.simplify_copyrights(copyrights)

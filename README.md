@@ -25,6 +25,9 @@ the [National Vulnerability Database][4] (NVD) based on the
 - [Manifest file](#manifest-file)
   - [Validating manifest files](#validating-manifest-files)
   - [Checking manifest files for vulnerabilities](#checking-manifest-files-for-vulnerabilities)
+- [Describing your own project](#describing-your-own-project)
+  - [The project](#the-project)
+  - [Your components](#your-components)
 - [Licenses and Copyrights](#licenses-and-copyrights)
 - [Return Values](#return-values)
 - [Resources](#resources)
@@ -385,8 +388,11 @@ detects the format automatically. The model concepts map to each format as follo
 | download URL  | `PackageDownloadLocation`              | `software_downloadLocation`                  | `externalReferences` (distribution)  |
 | CPE           | `ExternalRef SECURITY cpe23Type`       | `cpe23` externalIdentifier                   | `cpe` (+ `evidence.identity`)        |
 | PURL          | `ExternalRef PACKAGE-MANAGER purl`     | `software_packageUrl`                        | `purl`                               |
-| license       | `PackageLicenseConcluded` / `Declared` | `hasConcludedLicense` / `hasDeclaredLicense` | `licenses`                           |
+| license       | `PackageLicenseDeclared`               | `hasDeclaredLicense`                         | `licenses`                           |
+| scanned license | `PackageLicenseConcluded`            | `hasConcludedLicense`                        | `evidence.licenses`                  |
 | copyright     | `PackageCopyrightText`                 | `software_copyrightText`                     | `copyright`                          |
+| scanned copyright | `PackageAttributionText`           | `software_attributionText`                   | `evidence.copyright`                 |
+| custom-licenses | `LicenseID` / `ExtractedText`        | `expandedlicensing_CustomLicense`            | not available                        |
 | checksum      | `PackageChecksum`                      | `verifiedUsing` (Hash)                       | `hashes`                             |
 | excluded CVEs | `PackageComment`                       | `security_Vulnerability` + VEX               | `not_affected` VEX `vulnerabilities` |
 | cve-keywords  | `PackageComment`                       | `comment` (YAML)                             | `properties`                         |
@@ -501,16 +507,19 @@ The `sbom.yml` is a simple yaml file, which may contain the following entries.
     sbom-purl = pkg:github/Mbed-TLS/mbedtls@{}
     ```
 * **supplier**:
-    Package supplier. Person or organization distributing the package. Should be prefixed
-    with *Person:* or *Organization:* as described in SPDX specification.
+    Package supplier. Person or organization distributing the package. The value has to
+    start with *Person:* or *Organization:*, as the SPDX specification requires, and SBOM
+    creation fails without it. An email address can be added in parentheses after the
+    name, for example `Organization: Acme Corp (psirt@acme.example)`. SPDX keeps the
+    value as it is and CycloneDX reports the email as the contact of the entity.
 * **originator**:
     Package originator. If the package comes from another person or organization
     that has been identified as a supplier. For example if a component is based
     on 3rd party code with some modifications, the originator is the 3rd party code
     author, but the supplier is the person or organization distributing the final
     component. For more detailed information please see the SPDX specification.
-    As for supplier, *Person:* or *Organization:* prefix should be used for
-    originator value.
+    The value has the same form as `supplier`, so it has to start with *Person:* or
+    *Organization:* and can carry an email address in parentheses.
 * **hash**:
     SHA of the directory(`git-tree` object) the manifest file describes or HEAD SHA of a submodule. This value
     is used during the manifest file validation to check if the hash in the manifest file matches the
@@ -547,10 +556,39 @@ cve-exclude-list:
 ```
 
 * **license**:
-    License expression explicitly declared by the author.
+    License expression explicitly declared by the author. It has to be a valid SPDX license
+    expression, meaning license identifiers from the [SPDX license list][15] combined with
+    `AND`, `OR` and `WITH`. The expression is validated and SBOM creation fails if it is
+    not valid. A license that is not on the SPDX license list is used as `LicenseRef-<id>`
+    and described with the **custom-licenses** key below.
 * **copyright**:
     Copyright explicitly declared by the author. This can be single string or a
     list of copyrights.
+* **custom-licenses**:
+    Description of licenses that are not on the [SPDX license list][15]. Such a license is
+    referred to as `LicenseRef-<id>` in a license expression, and the SBOM has to say what
+    the identifier means. Each entry is a dictionary with the following keys.
+
+    * id: the full identifier, for example `LicenseRef-Acme-Proprietary`
+    * name: license name
+    * text: license text
+    * file: file with the license text, relative to the manifest directory
+    * url: where the license is published
+    * comment: any additional note
+
+    Use either `text` or `file`, not both. A license used in a license expression but not
+    described here is still added to the SBOM, with `NOASSERTION` instead of the text.
+    Describing a license that no expression uses is allowed.
+
+```
+license: LicenseRef-Acme-Proprietary AND MIT
+custom-licenses:
+  - id: LicenseRef-Acme-Proprietary
+    name: Acme Proprietary License
+    file: LICENSE
+    url: https://acme.example/license
+```
+
 * **cve-exclude-list**:
     List of already evaluated CVEs, which do not apply to this package. This can be used
     to exclude CVEs from the `esp-idf-sbom` checker report in case the package is not
@@ -673,7 +711,8 @@ cve-exclude-list:
     for an application that another organization then redistributes. Each takes the
     following entries.
 
-    * **name**: prefixed with *Person:* or *Organization:*, as for `supplier`.
+    * **name**: has to start with *Person:* or *Organization:*, as for `supplier`. A
+      plain name is rejected.
     * **url**: link to the organization, for example its home or security page.
     * **contact**: email address for reporting vulnerabilities.
 
@@ -723,6 +762,9 @@ CycloneDX fields.
 | originator       | PackageOriginator            | publisher                         |
 | license          | PackageLicenseDeclared       | licenses                          |
 | copyright        | PackageCopyrightText         | copyright                         |
+| scanned license  | PackageLicenseConcluded      | evidence.licenses                 |
+| scanned copyright | PackageAttributionText      | evidence.copyright                |
+| custom-licenses  | LicenseID / ExtractedText    | licenses (name, text, url)        |
 | cve-exclude-list | PackageComment               | not_affected VEX                  |
 | cve-keywords     | PackageComment               | properties                        |
 
@@ -843,6 +885,51 @@ Usage example:
     $ esp-idf-sbom manifest check --local-db ~/work/esp-idf ~/work/idf-extra-components/
 
 
+## Describing your own project
+
+ESP-IDF and managed components should already carry SBOM data. Your own code does not.
+Add a small `sbom.yml` so the project and each of your components have an identifier and
+a license. SBOM validators, for example the EU Cyber Resilience Act profile, expect every
+component to have both.
+
+### The project
+
+Put a `sbom.yml` in the project root, next to the top `CMakeLists.txt`. Describe the
+application, and describe the SBOM document itself with the `document` key.
+
+    # <project>/sbom.yml
+    version: 1.0.0
+    description: ACME thermostat firmware
+    supplier: 'Organization: ACME Corp (psirt@acme.example)'
+    license: LicenseRef-Proprietary
+    purl: pkg:generic/acme/thermostat@{}
+    custom-licenses:
+      - id: LicenseRef-Proprietary
+        name: ACME Proprietary License
+        file: LICENSE
+    document:
+      manufacturer:
+        name: 'Organization: ACME Corp'
+        contact: 'psirt@acme.example'
+
+### Your components
+
+Put a `sbom.yml` in the component directory, for `main` and for every component you
+wrote. Give it an identifier and a license.
+
+    # main/sbom.yml
+    license: LicenseRef-Proprietary
+    purl: pkg:generic/acme/thermostat-main@{}
+
+`purl` is an identifier some validators require, for example the Cyber Resilience Act
+profile. It is not the only one. The esp-idf-sbom `check` command matches vulnerabilities
+by CPE, not by `purl`. So when a component has a CPE in the NVD, define `cpe` as well.
+`{}` in `purl` is replaced with the component version. `license` is the license. Use an
+SPDX identifier for a standard license, or `LicenseRef-<id>` for your own, defined once
+with `custom-licenses` in the project manifest and then known to the whole document. For
+the other keys a manifest can hold, see [Manifest file](#manifest-file).
+
+
 ## Licenses and Copyrights
 
 Adding licenses and copyrights information into the SBOM file has to be explicitly
@@ -859,6 +946,34 @@ and **submodules** used in the final project binary.
 The license can be also explicitly declared by the author in the `sbom.yml` file with the `license`
 variable. This information is used as the declared license of the
 given **project**, **component** or **submodule** (see [Output formats](#output-formats)).
+The same holds for the `copyright` variable.
+
+What the author declares and what the file scan finds are kept apart. The declared license
+and copyright describe the package itself. The license and the copyright notices collected
+from the files describe the code the package carries, which usually belongs to somebody
+else, so they are reported separately.
+
+* SPDX keeps the declared license in `PackageLicenseDeclared` and the scanned one in
+  `PackageLicenseConcluded`. The declared copyright is the `PackageCopyrightText` and the
+  scanned notices are written as `PackageAttributionText`.
+* CycloneDX 1.6 holds one license expression per component, so the declared license and
+  copyright stay in `licenses` and `copyright`, and the scanned ones are reported under
+  `evidence`. Both carry the `acknowledgement` field saying which kind they are.
+
+With nothing declared, the scanned license and copyright are all there is, so they are
+reported as the license and the copyright of the package, and nothing is reported
+separately.
+
+A license that is not on the [SPDX license list][15] is referred to as `LicenseRef-<id>`,
+both in the `license` variable and in the `SPDX-License-Identifier` file tag. The SPDX
+formats require the document to say what such an identifier means, so every one of them is
+described in the SBOM. Use the `custom-licenses` manifest key to provide the license text
+and name. Without it the license is reported with `NOASSERTION`.
+
+CycloneDX reports the name, the text and the url as a license object when a license field
+is a single license or a plain `AND` of licenses. This is done for the declared license and
+for the scan results in `evidence`. An `OR` or a `WITH` expression has no license object, so
+there the license keeps its identifier only.
 
 
 ## Return Values
@@ -890,3 +1005,4 @@ given **project**, **component** or **submodule** (see [Output formats](#output-
 [12]: https://www.cisa.gov/known-exploited-vulnerabilities-catalog
 [13]: https://www.cisa.gov/sites/default/files/2023-04/minimum-requirements-for-vex-508c.pdf
 [14]: https://openvex.dev
+[15]: https://spdx.org/licenses/
