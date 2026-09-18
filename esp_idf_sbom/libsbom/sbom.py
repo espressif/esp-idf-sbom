@@ -789,7 +789,7 @@ class SBOMPackage(SBOMObject):
             self.manifest['version'] = self.guess_version(self.dir, self.name)
 
         if not self.manifest['repository']:
-            self.manifest['repository'] = git.get_remote_location(self.dir)
+            self.manifest['repository'] = self.guess_repository()
 
         if not self.manifest['supplier']:
             self.manifest['supplier'] = self.guess_supplier(self.dir, self.manifest['url'], self.manifest['repository'])
@@ -863,6 +863,14 @@ class SBOMPackage(SBOMObject):
         )
 
         self.add_relationships()
+
+    def guess_repository(self) -> str:
+        """Return the package remote as "<url>@<sha>#<path>".
+
+        Read from the package's own git checkout. A submodule overrides this to
+        fall back to the superproject when git fails in the submodule directory.
+        """
+        return git.get_remote_location(self.dir)
 
     def get_license_refs(self) -> List['LicenseRef']:
         """Custom licenses described by the manifest "custom-licenses" key."""
@@ -1007,6 +1015,11 @@ class SBOMPackage(SBOMObject):
             git_wdir = git.get_gitwdir(self.dir)
             if git_wdir:
                 submodules_info = git.submodule_foreach_enum(git_wdir)
+            elif self.mark == PackageKind.SUBMODULE.value and os.path.isfile(utils.pjoin(self.dir, '.gitmodules')):
+                # git failed in this submodule and it has its own submodules, so
+                # they cannot be enumerated. The submodule's own repository is
+                # still recovered by guess_repository.
+                log.warn(f'git failed in submodule "{self.dir}"; its nested submodules will be missing from the SBOM.')
 
         submodules_info_dict = {i['path']: i for i in submodules_info}
 
@@ -1625,6 +1638,22 @@ class SBOMSubmodule(SBOMPackage):
         self.update_manifest(manifest, module_sbom)
 
         return manifest
+
+    def guess_repository(self) -> str:
+        # Normal path: read the submodule's own git remote.
+        repository = super().guess_repository()
+        if repository:
+            return repository
+        # git failed in the submodule directory, for example a broken worktree
+        # path in the submodule config on Windows. The superproject pins the
+        # commit and holds the url, so build the remote from there, without
+        # running git in the submodule.
+        cfg = git.get_config(utils.pjoin(self.info['git_dir'], 'config'))
+        url = cfg.get_value(f'submodule.{self.info["name"]}.url', '')
+        sha = self.info['sha1']
+        if not utils.is_remote_url(url) or not sha:
+            return ''
+        return f'{url}@{sha}'
 
 
 class SBOMFile(SBOMObject):
