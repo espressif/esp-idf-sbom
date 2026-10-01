@@ -400,9 +400,6 @@ detects the format automatically. The model concepts map to each format as follo
 | excluded CVEs | `PackageComment`                       | `security_Vulnerability` + VEX               | `not_affected` VEX `vulnerabilities` |
 | cve-keywords  | `PackageComment`                       | `comment` (YAML)                             | `properties`                         |
 
-`spdx-json-ld` emits SPDX 3.0, which has a different, element-based model (JSON-LD is its
-only serialization) and validates against the official SPDX 3.0.1 JSON schema.
-
 The concepts above belong to individual packages. The document as a whole carries two
 more, set from the `document` key of the project manifest (see
 [Manifest file](#manifest-file)).
@@ -415,8 +412,9 @@ more, set from the `document` key of the project manifest (see
 The two are not symmetric across formats. SPDX has no document level slot for the supplier
 of the described product, its nearest equivalent being the root package's own
 `PackageSupplier`, so only the manufacturer is recorded there. In SPDX 3.0 the manufacturer
-becomes an `Organization` agent carrying `email` and `urlScheme` external identifiers, and
-in SPDX 2.x the contact is folded into the `Creator` value as `name (email)`.
+becomes a `Person` or an `Organization` agent, by the prefix of its name. Its `contact` and
+`url`, if set, become `email` and `urlScheme` external identifiers. In SPDX 2.x the contact
+is folded into the `Creator` value as `name (email)`, and the `url` is not written.
 
 Without `document manufacturer`, only the tool is named as the creator. OpenVEX requires an
 author, so it writes `Unknown Author`. Espressif made the tool, so it is never named as the
