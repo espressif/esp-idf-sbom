@@ -297,6 +297,8 @@ def _vulnerability(statement: vex.VexStatement, bom_link: str = '') -> Dict[str,
     analysis: Dict[str, Any] = {'state': _ANALYSIS_STATE[statement.status]}
     if statement.justification is not None:
         analysis['justification'] = _ANALYSIS_JUSTIFICATION[statement.justification]
+    if statement.response:
+        analysis['response'] = [response.value for response in statement.response]
     if statement.impact_statement:
         analysis['detail'] = statement.impact_statement
 

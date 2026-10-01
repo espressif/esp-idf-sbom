@@ -251,13 +251,7 @@ def cmd_check(args: Dict[str, Any]) -> int:
 
                 # The package's own exclusions, merged with the global ones for any
                 # of its CPEs. Used for the CPE, keyword and NA-version scans.
-                # Package entries take precedence (more specific).
-                cve_exclude_list: Dict[str, str] = {}
-                for cpe in cpes:
-                    for cve_id, reason in nvd.get_excluded_cves_for_cpe(cpe).items():
-                        cve_exclude_list.setdefault(cve_id, reason)
-                for entry in pkg.cve_exclude_list:
-                    cve_exclude_list[entry['cve']] = entry['reason']
+                cve_exclude_list = nvd.merge_excluded_cves(pkg.cve_exclude_list, cpes)
 
                 for cpe in cpes:
                     vulns = nvd.check_cpe(cpe, args['local_db'])
@@ -520,13 +514,7 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
 
                 # The manifest's own exclusions, merged with the global ones for any
                 # of its CPEs. Used for the CPE, keyword and NA-version scans.
-                # Manifest entries take precedence (more specific).
-                cve_exclude_list: Dict[str, str] = {}
-                for cpe in cpes:
-                    for cve_id, reason in nvd.get_excluded_cves_for_cpe(cpe).items():
-                        cve_exclude_list.setdefault(cve_id, reason)
-                for entry in manifest.get('cve-exclude-list', []):
-                    cve_exclude_list[entry['cve']] = entry['reason']
+                cve_exclude_list = nvd.merge_excluded_cves(manifest.get('cve-exclude-list', []), cpes)
 
                 for cpe in cpes:
                     vulns = nvd.check_cpe(cpe, args['local_db'])

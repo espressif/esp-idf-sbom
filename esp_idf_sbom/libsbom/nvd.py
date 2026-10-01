@@ -85,6 +85,10 @@ EXCLUDED_CVES_FILE_ENV = 'SBOM_EXCLUDED_CVES_FILE'
 # manifest, so it does not create a duplicate package entry.
 LOCAL_EXCLUDED_CVES_FILE = 'excluded_cves.yaml'
 
+# The keys of an excluded CVE entry, as in a manifest cve-exclude-list. Only cve
+# and reason are always set.
+CVE_EXCLUDE_FIELDS = ('cve', 'reason', 'justification')
+
 
 def show_apikey_status(local_db: bool) -> None:
     """Report NVD API-key status once, before the online scan's progress bar.
@@ -333,8 +337,10 @@ def merge_local_excluded_cves(root: str) -> None:
     log.eprint(f'Merged {len(local)} local CVE exclusion(s) from {path}')
 
 
-def get_excluded_cves_for_cpe(cpe: str) -> Dict[str, str]:
-    """Return ``{cve_id: reason}`` for CPE-scoped exclusions matching ``cpe``.
+def get_excluded_cves_for_cpe(cpe: str) -> Dict[str, Dict[str, Any]]:
+    """Return ``{cve_id: entry}`` for CPE-scoped exclusions matching ``cpe``.
+
+    The entry has the CVE_EXCLUDE_FIELDS keys that are set.
 
     These are dict-valued entries in ``excluded_cves.yaml`` whose ``cpes`` list
     contains a match for the given CPE (OR semantics, NVD ``cpeMatch`` version
@@ -346,7 +352,7 @@ def get_excluded_cves_for_cpe(cpe: str) -> Dict[str, str]:
     Globally-excluded (string-valued) entries are intentionally not returned
     here; they are filtered at the NVD-query level instead.
     """
-    result: Dict[str, str] = {}
+    result: Dict[str, Dict[str, Any]] = {}
     cves = get_excluded_cves()
     if not isinstance(cves, dict):
         return result
@@ -364,10 +370,33 @@ def get_excluded_cves_for_cpe(cpe: str) -> Dict[str, str]:
                     cpe_match[key] = entry[key]
             synth_cfg = {'nodes': [{'cpeMatch': [cpe_match]}]}
             if is_version_vulnerable(cpe, synth_cfg):
-                result[cve_id] = value.get('reason', '')
+                # The CVE id is the key in the file, and the reason may be missing.
+                fields = {key: value[key] for key in CVE_EXCLUDE_FIELDS if key in value}
+                result[cve_id] = {'reason': '', **fields, 'cve': cve_id}
                 break
 
     return result
+
+
+def merge_excluded_cves(entries: List[Dict[str, Any]], cpes: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Merge the excluded CVEs of a package with the CPE-scoped entries of
+    excluded_cves.yaml that match one of its CPEs.
+
+    The entry of the package is more specific, so it wins field by field: a field
+    that it does not set comes from the global entry.
+
+    :param entries: the cve-exclude-list of the package, from its manifest or SBOM
+    :param cpes: the CPEs to look up in excluded_cves.yaml
+    :returns: ``{cve_id: entry}``, each entry with the CVE_EXCLUDE_FIELDS keys that are set
+    """
+    merged: Dict[str, Dict[str, Any]] = {}
+    for cpe in cpes:
+        for cve_id, global_entry in get_excluded_cves_for_cpe(cpe).items():
+            merged.setdefault(cve_id, global_entry)
+    for entry in entries:
+        fields = {key: value for key, value in entry.items() if key in CVE_EXCLUDE_FIELDS}
+        merged[entry['cve']] = {**merged.get(entry['cve'], {}), **fields}
+    return merged
 
 
 def get_globally_excluded_cves() -> Dict[str, str]:

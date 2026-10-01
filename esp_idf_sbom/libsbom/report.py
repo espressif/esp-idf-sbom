@@ -448,7 +448,7 @@ def select_cvss_metric(metrics: Optional[Dict[str, List[Dict[str, Any]]]]) -> Op
 
 def create_vulnerable_record(
     vuln: Dict[str, Any],
-    cve_exclude_list: Dict[str, Any],
+    cve_exclude_list: Dict[str, Dict[str, Any]],
     cpe: str,
     keyword: str,
     pkg_name: str,
@@ -492,7 +492,7 @@ def create_vulnerable_record(
     kev_name = vuln['cve'].get('cisaVulnerabilityName', '')
 
     if cve_id in cve_exclude_list:
-        exclude_reason = cve_exclude_list[cve_id]
+        exclude_reason = cve_exclude_list[cve_id]['reason']
         vulnerable = 'EXCLUDED'
     elif maybe:
         # The caller could not confirm the CVE applies to the scanned version (a

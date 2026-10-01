@@ -2163,7 +2163,7 @@ def test_kev_fields() -> None:
         return {'cve': cve}
 
     def record(cve_id: str, kev: bool, pkg: str, exclude: bool = False) -> dict:
-        exclude_list = {cve_id: 'not applicable'} if exclude else {}
+        exclude_list = {cve_id: {'cve': cve_id, 'reason': 'not applicable'}} if exclude else {}
         return report.create_vulnerable_record(
             nvd_cve(cve_id, kev), exclude_list, f'cpe:2.3:a:test:{pkg}:1.0.0:*:*:*:*:*:*:*', '', pkg, '1.0.0'
         )
@@ -2474,7 +2474,8 @@ def test_create_vulnerable_record_maybe() -> None:
     assert report.create_vulnerable_record(awaiting, {}, cpe, '', 'lwip', '2.2.0')['vulnerable'] == 'YES'
 
     # Exclusion still wins over maybe.
-    rec = report.create_vulnerable_record(vuln, {'CVE-2020-22283': 'fixed'}, cpe, '', 'lwip', '2.2.0', maybe=True)
+    excluded = {'CVE-2020-22283': {'cve': 'CVE-2020-22283', 'reason': 'fixed'}}
+    rec = report.create_vulnerable_record(vuln, excluded, cpe, '', 'lwip', '2.2.0', maybe=True)
     assert rec['vulnerable'] == 'EXCLUDED'
 
 
@@ -2565,6 +2566,53 @@ def test_cpe_product_must_match_in_full(monkeypatch: pytest.MonkeyPatch) -> None
     assert not nvd.is_version_vulnerable(cpe, fat['cve']['configurations'][0])
 
 
+def test_merge_excluded_cves(tmp_path: Path) -> None:
+    """The entry of the package wins field by field over the matching entry in
+    excluded_cves.yaml. A global entry is used only when its CPE matches, and
+    keys that are not exclusion fields are dropped."""
+    from esp_idf_sbom.libsbom import nvd
+
+    global_file = tmp_path / 'excluded_cves.yaml'
+    global_file.write_text(
+        dedent(
+            """\
+            CVE-2020-1000:
+              cpes:
+                - cpe: cpe:2.3:a:vendor:product:*:*:*:*:*:*:*:*
+                  versionEndExcluding: '2.0'
+              reason: global reason
+              justification: vulnerable_code_not_present
+            CVE-2020-1001:
+              cpes:
+                - cpe: cpe:2.3:a:vendor:product:*:*:*:*:*:*:*:*
+                  versionEndExcluding: '2.0'
+              reason: only global
+            """
+        )
+    )
+    nvd.get_excluded_cves(path=str(global_file))
+
+    entries: list = [
+        {'cve': 'CVE-2020-1000', 'reason': 'package reason', 'response': ['update'], 'other': 'dropped'},
+        {'cve': 'CVE-2020-1002', 'reason': 'only package'},
+    ]
+    assert nvd.merge_excluded_cves(entries, ['cpe:2.3:a:vendor:product:1.0:*:*:*:*:*:*:*']) == {
+        'CVE-2020-1000': {
+            'cve': 'CVE-2020-1000',
+            'reason': 'package reason',
+            'justification': 'vulnerable_code_not_present',
+        },
+        'CVE-2020-1001': {'cve': 'CVE-2020-1001', 'reason': 'only global'},
+        'CVE-2020-1002': {'cve': 'CVE-2020-1002', 'reason': 'only package'},
+    }
+
+    # Version 2.0 is out of the range, so nothing comes from the global file.
+    assert nvd.merge_excluded_cves(entries, ['cpe:2.3:a:vendor:product:2.0:*:*:*:*:*:*:*']) == {
+        'CVE-2020-1000': {'cve': 'CVE-2020-1000', 'reason': 'package reason'},
+        'CVE-2020-1002': {'cve': 'CVE-2020-1002', 'reason': 'only package'},
+    }
+
+
 def test_merge_local_excluded_cves(tmp_path: Path) -> None:
     """nvd.merge_local_excluded_cves merges a repo-local excluded_cves.yaml into
     the in-memory exclusion set, extending the global list for the scan.
@@ -2606,7 +2654,7 @@ def test_merge_local_excluded_cves(tmp_path: Path) -> None:
     # The local scoped entry is honored for the matching CPE/version, but not for
     # a different version, and the original global entry is untouched.
     assert nvd.get_excluded_cves_for_cpe('cpe:2.3:a:espressif:esp-idf:6.0.1:*:*:*:*:*:*:*') == {
-        'CVE-2026-45160': 'Fixed on release/v6.0'
+        'CVE-2026-45160': {'cve': 'CVE-2026-45160', 'reason': 'Fixed on release/v6.0'}
     }
     assert nvd.get_excluded_cves_for_cpe('cpe:2.3:a:espressif:esp-idf:6.0.2:*:*:*:*:*:*:*') == {}
     assert nvd.get_globally_excluded_cves() == {'CVE-1111-0001': 'Unrelated to Espressif'}
