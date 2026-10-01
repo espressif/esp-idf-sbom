@@ -2355,6 +2355,39 @@ def test_evaluate_cpematch_ignores_na_target_for_versioned_criteria(monkeypatch:
     assert nvd.evaluate_cpematch(na_cpe, na) is True
 
 
+def test_is_version_vulnerable_ignores_case() -> None:
+    """CPE values are compared without case, as NVD does. The FatFs manifest
+    uses version R0.16, while NVD writes r0.16."""
+    from esp_idf_sbom.libsbom import nvd
+
+    fatfs = 'cpe:2.3:a:elm-chan:fatfs:{}:*:*:*:*:*:*:*'
+
+    def config(criteria: str, **versions: str) -> dict:
+        return {'nodes': [{'cpeMatch': [{'vulnerable': True, 'criteria': criteria, **versions}]}]}
+
+    ranged = fatfs.format('*')
+    assert nvd.is_version_vulnerable(
+        fatfs.format('R0.16'), config(ranged, versionStartIncluding='r0.15', versionEndIncluding='r0.16')
+    )
+    assert not nvd.is_version_vulnerable(fatfs.format('R0.16'), config(ranged, versionEndExcluding='r0.16'))
+    assert not nvd.is_version_vulnerable(fatfs.format('R0.17'), config(ranged, versionEndIncluding='r0.16'))
+
+    # Without a range, the versions must be equal. Vendor and product are checked too.
+    assert nvd.is_version_vulnerable('cpe:2.3:a:ELM-CHAN:FATFS:R0.16:*:*:*:*:*:*:*', config(fatfs.format('r0.16')))
+
+
+def test_get_cves_for_cpe_ignores_case(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CPE from the SBOM is compared without case, as NVD does."""
+    from esp_idf_sbom.libsbom import nvd
+
+    # Data from NVD.
+    match = {'vulnerable': True, 'criteria': 'cpe:2.3:a:elm-chan:fatfs:*:*:*:*:*:*:*:*', 'versionEndIncluding': 'r0.16'}
+    cve = {'cve': {'id': 'CVE-2026-6682', 'configurations': [{'nodes': [{'cpeMatch': [match]}]}]}}
+    monkeypatch.setattr(nvd, 'CVE_CACHE', [cve])
+
+    assert nvd.get_cves_for_cpe('cpe:2.3:a:ELM-CHAN:FATFS:R0.16:*:*:*:*:*:*:*') == [cve]
+
+
 def test_merge_local_excluded_cves(tmp_path: Path) -> None:
     """nvd.merge_local_excluded_cves merges a repo-local excluded_cves.yaml into
     the in-memory exclusion set, extending the global list for the scan.
