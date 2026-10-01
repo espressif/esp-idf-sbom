@@ -1567,6 +1567,57 @@ def _check_freertos(sbom_file, *extra):
     return run(cmd, capture_output=True, text=True)
 
 
+def test_check_global_exclusion_for_any_cpe_of_package(tmp_path: Path) -> None:
+    """A global entry that matches one CPE of a package also excludes a CVE that
+    NVD reports under another CPE of the package. NVD lists CVE-2025-27810 for
+    Mbed TLS 3.6.2 only under the trustedfirmware vendor name, and check adds that
+    CPE to arm:mbed_tls (utils.CPE_ALIASES)."""
+    import csv
+    import io
+
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    proj = Package(
+        ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT, depends_on=['COMPONENT-mbedtls']
+    )
+    comp = Package(
+        ref='COMPONENT-mbedtls',
+        name='mbedtls',
+        package_name='mbedtls',
+        kind=PackageKind.COMPONENT,
+        version='3.6.2',
+        cpes=['cpe:2.3:a:arm:mbed_tls:3.6.2:*:*:*:*:*:*:*'],
+    )
+    sbom_file = tmp_path / 'app.cdx.json'
+    sbom_file.write_text(cyclonedx.render(SBOM(name='app', root='PROJECT-app', packages=[proj, comp]), version='1.6'))
+
+    excluded = tmp_path / 'excluded_cves.yaml'
+    excluded.write_text(
+        dedent(
+            """\
+            CVE-2025-27810:
+              cpes:
+                - cpe: cpe:2.3:a:arm:mbed_tls:*:*:*:*:*:*:*:*
+                  versionStartIncluding: '3.6.0'
+              reason: test reason
+            """
+        )
+    )
+
+    env = {**os.environ, 'SBOM_EXCLUDED_CVES_FILE': str(excluded)}
+    p = run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'check', '--local-db', '--format', 'csv', str(sbom_file)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    rows = [row for row in csv.DictReader(io.StringIO(p.stdout)) if row['cve_id'] == 'CVE-2025-27810']
+    assert [(row['vulnerable'], row['cpe'].split(':')[3]) for row in rows] == [('EXCLUDED', 'trustedfirmware')]
+
+
 def test_check_vex_excludes_reported_cve() -> None:
     """The VEX file is the only place the exclusions live once the SBOM is clean,
     so check --vex has to turn a reported CVE into an excluded one."""
