@@ -1011,6 +1011,22 @@ def test_vex_vocabulary_is_cisa() -> None:
     }
 
 
+def test_vex_build_nvd_url() -> None:
+    """Each statement links to the NVD page of its CVE, because CISA requires the
+    description of the vulnerability or a link to it. Other ids have no NVD page."""
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_file()
+    model.packages[1].cve_exclude_list = [
+        {'cve': 'CVE-2025-66442', 'reason': 'not used'},
+        {'cve': 'GHSA-2qrg-x229-3v8q', 'reason': 'not used'},
+    ]
+
+    cve, ghsa = vex.build(model).statements
+    assert cve.nvd_url == 'https://nvd.nist.gov/vuln/detail/CVE-2025-66442'
+    assert ghsa.nvd_url == ''
+
+
 def _sbom_with_exclusions():
     model = _sbom_with_file()
     model.packages[1].cve_exclude_list = [
