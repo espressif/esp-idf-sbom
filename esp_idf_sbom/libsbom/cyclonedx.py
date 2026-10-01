@@ -411,6 +411,9 @@ def _render_vex_json(vexdoc: vex.Vex, version: str) -> str:
         ],
         'vulnerabilities': [_vulnerability(statement, bom_link=link) for statement in vexdoc.statements],
     }
+    # The author of the statements, as in the SBOM.
+    if vexdoc.manufacturer:
+        bom['metadata']['manufacturer'] = _entity(vexdoc.manufacturer)
 
     return json.dumps(bom, indent=2)
 

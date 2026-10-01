@@ -407,16 +407,20 @@ The concepts above belong to individual packages. The document as a whole carrie
 more, set from the `document` key of the project manifest (see
 [Manifest file](#manifest-file)).
 
-| Concept               | SPDX 2.x           | SPDX 3.0 JSON-LD           | CycloneDX               |
-|-----------------------|--------------------|----------------------------|-------------------------|
-| document supplier     | not available      | not available              | `metadata.supplier`     |
-| document manufacturer | `Creator:`         | `CreationInfo.createdBy`   | `metadata.manufacturer` |
+| Concept               | SPDX 2.x           | SPDX 3.0 JSON-LD           | CycloneDX               | VEX                                                 |
+|-----------------------|--------------------|----------------------------|-------------------------|-----------------------------------------------------|
+| document supplier     | not available      | not available              | `metadata.supplier`     | not written                                         |
+| document manufacturer | `Creator:`         | `CreationInfo.createdBy`   | `metadata.manufacturer` | CycloneDX `metadata.manufacturer`, OpenVEX `author` |
 
 The two are not symmetric across formats. SPDX has no document level slot for the supplier
 of the described product, its nearest equivalent being the root package's own
 `PackageSupplier`, so only the manufacturer is recorded there. In SPDX 3.0 the manufacturer
 becomes an `Organization` agent carrying `email` and `urlScheme` external identifiers, and
 in SPDX 2.x the contact is folded into the `Creator` value as `name (email)`.
+
+Without `document manufacturer`, only the tool is named as the creator. OpenVEX requires an
+author, so it writes `Unknown Author`. Espressif made the tool, so it is never named as the
+creator or the author.
 
 ## Manifest file
 

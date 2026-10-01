@@ -28,7 +28,6 @@ from esp_idf_sbom.libsbom import vex
 from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import TOOL_NAME
 from esp_idf_sbom.libsbom.sbom import TOOL_PURL
-from esp_idf_sbom.libsbom.sbom import TOOL_SUPPLIER
 from esp_idf_sbom.libsbom.sbom import TOOL_URL
 from esp_idf_sbom.libsbom.sbom import TOOL_VERSION
 from esp_idf_sbom.libsbom.sbom import File
@@ -224,7 +223,8 @@ def _document_creator(org: Organization) -> str:
 
     Only the manufacturer maps here; SPDX has no document-level slot for the
     supplier. Returns an empty string if there is no manufacturer, and the
-    caller then omits the Creator.
+    caller then omits the Creator. Espressif made the tool, not the document, so
+    it is not a Creator; the "Creator: Tool:" value names the tool.
     """
     if not org.name:
         return ''
@@ -260,7 +260,6 @@ def _render_tagvalue(sbom: SBOM, version: str, doc_id: str = '') -> str:
     # The tool in the spec's toolidentifier-version form plus the organization
     # behind it; SPDX 2.x has no slot for a tool's own purl or license.
     out += f'Creator: Tool: {TOOL_NAME}-{TOOL_VERSION}\n'
-    out += f'Creator: {TOOL_SUPPLIER}\n'
     creator = _document_creator(sbom.manufacturer)
     if creator:
         out += f'Creator: {creator}\n'
@@ -399,7 +398,7 @@ def _render_json(sbom: SBOM, version: str, doc_id: str = '') -> str:
         for file in pkg.files:
             files.append(_file_json(pkg, file))
 
-    creators = [f'Tool: {TOOL_NAME}-{TOOL_VERSION}', TOOL_SUPPLIER]
+    creators = [f'Tool: {TOOL_NAME}-{TOOL_VERSION}']
     creator = _document_creator(sbom.manufacturer)
     if creator:
         creators.append(creator)
@@ -508,26 +507,23 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
         }
     )
     element_ids.append(tool)
+    # The organization that produced this document. BSI TR-03183-2 reads the SBOM
+    # creator from here. createdBy is required, so without a manufacturer it
+    # names the tool, as a SoftwareAgent.
+    creator = agent_id(sbom.manufacturer.name, url=sbom.manufacturer.url, email=sbom.manufacturer.contact_email)
+    if not creator:
+        creator = sid('SoftwareAgent-' + _sanitize_spdxid(TOOL_NAME))
+        graph.append(
+            {'type': 'SoftwareAgent', 'spdxId': creator, 'creationInfo': ci, 'name': f'{TOOL_NAME}-{TOOL_VERSION}'}
+        )
+        element_ids.append(creator)
     graph.append(
         {
             'type': 'CreationInfo',
             '@id': ci,
             'specVersion': version,
             'created': created,
-            # The organization that produced this document, before the tool's
-            # own vendor. BSI TR-03183-2 reads the SBOM creator from here.
-            'createdBy': [
-                a
-                for a in (
-                    agent_id(
-                        sbom.manufacturer.name,
-                        url=sbom.manufacturer.url,
-                        email=sbom.manufacturer.contact_email,
-                    ),
-                    agent_id(TOOL_SUPPLIER),
-                )
-                if a
-            ],
+            'createdBy': [creator],
             'createdUsing': [tool],
         }
     )

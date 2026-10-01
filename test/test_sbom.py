@@ -945,7 +945,8 @@ def test_cyclonedx_custom_license_only_in_evidence() -> None:
 def test_producer_attribution() -> None:
     """Every format must attribute the document to the tool that produced it:
     name and version, the organization supplying the tool, and the tool's purl
-    wherever the format has a slot for one."""
+    wherever the format has a slot for one. Espressif made the tool, not the
+    document, so it is not a creator of the document."""
     from esp_idf_sbom.libsbom import cyclonedx
     from esp_idf_sbom.libsbom import spdx
     from esp_idf_sbom.libsbom.sbom import TOOL_NAME
@@ -959,10 +960,10 @@ def test_producer_attribution() -> None:
 
     tagvalue = spdx.render(model, format='tagvalue', version='2.2')
     assert f'Creator: Tool: {tool_id}' in tagvalue
-    assert f'Creator: {TOOL_SUPPLIER}' in tagvalue
+    assert 'Creator: Organization:' not in tagvalue
 
     document = json.loads(spdx.render(model, format='json', version='2.2'))
-    assert document['creationInfo']['creators'] == [f'Tool: {tool_id}', TOOL_SUPPLIER]
+    assert document['creationInfo']['creators'] == [f'Tool: {tool_id}']
 
     graph = json.loads(spdx.render(model, format='json-ld', version='3.0.1'))['@graph']
     tool = next(e for e in graph if e['type'] == 'Tool')
@@ -970,8 +971,9 @@ def test_producer_attribution() -> None:
     assert tool['externalIdentifier'][0]['identifier'] == TOOL_PURL
     creation_info = next(e for e in graph if e['type'] == 'CreationInfo')
     assert creation_info['createdUsing'] == [tool['spdxId']]
+    # createdBy is required. Without a manufacturer it names the tool.
     creator = next(e for e in graph if e.get('spdxId') in creation_info['createdBy'])
-    assert creator['type'] == 'Organization' and creator['name'] == org
+    assert creator['type'] == 'SoftwareAgent' and creator['name'] == tool_id
 
     bom = json.loads(cyclonedx.render(model, version='1.6'))
     component = bom['metadata']['tools']['components'][0]
@@ -1212,7 +1214,7 @@ def test_render_vex_openvex() -> None:
 
     assert document['@context'] == 'https://openvex.dev/ns/v0.2.0'
     assert document['@id'].startswith('urn:uuid:')
-    assert document['author'] == 'Espressif Systems (Shanghai) CO LTD'
+    assert document['author'] == 'Unknown Author'
     assert 'esp-idf-sbom' in document['tooling']
     assert 'urn:cdx' not in json.dumps(document)
 
@@ -1231,6 +1233,34 @@ def test_render_vex_openvex() -> None:
         'status': 'not_affected',
         'impact_statement': 'not used',
     }
+
+
+def test_vex_author_is_the_manufacturer() -> None:
+    """The author of a VEX document is the manufacturer from the project manifest,
+    not Espressif, which only made the tool. OpenVEX requires an author, so without
+    a manufacturer it writes the go-vex default."""
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom.sbom import Organization
+
+    vexdoc = _vex_with_identities()
+    assert json.loads(openvex.render_vex(vexdoc))['author'] == 'Unknown Author'
+    assert 'manufacturer' not in json.loads(cyclonedx.render_vex(vexdoc, version='1.6'))['metadata']
+
+    model = _sbom_with_exclusions()
+    model.manufacturer = Organization(name='Organization: Acme Corp', url='https://acme.example')
+    vexdoc = vex.build(model, sbom_id='urn:uuid:11111111-2222-3333-4444-555555555555')
+    assert vexdoc.manufacturer == model.manufacturer
+
+    model.packages[1].purl = 'pkg:github/example/lib@2.0'
+    assert json.loads(openvex.render_vex(vex.build(model)))['author'] == 'Acme Corp'
+    text = cyclonedx.render_vex(vexdoc, version='1.6')
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+    assert json.loads(text)['metadata']['manufacturer'] == {'name': 'Acme Corp', 'url': ['https://acme.example']}
 
 
 def test_render_vex_openvex_skips_unidentifiable_products() -> None:
@@ -1357,7 +1387,7 @@ def test_parse_vex_round_trip() -> None:
 
     back = openvex.parse_vex(openvex.render_vex(original))
     assert back.sbom_id == ''
-    assert back.author == 'Espressif Systems (Shanghai) CO LTD'
+    assert back.author == 'Unknown Author'
     assert [(s.vulnerability, s.status, s.impact_statement) for s in back.statements] == [
         (s.vulnerability, s.status, s.impact_statement) for s in original.statements
     ]
@@ -2879,12 +2909,14 @@ def test_document_metadata_spdx(hello_world_build: Path) -> None:
     finally:
         (hello_world_build / 'sbom.yml').unlink()
 
-    assert 'Creator: Organization: Acme Corp (psirt@acme.example)' in outputs['spdx-tag-value'].read_text()
+    tagvalue = outputs['spdx-tag-value'].read_text()
+    assert 'Creator: Organization: Acme Corp (psirt@acme.example)' in tagvalue
+    assert 'Creator: Organization: Espressif' not in tagvalue
 
     graph = json.loads(outputs['spdx-json-ld'].read_text())['@graph']
     creation_info = next(e for e in graph if e.get('type') == 'CreationInfo')
     agent = next(e for e in graph if e.get('name') == 'Acme Corp')
-    assert agent['spdxId'] in creation_info['createdBy']
+    assert creation_info['createdBy'] == [agent['spdxId']]
     identifiers = {i['externalIdentifierType']: i['identifier'] for i in agent['externalIdentifier']}
     assert identifiers == {'email': 'psirt@acme.example', 'urlScheme': 'https://acme.example'}
 

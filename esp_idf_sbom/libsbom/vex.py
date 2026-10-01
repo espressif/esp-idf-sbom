@@ -24,6 +24,7 @@ from typing import Optional
 
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom.sbom import SBOM
+from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
 from esp_idf_sbom.libsbom.vexvalues import VexJustification
 from esp_idf_sbom.libsbom.vexvalues import VexResponse
@@ -78,8 +79,11 @@ class Vex:
     sbom_name: str = ''
     # Who made these statements, as the parsed file records it. Empty if the file
     # does not say, or if the model was built and not parsed. Same as SBOM.creator:
-    # render ignores it and writes the tool name.
+    # render ignores it and writes the manufacturer.
     author: str = ''
+    # The author of the statements: the manufacturer from the document key of the
+    # project manifest, as SBOM.manufacturer. Empty if the manifest does not say.
+    manufacturer: Organization = field(default_factory=Organization)
 
 
 def _product(pkg: Package) -> VexProduct:
@@ -132,7 +136,7 @@ def build(sbom: SBOM, sbom_id: str = '') -> Vex:
         for entry in pkg.cve_exclude_list
     ]
 
-    return Vex(statements=statements, sbom_id=sbom_id, sbom_name=sbom.name)
+    return Vex(statements=statements, sbom_id=sbom_id, sbom_name=sbom.name, manufacturer=sbom.manufacturer)
 
 
 # Statuses that say the CVE does not apply to the product. not_affected means it
