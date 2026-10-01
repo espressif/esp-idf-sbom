@@ -173,7 +173,8 @@ def test_embedded_manifests(hello_world_build: Path) -> None:
     """This is similar test as test_referenced_manifests, but this time
     embedded manifests are used to create subpackages. Meaning the
     sbom.yml manifest is created for the main component only and it contains
-    embedded manifests for subpackage and subsubpackage.
+    embedded manifests for subpackage and subsubpackage. A cpe string with the
+    {} placeholder works as in a manifest file.
     main
     ├── sbom.yml
     └── subpackage
@@ -186,6 +187,8 @@ def test_embedded_manifests(hello_world_build: Path) -> None:
               manifests:
                 - manifest:
                     name: TEST_SUBPACKAGE
+                    version: 1.2.3
+                    cpe: cpe:2.3:a:example:test_subpackage:{}:*:*:*:*:*:*:*
                   dest: subpackage
                 - manifest:
                     name: TEST_SUBSUBPACKAGE
@@ -203,9 +206,32 @@ def test_embedded_manifests(hello_world_build: Path) -> None:
 
     assert 'TEST_SUBPACKAGE' in p.stdout
     assert 'TEST_SUBSUBPACKAGE' in p.stdout
+    assert 'cpe:2.3:a:example:test_subpackage:1.2.3:*:*:*:*:*:*:*' in p.stdout
 
     shutil.rmtree(subpackage_path)
     manifest.unlink()
+
+
+def test_get_manifests_fixes_embedded_manifest(tmp_path: Path) -> None:
+    """The manifest commands fix an embedded manifest like a manifest file, so a
+    cpe string with the {} placeholder works there too."""
+    from esp_idf_sbom.libsbom import mft
+
+    (tmp_path / 'sub').mkdir()
+    (tmp_path / 'sbom.yml').write_text(
+        dedent("""
+              manifests:
+                - manifest:
+                    name: sub
+                    version: 1.2.3
+                    cpe: cpe:2.3:a:example:sub:{}:*:*:*:*:*:*:*
+                  dest: sub
+              """)
+    )
+
+    sub = next(m for m in mft.get_manifests([str(tmp_path)]) if m.get('name') == 'sub')
+    assert sub['cpe'] == ['cpe:2.3:a:example:sub:1.2.3:*:*:*:*:*:*:*']
+    mft.validate(sub, sub['_src'], sub['_dst'], die=False)
 
 
 def test_sbom_manifest_from_idf_component(hello_world_build: Path) -> None:

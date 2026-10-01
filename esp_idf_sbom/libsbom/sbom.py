@@ -651,6 +651,8 @@ class SBOMObject:
             else:
                 sbom_yml = sbom_src
                 sbom_path = sbom_src['_embeded_path']
+                # mft.load() does this for a manifest file.
+                mft.fix(sbom_yml)
 
             mft.validate(sbom_yml, sbom_path, directory)
             self.update_manifest(manifest, sbom_yml, sbom_path)

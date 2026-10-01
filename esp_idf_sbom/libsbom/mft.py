@@ -260,6 +260,8 @@ def get_manifests(sources: List[str]) -> List[Dict[str, Any]]:
             # Manifest source is embedded dictionary.
             manifest_path = manifest_source[0]
             manifest = manifest_source[1]
+            # load() does this for a manifest file.
+            fix(manifest)
 
         manifest['_src'] = manifest_path
         manifest['_dst'] = manifest_dir
