@@ -26,11 +26,11 @@ from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import vex
 from esp_idf_sbom.libsbom.sbom import TOOL_NAME
 from esp_idf_sbom.libsbom.sbom import TOOL_PURL
-from esp_idf_sbom.libsbom.sbom import TOOL_SUPPLIER
 from esp_idf_sbom.libsbom.sbom import TOOL_VERSION
 
-# TOOL_SUPPLIER has the SPDX form 'Organization: ...'. OpenVEX wants only the name.
-_AUTHOR = TOOL_SUPPLIER.split(': ', 1)[-1]
+# OpenVEX requires an author. Without a manufacturer in the project manifest, use
+# the default of go-vex, the OpenVEX reference library.
+_UNKNOWN_AUTHOR = 'Unknown Author'
 
 
 def _product(product: vex.VexProduct) -> Optional[Dict[str, Any]]:
@@ -88,7 +88,8 @@ def _render_json(vexdoc: vex.Vex, version: str) -> str:
     document: Dict[str, Any] = {
         '@context': f'https://openvex.dev/ns/v{version}',
         '@id': 'urn:uuid:' + str(uuid.uuid4()),
-        'author': _AUTHOR,
+        # The manufacturer name has the form 'Organization: ...'. OpenVEX wants only the name.
+        'author': vexdoc.manufacturer.name.split(': ', 1)[-1] or _UNKNOWN_AUTHOR,
         'timestamp': timestamp,
         'version': 1,
         'tooling': f'{TOOL_NAME} {TOOL_VERSION} ({TOOL_PURL})',
