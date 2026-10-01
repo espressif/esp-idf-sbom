@@ -444,6 +444,19 @@ def test_cve_exclude_list() -> None:
     manifest.unlink()
 
 
+def test_manifest_cve_exclude_list_justification() -> None:
+    """A manifest entry accepts the CISA justifications and rejects other values."""
+    from esp_idf_sbom.libsbom import mft
+
+    def validate(**fields: object) -> None:
+        manifest: dict = {'cve-exclude-list': [{'cve': 'CVE-2020-1000', 'reason': 'not used', **fields}]}
+        mft.validate(manifest, 'sbom.yml', '.', die=False)
+
+    validate(justification='vulnerable_code_not_present')
+    with pytest.raises(RuntimeError, match='Justification "code_not_present"'):
+        validate(justification='code_not_present')
+
+
 def test_global_cve_exclude_list_in_sbom(hello_world_build: Path) -> None:
     """Test that CPE-scoped entries from the global excluded_cves.yaml are
     merged into the generated SBOM's per-package cve-exclude-list comment."""
@@ -482,6 +495,54 @@ def test_global_cve_exclude_list_in_sbom(hello_world_build: Path) -> None:
     assert 'integration test reason' in p.stdout
 
     manifest.unlink()
+
+
+def test_global_cve_exclude_fields_in_sbom(hello_world_build: Path) -> None:
+    """A field that the manifest entry does not set comes from the matching entry
+    in excluded_cves.yaml. A field that the manifest entry sets wins."""
+    manifest = hello_world_build / 'main' / 'sbom.yml'
+    proj_desc_path = hello_world_build / 'build' / 'project_description.json'
+
+    manifest.write_text(
+        dedent("""
+              cpe: cpe:2.3:a:VENDOR1:PRODUCT1:1.0:*:*:*:*:*:*:*
+              cve-exclude-list:
+                - cve: CVE-9999-99999
+                  reason: manifest reason
+              """)
+    )
+
+    try:
+        with TemporaryDirectory() as tmpdir:
+            excluded_path = Path(tmpdir) / 'excluded_cves.yaml'
+            excluded_path.write_text(
+                dedent("""
+                      CVE-9999-99999:
+                        cpes:
+                          - cpe: cpe:2.3:a:VENDOR1:PRODUCT1:1.0:*:*:*:*:*:*:*
+                        reason: global reason
+                        justification: vulnerable_code_not_in_execute_path
+                      """)
+            )
+
+            env = {**os.environ, 'SBOM_EXCLUDED_CVES_FILE': str(excluded_path)}
+            p = run(
+                [sys.executable, '-m', 'esp_idf_sbom', 'create', '--format', 'cyclonedx-json', proj_desc_path],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+    finally:
+        manifest.unlink()
+
+    vulnerability = next(v for v in json.loads(p.stdout)['vulnerabilities'] if v['id'] == 'CVE-9999-99999')
+    assert vulnerability['analysis'] == {
+        'state': 'not_affected',
+        'justification': 'code_not_reachable',
+        'response': ['will_not_fix'],
+        'detail': 'manifest reason',
+    }
 
 
 def test_validate_sbom(hello_world_build: Path) -> None:
@@ -967,6 +1028,40 @@ def test_vex_vocabulary_is_cisa() -> None:
     }
 
 
+def test_vex_response_is_cyclonedx() -> None:
+    """CISA has no response, so the model uses the five CycloneDX values."""
+    from esp_idf_sbom.libsbom import vex
+
+    assert {r.value for r in vex.VexResponse} == {
+        'can_not_fix',
+        'will_not_fix',
+        'update',
+        'rollback',
+        'workaround_available',
+    }
+
+
+def test_vex_build_justification_and_response() -> None:
+    """vex.build copies the justification of an entry. An unknown value can come
+    only from an excluded_cves.yaml outside this repository, and it is skipped.
+    The response is always will_not_fix."""
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_file()
+    model.packages[1].cve_exclude_list = [
+        {'cve': 'CVE-2020-1', 'reason': 'not used', 'justification': 'vulnerable_code_not_present'},
+        {'cve': 'CVE-2020-2', 'reason': 'not used', 'justification': 'unknown'},
+        {'cve': 'CVE-2020-3', 'reason': 'not used'},
+    ]
+
+    first, second, third = vex.build(model).statements
+    assert first.justification is vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT
+    assert second.justification is None
+    assert third.justification is None
+    for statement in (first, second, third):
+        assert statement.response == [vex.VexResponse.WILL_NOT_FIX]
+
+
 def _sbom_with_exclusions():
     model = _sbom_with_file()
     model.packages[1].cve_exclude_list = [
@@ -1130,6 +1225,57 @@ def test_render_vex_openvex_skips_unidentifiable_products() -> None:
 
     document = json.loads(openvex.render_vex(vex.build(_sbom_with_exclusions())))
     assert document['statements'] == []
+
+
+def test_vex_justification_and_response_rendered() -> None:
+    """The justification goes to every format that has a field for it, the
+    response only to CycloneDX. The documents must still validate."""
+    import urllib.request
+
+    import jsonschema
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import spdx
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_exclusions()
+    model.packages[1].purl = 'pkg:github/example/lib@2.0'
+    model.packages[1].cve_exclude_list[0].update(justification='vulnerable_code_not_present')
+
+    text = cyclonedx.render(model, version='1.6')
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+    first, second = json.loads(text)['vulnerabilities']
+    assert first['analysis'] == {
+        'state': 'not_affected',
+        'justification': 'code_not_present',
+        'response': ['will_not_fix'],
+        'detail': 'not used',
+    }
+    assert second['analysis'] == {'state': 'not_affected', 'response': ['will_not_fix'], 'detail': 'not reachable'}
+
+    vexdoc = vex.build(model, sbom_id='urn:uuid:11111111-2222-3333-4444-555555555555')
+    text = cyclonedx.render_vex(vexdoc, version='1.6')
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+    assert json.loads(text)['vulnerabilities'][0]['analysis']['response'] == ['will_not_fix']
+
+    statement = json.loads(openvex.render_vex(vexdoc))['statements'][0]
+    assert statement['justification'] == 'vulnerable_code_not_present'
+
+    document = json.loads(spdx.render(model, format='json-ld', version='3.0.1'))
+    first, second = [e for e in document['@graph'] if e['type'] == 'security_VexNotAffectedVulnAssessmentRelationship']
+    assert first['security_justificationType'] == 'vulnerableCodeNotPresent'
+    assert 'security_justificationType' not in second
+
+    try:
+        with urllib.request.urlopen('https://spdx.org/schema/3.0.1/spdx-json-schema.json', timeout=30) as resp:
+            schema = json.loads(resp.read())
+    except Exception as e:
+        pytest.skip(f'cannot fetch the SPDX 3.0.1 schema: {e}')
+    errors = list(jsonschema.Draft202012Validator(schema).iter_errors(document))
+    assert not errors, f'SPDX 3.0 file validation failed: {errors[:2]}'
 
 
 def test_create_vex_none(hello_world_build: Path) -> None:
@@ -2004,7 +2150,7 @@ def test_kev_fields() -> None:
         return {'cve': cve}
 
     def record(cve_id: str, kev: bool, pkg: str, exclude: bool = False) -> dict:
-        exclude_list = {cve_id: 'not applicable'} if exclude else {}
+        exclude_list = {cve_id: {'cve': cve_id, 'reason': 'not applicable'}} if exclude else {}
         return report.create_vulnerable_record(
             nvd_cve(cve_id, kev), exclude_list, f'cpe:2.3:a:test:{pkg}:1.0.0:*:*:*:*:*:*:*', '', pkg, '1.0.0'
         )
@@ -2315,7 +2461,8 @@ def test_create_vulnerable_record_maybe() -> None:
     assert report.create_vulnerable_record(awaiting, {}, cpe, '', 'lwip', '2.2.0')['vulnerable'] == 'YES'
 
     # Exclusion still wins over maybe.
-    rec = report.create_vulnerable_record(vuln, {'CVE-2020-22283': 'fixed'}, cpe, '', 'lwip', '2.2.0', maybe=True)
+    excluded = {'CVE-2020-22283': {'cve': 'CVE-2020-22283', 'reason': 'fixed'}}
+    rec = report.create_vulnerable_record(vuln, excluded, cpe, '', 'lwip', '2.2.0', maybe=True)
     assert rec['vulnerable'] == 'EXCLUDED'
 
 
@@ -2406,6 +2553,79 @@ def test_cpe_product_must_match_in_full(monkeypatch: pytest.MonkeyPatch) -> None
     assert not nvd.is_version_vulnerable(cpe, fat['cve']['configurations'][0])
 
 
+def test_validate_excluded_cves_justification(tmp_path: Path) -> None:
+    """The validator of excluded_cves.yaml accepts every justification of the
+    model, and rejects other values."""
+    from esp_idf_sbom.libsbom import vex
+
+    script = Path(__file__).parent / 'validate_excluded_cves.py'
+    path = tmp_path / 'excluded_cves.yaml'
+    cpes = [{'cpe': 'cpe:2.3:a:vendor:product:*:*:*:*:*:*:*:*', 'versionEndExcluding': '2.0'}]
+
+    def validator(entries: dict):
+        # YAML can read JSON.
+        path.write_text(json.dumps(entries))
+        return run([sys.executable, script, path], capture_output=True, text=True)
+
+    entries = {
+        f'CVE-2020-{1000 + i}': {'cpes': cpes, 'reason': 'test', 'justification': j.value}
+        for i, j in enumerate(vex.VexJustification)
+    }
+    assert validator(entries).returncode == 0
+
+    entry = {'cpes': cpes, 'reason': 'test', 'justification': 'code_not_present'}
+    p = validator({'CVE-2020-1000': entry})
+    assert p.returncode == 1
+    assert '`justification` must be one of' in p.stderr
+
+
+def test_merge_excluded_cves(tmp_path: Path) -> None:
+    """The entry of the package wins field by field over the matching entry in
+    excluded_cves.yaml. A global entry is used only when its CPE matches, and
+    keys that are not exclusion fields are dropped."""
+    from esp_idf_sbom.libsbom import nvd
+
+    global_file = tmp_path / 'excluded_cves.yaml'
+    global_file.write_text(
+        dedent(
+            """\
+            CVE-2020-1000:
+              cpes:
+                - cpe: cpe:2.3:a:vendor:product:*:*:*:*:*:*:*:*
+                  versionEndExcluding: '2.0'
+              reason: global reason
+              justification: vulnerable_code_not_present
+            CVE-2020-1001:
+              cpes:
+                - cpe: cpe:2.3:a:vendor:product:*:*:*:*:*:*:*:*
+                  versionEndExcluding: '2.0'
+              reason: only global
+            """
+        )
+    )
+    nvd.get_excluded_cves(path=str(global_file))
+
+    entries: list = [
+        {'cve': 'CVE-2020-1000', 'reason': 'package reason', 'response': ['update'], 'other': 'dropped'},
+        {'cve': 'CVE-2020-1002', 'reason': 'only package'},
+    ]
+    assert nvd.merge_excluded_cves(entries, ['cpe:2.3:a:vendor:product:1.0:*:*:*:*:*:*:*']) == {
+        'CVE-2020-1000': {
+            'cve': 'CVE-2020-1000',
+            'reason': 'package reason',
+            'justification': 'vulnerable_code_not_present',
+        },
+        'CVE-2020-1001': {'cve': 'CVE-2020-1001', 'reason': 'only global'},
+        'CVE-2020-1002': {'cve': 'CVE-2020-1002', 'reason': 'only package'},
+    }
+
+    # Version 2.0 is out of the range, so nothing comes from the global file.
+    assert nvd.merge_excluded_cves(entries, ['cpe:2.3:a:vendor:product:2.0:*:*:*:*:*:*:*']) == {
+        'CVE-2020-1000': {'cve': 'CVE-2020-1000', 'reason': 'package reason'},
+        'CVE-2020-1002': {'cve': 'CVE-2020-1002', 'reason': 'only package'},
+    }
+
+
 def test_merge_local_excluded_cves(tmp_path: Path) -> None:
     """nvd.merge_local_excluded_cves merges a repo-local excluded_cves.yaml into
     the in-memory exclusion set, extending the global list for the scan.
@@ -2447,7 +2667,7 @@ def test_merge_local_excluded_cves(tmp_path: Path) -> None:
     # The local scoped entry is honored for the matching CPE/version, but not for
     # a different version, and the original global entry is untouched.
     assert nvd.get_excluded_cves_for_cpe('cpe:2.3:a:espressif:esp-idf:6.0.1:*:*:*:*:*:*:*') == {
-        'CVE-2026-45160': 'Fixed on release/v6.0'
+        'CVE-2026-45160': {'cve': 'CVE-2026-45160', 'reason': 'Fixed on release/v6.0'}
     }
     assert nvd.get_excluded_cves_for_cpe('cpe:2.3:a:espressif:esp-idf:6.0.2:*:*:*:*:*:*:*') == {}
     assert nvd.get_globally_excluded_cves() == {'CVE-1111-0001': 'Unrelated to Espressif'}

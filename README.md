@@ -218,7 +218,8 @@ ID, and each value is either:
   used by ESP-IDF), or
 * a mapping with `cpes` and `reason` -- the CVE does apply but is considered
   handled for the listed CPEs and version ranges; the scan still lists it, marked
-  as *excluded* with the given reason.
+  as *excluded* with the given reason. The mapping can also have `justification`,
+  with the same values as in the manifest **cve-exclude-list**.
 
 The global list can be extended at two local levels by placing an
 `excluded_cves.yaml` file in the same format at the appropriate root directory.
@@ -601,12 +602,25 @@ custom-licenses:
 
     * cve: CVE-ID
     * reason : description why this package is not vulnerable to this CVE
+    * justification (optional): why this package is not affected. One of the CISA
+      justifications: `component_not_present`, `vulnerable_code_not_present`,
+      `vulnerable_code_not_in_execute_path`,
+      `vulnerable_code_cannot_be_controlled_by_adversary`,
+      `inline_mitigations_already_exist`. OpenVEX and SPDX 3.0.1 use these values,
+      CycloneDX maps them to its own values.
+
+    If an entry does not set `justification`, the value is taken from the entry for
+    the same CVE in `excluded_cves.yaml`, when its `cpes` match this package.
+
+    CycloneDX also writes the response `will_not_fix` for each entry: the CVE does
+    not affect this package, so no fix is planned.
 ```
       version: 0.1.0
       description: Blink application example
       cve-exclude-list:
         - cve: CVE-2023-1234
           reason: Description why this package is not vulnerable
+          justification: vulnerable_code_not_present
 ```
 
 * **cve-keywords**:

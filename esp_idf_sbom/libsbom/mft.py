@@ -17,6 +17,7 @@ from esp_idf_sbom.libsbom import expr
 from esp_idf_sbom.libsbom import git
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import utils
+from esp_idf_sbom.libsbom.vexvalues import VexJustification
 
 # Shared text used on the synthesized ESP-IDF framework manifest. Lives here so
 # both the SBOM build path (SBOMFramework) and the manifest-check injection path
@@ -453,11 +454,19 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
             raise schema.SchemaError(f'Expression "{expression}" is not valid: {e}')
         return True
 
+    justifications = [justification.value for justification in VexJustification]
+
+    def check_justification(value: str) -> bool:
+        if value in justifications:
+            return True
+        raise schema.SchemaError(f'Justification "{value}" must be one of: {", ".join(justifications)}.')
+
     cve_exclude_list_schema = schema.Schema(
         [
             {
                 'cve': str,
                 'reason': str,
+                schema.Optional('justification'): schema.And(str, check_justification),
             }
         ],
         ignore_extra_keys=True,

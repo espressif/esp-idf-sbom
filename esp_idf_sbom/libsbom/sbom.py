@@ -144,10 +144,10 @@ class Package:
     license_refs: List['LicenseRef'] = field(default_factory=list)
 
     # --- vulnerability metadata -----------------------------------------
-    # CVEs evaluated and found not to apply, each {'cve': ..., 'reason': ...},
-    # plus keywords for description-based CVE search. Backends choose how to
-    # serialize them.
-    cve_exclude_list: List[Dict[str, str]] = field(default_factory=list)
+    # CVEs evaluated and found not to apply, each with the nvd.CVE_EXCLUDE_FIELDS
+    # keys that are set, plus keywords for description-based CVE search.
+    # Backends choose how to serialize them.
+    cve_exclude_list: List[Dict[str, Any]] = field(default_factory=list)
     cve_keywords: List[str] = field(default_factory=list)
 
     # --- contents and relationships -------------------------------------
@@ -822,14 +822,8 @@ class SBOMPackage(SBOMObject):
             cpe_name = self.manifest['cpe'][0].split(':')[4]
 
         # Merge manifest-level cve-exclude-list with globally-applicable exclusions
-        # from excluded_cves.yaml for any of this package's CPEs. Manifest entries
-        # take precedence over global ones for the same CVE (more specific).
-        merged_excludes: Dict[str, str] = {}
-        for cpe in self.manifest['cpe']:
-            for cve_id, reason in nvd.get_excluded_cves_for_cpe(cpe).items():
-                merged_excludes.setdefault(cve_id, reason)
-        for entry in self.manifest['cve-exclude-list']:
-            merged_excludes[entry['cve']] = entry['reason']
+        # from excluded_cves.yaml for any of this package's CPEs.
+        merged_excludes = nvd.merge_excluded_cves(self.manifest['cve-exclude-list'], self.manifest['cpe'])
 
         # Licenses gathered from files are only meaningful when files were
         # actually collected for the package.
@@ -857,7 +851,7 @@ class SBOMPackage(SBOMObject):
             license_refs=self.get_license_refs(),
             copyrights_declared=set(self.tags.copyrights_declared),
             copyrights_concluded=set(self.tags.copyrights),
-            cve_exclude_list=[{'cve': cve_id, 'reason': reason} for cve_id, reason in merged_excludes.items()],
+            cve_exclude_list=list(merged_excludes.values()),
             cve_keywords=list(self.manifest['cve-keywords']),
             files=[f.file for f in self.files],
         )

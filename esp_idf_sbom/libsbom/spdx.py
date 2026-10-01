@@ -426,6 +426,18 @@ def _render_json(sbom: SBOM, version: str, doc_id: str = '') -> str:
     return json.dumps(document, indent=2)
 
 
+# SPDX 3.0.1 uses the CISA justifications, written in camel case.
+_JUSTIFICATION_TYPE = {
+    vex.VexJustification.COMPONENT_NOT_PRESENT: 'componentNotPresent',
+    vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT: 'vulnerableCodeNotPresent',
+    vex.VexJustification.VULNERABLE_CODE_NOT_IN_EXECUTE_PATH: 'vulnerableCodeNotInExecutePath',
+    vex.VexJustification.VULNERABLE_CODE_CANNOT_BE_CONTROLLED_BY_ADVERSARY: (
+        'vulnerableCodeCannotBeControlledByAdversary'
+    ),
+    vex.VexJustification.INLINE_MITIGATIONS_ALREADY_EXIST: 'inlineMitigationsAlreadyExist',
+}
+
+
 def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
     """Render the model as SPDX 3.0 JSON-LD.
 
@@ -717,17 +729,18 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
         )
         element_ids.append(vid)
         xid = sid(f'Vex-{ref}-{statement.vulnerability}')
-        graph.append(
-            {
-                'type': 'security_VexNotAffectedVulnAssessmentRelationship',
-                'spdxId': xid,
-                'creationInfo': ci,
-                'from': vid,
-                'relationshipType': 'doesNotAffect',
-                'to': [sid(product.ref) for product in statement.products],
-                'security_impactStatement': statement.impact_statement,
-            }
-        )
+        assessment: Dict[str, Any] = {
+            'type': 'security_VexNotAffectedVulnAssessmentRelationship',
+            'spdxId': xid,
+            'creationInfo': ci,
+            'from': vid,
+            'relationshipType': 'doesNotAffect',
+            'to': [sid(product.ref) for product in statement.products],
+            'security_impactStatement': statement.impact_statement,
+        }
+        if statement.justification is not None:
+            assessment['security_justificationType'] = _JUSTIFICATION_TYPE[statement.justification]
+        graph.append(assessment)
         element_ids.append(xid)
 
     profiles = ['core', 'software']

@@ -8,9 +8,7 @@ model. Backends render it to a VEX format, or parse a VEX format back into it.
 The VEX embedded in an SBOM and a standalone VEX file are both rendered from
 here, so the two cannot differ.
 
-The model uses the CISA vocabulary: four statuses and five justifications.
-OpenVEX and the SPDX 3.0.1 security profile use it as it is. Only the CycloneDX
-backend has to map it to its own six states and nine justifications.
+The status, justification and response values are in vexvalues.py.
 
 A statement has a status, it is not just an excluded CVE. esp-idf-sbom writes
 only not_affected today, but with an explicit status, check can later report
@@ -19,33 +17,17 @@ affected or under_investigation without any backend change.
 
 from dataclasses import dataclass
 from dataclasses import field
-from enum import Enum
+from typing import Any
+from typing import Dict
 from typing import List
 from typing import Optional
 
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import Package
-
-
-class VexStatus(Enum):
-    """Status of a product for a vulnerability. These are the four CISA statuses."""
-
-    NOT_AFFECTED = 'not_affected'
-    AFFECTED = 'affected'
-    FIXED = 'fixed'
-    UNDER_INVESTIGATION = 'under_investigation'
-
-
-class VexJustification(Enum):
-    """Why a product is not affected. These are the five CISA justifications.
-    Used only with the not_affected status."""
-
-    COMPONENT_NOT_PRESENT = 'component_not_present'
-    VULNERABLE_CODE_NOT_PRESENT = 'vulnerable_code_not_present'
-    VULNERABLE_CODE_NOT_IN_EXECUTE_PATH = 'vulnerable_code_not_in_execute_path'
-    VULNERABLE_CODE_CANNOT_BE_CONTROLLED_BY_ADVERSARY = 'vulnerable_code_cannot_be_controlled_by_adversary'
-    INLINE_MITIGATIONS_ALREADY_EXIST = 'inline_mitigations_already_exist'
+from esp_idf_sbom.libsbom.vexvalues import VexJustification
+from esp_idf_sbom.libsbom.vexvalues import VexResponse
+from esp_idf_sbom.libsbom.vexvalues import VexStatus
 
 
 @dataclass
@@ -72,10 +54,8 @@ class VexStatement:
     vulnerability: str  # CVE id
     status: VexStatus
     products: List[VexProduct] = field(default_factory=list)
-    # Not set by build(). Manifests have only {cve, reason}, and the reason is
-    # free text, not one of the five justifications. The field is here so that
-    # adding it to the manifest later changes mft.py and build(), not every backend.
     justification: Optional[VexJustification] = None
+    response: List[VexResponse] = field(default_factory=list)
     impact_statement: str = ''  # why not affected, the reason from the manifest
     action_statement: str = ''  # what to do, CISA requires it for the affected status
 
@@ -112,6 +92,20 @@ def _product(pkg: Package) -> VexProduct:
     )
 
 
+def _justification(entry: Dict[str, Any]) -> Optional[VexJustification]:
+    """The justification of a cve-exclude-list entry. Manifests are validated, but
+    an excluded_cves.yaml file outside this repository is not, so an unknown value
+    is skipped."""
+    value = entry.get('justification')
+    if value is None:
+        return None
+    try:
+        return VexJustification(value)
+    except ValueError:
+        log.warn(f'Ignoring unknown justification "{value}" for {entry["cve"]}.')
+        return None
+
+
 def build(sbom: SBOM, sbom_id: str = '') -> Vex:
     """Create a VEX model from an SBOM model. This is the VEX side of sbom.build().
 
@@ -129,6 +123,9 @@ def build(sbom: SBOM, sbom_id: str = '') -> Vex:
             vulnerability=entry['cve'],
             status=VexStatus.NOT_AFFECTED,
             products=[_product(pkg)],
+            justification=_justification(entry),
+            # The CVE does not affect this version, so no fix is planned.
+            response=[VexResponse.WILL_NOT_FIX],
             impact_statement=entry['reason'],
         )
         for pkg in sbom.packages
