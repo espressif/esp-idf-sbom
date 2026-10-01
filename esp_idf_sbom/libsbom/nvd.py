@@ -509,7 +509,7 @@ def cache_cves(cpes: List[str], keywords: List[str]) -> None:
 def get_cves_for_cpe(cpe: str) -> List[Dict[str, Any]]:
     global CVE_CACHE
     res: List[Dict[str, Any]] = []
-    cpe_base = ':'.join(cpe.split(':')[:5])
+    cpe_base = ':'.join(cpe.lower().split(':')[:5])
 
     for cve in CVE_CACHE:
         if 'configurations' not in cve['cve']:
@@ -651,8 +651,8 @@ def vercmp(ver1: str, ver2: str) -> int:
     # -1 ver1 < ver2
     #  0 ver1 == ver2
     #  1 ver1 > ver2
-    v1_parts = [part for part in ver1.split('.')]
-    v2_parts = [part for part in ver2.split('.')]
+    v1_parts = [part for part in ver1.lower().split('.')]
+    v2_parts = [part for part in ver2.lower().split('.')]
 
     # compare each part
     for p1, p2 in zip(v1_parts, v2_parts):
@@ -679,18 +679,21 @@ def vercmp(ver1: str, ver2: str) -> int:
 
 
 def is_version_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool:
+    # Ignore case, as NVD and CPE.compare_avs() do.
+    cpe = cpe.lower()
     cpe_base = ':'.join(cpe.split(':')[:5])
     cpe_ver = cpe.split(':')[5]
 
     for node in configuration['nodes']:
         for cpe_match in node['cpeMatch']:
-            criteria_ver = cpe_match['criteria'].split(':')[5]
+            criteria = cpe_match['criteria'].lower()
+            criteria_ver = criteria.split(':')[5]
 
             if not cpe_match['vulnerable']:
                 # skip, cpe_match not vulnerable
                 continue
 
-            if not cpe_match['criteria'].startswith(cpe_base):
+            if not criteria.startswith(cpe_base):
                 # skip, not cpe we want to check
                 continue
 
