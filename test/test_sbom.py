@@ -2388,6 +2388,24 @@ def test_get_cves_for_cpe_ignores_case(monkeypatch: pytest.MonkeyPatch) -> None:
     assert nvd.get_cves_for_cpe('cpe:2.3:a:ELM-CHAN:FATFS:R0.16:*:*:*:*:*:*:*') == [cve]
 
 
+def test_cpe_product_must_match_in_full(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The product name must match in full. 'freertos' must not match 'freertos\\+fat'."""
+    from esp_idf_sbom.libsbom import nvd
+
+    def cve(cve_id: str, criteria: str, **versions: str) -> dict:
+        match = {'vulnerable': True, 'criteria': criteria, **versions}
+        return {'cve': {'id': cve_id, 'configurations': [{'nodes': [{'cpeMatch': [match]}]}]}}
+
+    # Data from NVD. CVE-2019-18178 is for FreeRTOS+FAT, CVE-2024-28115 is for FreeRTOS.
+    fat = cve('CVE-2019-18178', 'cpe:2.3:o:amazon:freertos\\+fat:160919a:*:*:*:*:*:*:*')
+    kernel = cve('CVE-2024-28115', 'cpe:2.3:o:amazon:freertos:*:*:*:*:*:*:*:*', versionEndExcluding='10.6.2')
+    monkeypatch.setattr(nvd, 'CVE_CACHE', [fat, kernel])
+
+    assert nvd.get_cves_for_cpe('cpe:2.3:o:amazon:freertos:10.5.1:*:*:*:*:*:*:*') == [kernel]
+    cpe = 'cpe:2.3:o:amazon:freertos:160919a:*:*:*:*:*:*:*'
+    assert not nvd.is_version_vulnerable(cpe, fat['cve']['configurations'][0])
+
+
 def test_merge_local_excluded_cves(tmp_path: Path) -> None:
     """nvd.merge_local_excluded_cves merges a repo-local excluded_cves.yaml into
     the in-memory exclusion set, extending the global list for the scan.
