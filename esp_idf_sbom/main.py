@@ -242,7 +242,6 @@ def cmd_check(args: Dict[str, Any]) -> int:
                     # Include the CPE product name in the keywords so it is searched in the CVE description.
                     keywords += [cpe.split(':')[4] for cpe in cpes]
 
-                manifest_exclude_list = {entry['cve']: entry['reason'] for entry in pkg.cve_exclude_list}
                 if args['extended_scan']:
                     keywords += pkg.cve_keywords
 
@@ -250,12 +249,17 @@ def cmd_check(args: Dict[str, Any]) -> int:
                 # utils.expand_cpe_aliases).
                 cpes = utils.expand_cpe_aliases(cpes)
 
+                # The package's own exclusions, merged with the global ones for any
+                # of its CPEs. Used for the CPE, keyword and NA-version scans.
+                # Package entries take precedence (more specific).
+                cve_exclude_list: Dict[str, str] = {}
                 for cpe in cpes:
-                    # Merge globally-applicable exclusions for this CPE with manifest excludes.
-                    # Manifest-level entries take precedence (more specific).
-                    cve_exclude_list = nvd.get_excluded_cves_for_cpe(cpe)
-                    cve_exclude_list.update(manifest_exclude_list)
+                    for cve_id, reason in nvd.get_excluded_cves_for_cpe(cpe).items():
+                        cve_exclude_list.setdefault(cve_id, reason)
+                for entry in pkg.cve_exclude_list:
+                    cve_exclude_list[entry['cve']] = entry['reason']
 
+                for cpe in cpes:
                     vulns = nvd.check_cpe(cpe, args['local_db'])
                     for vuln in vulns:
                         record = report.create_vulnerable_record(vuln, cve_exclude_list, cpe, '', pkg_name, pkg_ver)
@@ -263,13 +267,6 @@ def cmd_check(args: Dict[str, Any]) -> int:
                         package_added = True
 
                 if args['extended_scan']:
-                    # Keyword hits are not tied to a single CPE, so honor the
-                    # globally-applicable exclusions for any of the package
-                    # CPEs. Manifest-level entries take precedence.
-                    keyword_exclude_list: Dict[str, str] = {}
-                    for cpe in cpes:
-                        keyword_exclude_list.update(nvd.get_excluded_cves_for_cpe(cpe))
-                    keyword_exclude_list.update(manifest_exclude_list)
                     for keyword in keywords:
                         vulns = nvd.check_keyword(keyword, args['local_db'])
                         for vuln in vulns:
@@ -279,7 +276,7 @@ def cmd_check(args: Dict[str, Any]) -> int:
                                 existing_record['keyword'] += f', {keyword}'
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, keyword_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
+                                vuln, cve_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True
@@ -296,8 +293,6 @@ def cmd_check(args: Dict[str, Any]) -> int:
                             # Already NA/ANY; the regular scan above covers it.
                             continue
                         na_cpe = ':'.join(parts[:5] + ['-'] + parts[6:])
-                        cve_exclude_list = nvd.get_excluded_cves_for_cpe(cpe)
-                        cve_exclude_list.update(manifest_exclude_list)
                         for vuln in nvd.check_cpe(na_cpe, args['local_db']):
                             if report.find_record_by_cve(pkg_records, vuln['cve']['id']):
                                 # Already reported by the version or keyword scan.
@@ -520,15 +515,20 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                     # Without a package name or CPE, use the manifest path as the name.
                     pkg_name = manifest['_src']
 
-                manifest_exclude_list = {cve['cve']: cve['reason'] for cve in manifest.get('cve-exclude-list', [])}
                 if args['extended_scan']:
                     keywords += manifest.get('cve-keywords', [])
-                for cpe in cpes:
-                    # Merge globally-applicable exclusions for this CPE with manifest excludes.
-                    # Manifest-level entries take precedence (more specific).
-                    cve_exclude_list = nvd.get_excluded_cves_for_cpe(cpe)
-                    cve_exclude_list.update(manifest_exclude_list)
 
+                # The manifest's own exclusions, merged with the global ones for any
+                # of its CPEs. Used for the CPE, keyword and NA-version scans.
+                # Manifest entries take precedence (more specific).
+                cve_exclude_list: Dict[str, str] = {}
+                for cpe in cpes:
+                    for cve_id, reason in nvd.get_excluded_cves_for_cpe(cpe).items():
+                        cve_exclude_list.setdefault(cve_id, reason)
+                for entry in manifest.get('cve-exclude-list', []):
+                    cve_exclude_list[entry['cve']] = entry['reason']
+
+                for cpe in cpes:
                     vulns = nvd.check_cpe(cpe, args['local_db'])
                     for vuln in vulns:
                         record = report.create_vulnerable_record(vuln, cve_exclude_list, cpe, '', pkg_name, pkg_ver)
@@ -536,13 +536,6 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                         package_added = True
 
                 if args['extended_scan']:
-                    # Keyword hits are not tied to a single CPE, so honor the
-                    # globally-applicable exclusions for any of the package
-                    # CPEs. Manifest-level entries take precedence.
-                    keyword_exclude_list: Dict[str, str] = {}
-                    for cpe in cpes:
-                        keyword_exclude_list.update(nvd.get_excluded_cves_for_cpe(cpe))
-                    keyword_exclude_list.update(manifest_exclude_list)
                     for keyword in keywords:
                         vulns = nvd.check_keyword(keyword, args['local_db'])
                         for vuln in vulns:
@@ -552,7 +545,7 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                                 existing_record['keyword'] += f', {keyword}'
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, keyword_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
+                                vuln, cve_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True
@@ -569,8 +562,6 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                             # Already NA/ANY; the regular scan above covers it.
                             continue
                         na_cpe = ':'.join(parts[:5] + ['-'] + parts[6:])
-                        cve_exclude_list = nvd.get_excluded_cves_for_cpe(cpe)
-                        cve_exclude_list.update(manifest_exclude_list)
                         for vuln in nvd.check_cpe(na_cpe, args['local_db']):
                             if report.find_record_by_cve(pkg_records, vuln['cve']['id']):
                                 # Already reported by the version or keyword scan.
