@@ -62,8 +62,11 @@ def _statement(statement: vex.VexStatement) -> Optional[Dict[str, Any]]:
     if not products:
         return None
 
+    vulnerability: Dict[str, Any] = {'name': statement.vulnerability}
+    if statement.nvd_url:
+        vulnerability['@id'] = statement.nvd_url
     entry: Dict[str, Any] = {
-        'vulnerability': {'name': statement.vulnerability},
+        'vulnerability': vulnerability,
         'products': products,
         'status': statement.status.value,
     }

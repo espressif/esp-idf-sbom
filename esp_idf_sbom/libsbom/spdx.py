@@ -709,20 +709,24 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
     for statement in statements:
         ref = statement.products[0].ref
         vid = sid(f'Vuln-{ref}-{statement.vulnerability}')
-        graph.append(
-            {
-                'type': 'security_Vulnerability',
-                'spdxId': vid,
-                'creationInfo': ci,
-                'externalIdentifier': [
-                    {
-                        'type': 'ExternalIdentifier',
-                        'externalIdentifierType': 'cve',
-                        'identifier': statement.vulnerability,
-                    }
-                ],
-            }
-        )
+        vulnerability: Dict[str, Any] = {
+            'type': 'security_Vulnerability',
+            'spdxId': vid,
+            'creationInfo': ci,
+            'externalIdentifier': [
+                {
+                    'type': 'ExternalIdentifier',
+                    'externalIdentifierType': 'cve',
+                    'identifier': statement.vulnerability,
+                }
+            ],
+        }
+        # SPDX 3.0.1 defines securityAdvisory as "vendor advisories or specific NVD entries".
+        if statement.nvd_url:
+            vulnerability['externalRef'] = [
+                {'type': 'ExternalRef', 'externalRefType': 'securityAdvisory', 'locator': [statement.nvd_url]}
+            ]
+        graph.append(vulnerability)
         element_ids.append(vid)
         xid = sid(f'Vex-{ref}-{statement.vulnerability}')
         assessment: Dict[str, Any] = {

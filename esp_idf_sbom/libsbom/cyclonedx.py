@@ -301,12 +301,15 @@ def _vulnerability(statement: vex.VexStatement, bom_link: str = '') -> Dict[str,
         analysis['response'] = [response.value for response in statement.response]
     analysis['detail'] = statement.impact_statement
 
-    return {
+    vulnerability: Dict[str, Any] = {
         'bom-ref': f'vex-{statement.products[0].ref}-{statement.vulnerability}',
         'id': statement.vulnerability,
-        'analysis': analysis,
-        'affects': [{'ref': f'{bom_link}#{p.ref}' if bom_link else p.ref} for p in statement.products],
     }
+    if statement.nvd_url:
+        vulnerability['source'] = {'name': 'NVD', 'url': statement.nvd_url}
+    vulnerability['analysis'] = analysis
+    vulnerability['affects'] = [{'ref': f'{bom_link}#{p.ref}' if bom_link else p.ref} for p in statement.products]
+    return vulnerability
 
 
 def new_document_id(sbom: SBOM) -> str:

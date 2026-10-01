@@ -15,6 +15,7 @@ only not_affected today, but with an explicit status, check can later report
 affected or under_investigation without any backend change.
 """
 
+import re
 from dataclasses import dataclass
 from dataclasses import field
 from typing import Any
@@ -59,6 +60,9 @@ class VexStatement:
     response: List[VexResponse] = field(default_factory=list)
     impact_statement: str = ''  # why not affected, the reason from the manifest
     action_statement: str = ''  # what to do, CISA requires it for the affected status
+    # The NVD page of the CVE. CISA requires the description of the vulnerability or
+    # a link to it.
+    nvd_url: str = ''
 
 
 @dataclass
@@ -96,6 +100,14 @@ def _product(pkg: Package) -> VexProduct:
     )
 
 
+_CVE_RE = re.compile(r'CVE-\d{4}-\d{4,}')
+
+
+def _nvd_url(vulnerability: str) -> str:
+    """The NVD page of a CVE. Other ids have no NVD page."""
+    return f'https://nvd.nist.gov/vuln/detail/{vulnerability}' if _CVE_RE.fullmatch(vulnerability) else ''
+
+
 def _justification(entry: Dict[str, Any]) -> Optional[VexJustification]:
     """The justification of a cve-exclude-list entry. Manifests are validated, but
     an excluded_cves.yaml file outside this repository is not, so an unknown value
@@ -131,6 +143,7 @@ def build(sbom: SBOM, sbom_id: str = '') -> Vex:
             # The CVE does not affect this version, so no fix is planned.
             response=[VexResponse.WILL_NOT_FIX],
             impact_statement=entry['reason'],
+            nvd_url=_nvd_url(entry['cve']),
         )
         for pkg in sbom.packages
         for entry in pkg.cve_exclude_list

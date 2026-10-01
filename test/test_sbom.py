@@ -1080,6 +1080,22 @@ def test_vex_build_justification_and_response() -> None:
         assert statement.response == [vex.VexResponse.WILL_NOT_FIX]
 
 
+def test_vex_build_nvd_url() -> None:
+    """Each statement links to the NVD page of its CVE, because CISA requires the
+    description of the vulnerability or a link to it. Other ids have no NVD page."""
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_file()
+    model.packages[1].cve_exclude_list = [
+        {'cve': 'CVE-2025-66442', 'reason': 'not used'},
+        {'cve': 'GHSA-2qrg-x229-3v8q', 'reason': 'not used'},
+    ]
+
+    cve, ghsa = vex.build(model).statements
+    assert cve.nvd_url == 'https://nvd.nist.gov/vuln/detail/CVE-2025-66442'
+    assert ghsa.nvd_url == ''
+
+
 def _sbom_with_exclusions():
     model = _sbom_with_file()
     model.packages[1].cve_exclude_list = [
@@ -1314,6 +1330,52 @@ def test_vex_justification_and_response_rendered() -> None:
     first, second = [e for e in document['@graph'] if e['type'] == 'security_VexNotAffectedVulnAssessmentRelationship']
     assert first['security_justificationType'] == 'vulnerableCodeNotPresent'
     assert 'security_justificationType' not in second
+
+    try:
+        with urllib.request.urlopen('https://spdx.org/schema/3.0.1/spdx-json-schema.json', timeout=30) as resp:
+            schema = json.loads(resp.read())
+    except Exception as e:
+        pytest.skip(f'cannot fetch the SPDX 3.0.1 schema: {e}')
+    errors = list(jsonschema.Draft202012Validator(schema).iter_errors(document))
+    assert not errors, f'SPDX 3.0 file validation failed: {errors[:2]}'
+
+
+def test_vex_nvd_url_rendered() -> None:
+    """The NVD link goes to the CycloneDX source.url, the OpenVEX vulnerability @id
+    and an SPDX 3.0.1 securityAdvisory reference. The documents must still validate."""
+    import urllib.request
+
+    import jsonschema
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import spdx
+    from esp_idf_sbom.libsbom import vex
+
+    url = 'https://nvd.nist.gov/vuln/detail/CVE-2025-66442'
+    model = _sbom_with_file()
+    model.packages[1].purl = 'pkg:github/example/lib@2.0'
+    model.packages[1].cve_exclude_list = [{'cve': 'CVE-2025-66442', 'reason': 'not used'}]
+
+    text = cyclonedx.render(model, version='1.6')
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+    assert json.loads(text)['vulnerabilities'][0]['source'] == {'name': 'NVD', 'url': url}
+
+    vexdoc = vex.build(model, sbom_id='urn:uuid:11111111-2222-3333-4444-555555555555')
+    text = cyclonedx.render_vex(vexdoc, version='1.6')
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+    assert json.loads(text)['vulnerabilities'][0]['source'] == {'name': 'NVD', 'url': url}
+
+    statement = json.loads(openvex.render_vex(vexdoc))['statements'][0]
+    assert statement['vulnerability'] == {'name': 'CVE-2025-66442', '@id': url}
+
+    document = json.loads(spdx.render(model, format='json-ld', version='3.0.1'))
+    vulnerability = next(e for e in document['@graph'] if e['type'] == 'security_Vulnerability')
+    assert vulnerability['externalRef'] == [
+        {'type': 'ExternalRef', 'externalRefType': 'securityAdvisory', 'locator': [url]}
+    ]
 
     try:
         with urllib.request.urlopen('https://spdx.org/schema/3.0.1/spdx-json-schema.json', timeout=30) as resp:
