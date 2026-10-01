@@ -405,6 +405,22 @@ def test_pwalk_prunes_excluded_subtree(tmp_path: Path) -> None:
     assert collected == {'top.txt'}
 
 
+def test_is_espressif_path_needs_a_directory_boundary(tmp_path: Path) -> None:
+    """A path is in ESP-IDF only if it is IDF_PATH or below it. A sibling directory
+    whose name starts with the same text, like esp-idf-app, is not, so its
+    packages do not get Espressif as their supplier."""
+    from esp_idf_sbom.libsbom.sbom import SBOMObject
+
+    idf = tmp_path / 'esp-idf'
+    sibling = tmp_path / 'esp-idf-app' / 'main'
+    obj = SBOMObject({'no_guess': False}, {'idf_path': idf.as_posix()})
+
+    assert obj.is_espressif_path(idf.as_posix())
+    assert obj.is_espressif_path((idf / 'components' / 'log').as_posix())
+    assert not obj.is_espressif_path(sibling.as_posix())
+    assert obj.guess_supplier(sibling.as_posix()) == ''
+
+
 def test_cve_exclude_list() -> None:
     """Test that CVE-2020-27209 is reported for the manifest file, then add
     it to cve-exclude-list and test it's not reported."""

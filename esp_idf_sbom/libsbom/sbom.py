@@ -583,8 +583,9 @@ class SBOMObject:
         return sbom_files
 
     def is_espressif_path(self, path: str) -> bool:
-        """Check if given path is within idf_path as defined in project_description.json."""
-        return path.startswith(self.proj_desc['idf_path'])
+        """Check if given path is idf_path, as defined in project_description.json, or inside it."""
+        idf_path = self.proj_desc['idf_path']
+        return utils.presolve(path) == utils.presolve(idf_path) or utils.psubdir(path, idf_path)
 
     def is_espressif_url(self, url: str) -> bool:
         """Check if given URL belongs to Espressif."""
