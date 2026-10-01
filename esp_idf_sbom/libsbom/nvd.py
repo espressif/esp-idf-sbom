@@ -509,7 +509,8 @@ def cache_cves(cpes: List[str], keywords: List[str]) -> None:
 def get_cves_for_cpe(cpe: str) -> List[Dict[str, Any]]:
     global CVE_CACHE
     res: List[Dict[str, Any]] = []
-    cpe_base = ':'.join(cpe.lower().split(':')[:5])
+    # The colon stops 'freertos' from matching 'freertos\+fat'.
+    cpe_base = ':'.join(cpe.lower().split(':')[:5]) + ':'
 
     for cve in CVE_CACHE:
         if 'configurations' not in cve['cve']:
@@ -681,7 +682,8 @@ def vercmp(ver1: str, ver2: str) -> int:
 def is_version_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool:
     # Ignore case, as NVD and CPE.compare_avs() do.
     cpe = cpe.lower()
-    cpe_base = ':'.join(cpe.split(':')[:5])
+    # The colon stops 'freertos' from matching 'freertos\+fat'.
+    cpe_base = ':'.join(cpe.split(':')[:5]) + ':'
     cpe_ver = cpe.split(':')[5]
 
     for node in configuration['nodes']:
