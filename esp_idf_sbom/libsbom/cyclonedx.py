@@ -46,6 +46,8 @@ from esp_idf_sbom.libsbom.sbom import LicenseRef
 from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
 from esp_idf_sbom.libsbom.sbom import PackageKind
+from esp_idf_sbom.libsbom.sbom import VexAssessment
+from esp_idf_sbom.libsbom.sbom import assessment_from_exclusion
 from esp_idf_sbom.libsbom.sbom import declared_first
 from esp_idf_sbom.libsbom.sbom import kind_and_name
 from esp_idf_sbom.libsbom.sbom import simplify_licenses
@@ -563,9 +565,7 @@ def _entity_supplier(entity: Dict[str, Any]) -> str:
     return f'{name} ({email})' if email else name
 
 
-def _package_from_component(
-    comp: Dict[str, Any], depends_on: List[str], cve_exclude_list: List[Dict[str, str]]
-) -> Package:
+def _package_from_component(comp: Dict[str, Any], depends_on: List[str], assessments: List[VexAssessment]) -> Package:
     ref = comp.get('bom-ref', '')
     kind, name = kind_and_name(ref)
 
@@ -614,7 +614,7 @@ def _package_from_component(
         purl=comp.get('purl', ''),
         cpes=cpes,
         checksum_sha256=checksum,
-        cve_exclude_list=cve_exclude_list,
+        assessments=assessments,
         cve_keywords=cve_keywords,
         depends_on=depends_on,
     )
@@ -633,8 +633,8 @@ def _parse_json(text: str) -> SBOM:
 
     depends_on = {dep.get('ref', ''): list(dep.get('dependsOn', [])) for dep in bom.get('dependencies', [])}
 
-    # VEX not_affected statements -> per-component cve-exclude-list.
-    excludes: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+    # VEX not_affected statements -> per-component assessments.
+    excludes: Dict[str, List[VexAssessment]] = defaultdict(list)
     for vuln in bom.get('vulnerabilities', []):
         if vuln.get('analysis', {}).get('state') != 'not_affected':
             continue
@@ -642,7 +642,7 @@ def _parse_json(text: str) -> SBOM:
         for affect in vuln.get('affects', []):
             ref = affect.get('ref', '')
             if ref:
-                excludes[ref].append(entry)
+                excludes[ref].append(assessment_from_exclusion(entry))
 
     packages = [
         _package_from_component(c, depends_on.get(c.get('bom-ref', ''), []), excludes.get(c.get('bom-ref', ''), []))

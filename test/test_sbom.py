@@ -675,6 +675,13 @@ def _sbom_with_file():
     return SBOM(name='app', root='PROJECT-app', packages=[proj, lib])
 
 
+def _assessments(*entries: dict) -> list:
+    """The assessments for cve-exclude-list entries."""
+    from esp_idf_sbom.libsbom.sbom import assessment_from_exclusion
+
+    return [assessment_from_exclusion(entry) for entry in entries]
+
+
 def test_cyclonedx_renders_files() -> None:
     """--files add: files must be emitted as nested CycloneDX components and validate."""
     from cyclonedx.schema import SchemaVersion
@@ -749,7 +756,7 @@ def test_spdx_jsonld_parses_bare_refs() -> None:
     from esp_idf_sbom.libsbom import spdx
 
     model = _sbom_with_file()
-    model.packages[1].cve_exclude_list = [{'cve': 'CVE-2020-1', 'reason': 'not used'}]
+    model.packages[1].assessments = _assessments({'cve': 'CVE-2020-1', 'reason': 'not used'})
 
     back = spdx.parse(spdx.render(model, format='json-ld', version='3.0.1'), format='json-ld')
 
@@ -758,7 +765,7 @@ def test_spdx_jsonld_parses_bare_refs() -> None:
     assert set(by_ref) == {'PROJECT-app', 'COMPONENT-lib'}
     assert by_ref['PROJECT-app'].depends_on == ['COMPONENT-lib']
     # The graph is still keyed on full ids, so this breaks if the two ever drift.
-    assert by_ref['COMPONENT-lib'].cve_exclude_list == [{'cve': 'CVE-2020-1', 'reason': 'not used'}]
+    assert by_ref['COMPONENT-lib'].assessments == _assessments({'cve': 'CVE-2020-1', 'reason': 'not used'})
 
     graph = json.loads(spdx.render(back, format='json-ld', version='3.0.1'))['@graph']
     assert all(e.get('spdxId', '').count('#') <= 1 for e in graph)
@@ -1018,10 +1025,10 @@ def test_vex_build() -> None:
     lib = model.packages[1]
     lib.purl = 'pkg:github/example/lib@2.0'
     lib.cpes = ['cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*']
-    lib.cve_exclude_list = [
+    lib.assessments = _assessments(
         {'cve': 'CVE-2020-1', 'reason': 'not used'},
         {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
-    ]
+    )
 
     doc = vex.build(model, sbom_id='urn:uuid:11111111-2222-3333-4444-555555555555')
 
@@ -1092,11 +1099,11 @@ def test_vex_build_justification_and_response() -> None:
     from esp_idf_sbom.libsbom import vex
 
     model = _sbom_with_file()
-    model.packages[1].cve_exclude_list = [
+    model.packages[1].assessments = _assessments(
         {'cve': 'CVE-2020-1', 'reason': 'not used', 'justification': 'vulnerable_code_not_present'},
         {'cve': 'CVE-2020-2', 'reason': 'not used', 'justification': 'unknown'},
         {'cve': 'CVE-2020-3', 'reason': 'not used'},
-    ]
+    )
 
     first, second, third = vex.build(model).statements
     assert first.justification is vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT
@@ -1112,10 +1119,10 @@ def test_vex_build_nvd_url() -> None:
     from esp_idf_sbom.libsbom import vex
 
     model = _sbom_with_file()
-    model.packages[1].cve_exclude_list = [
+    model.packages[1].assessments = _assessments(
         {'cve': 'CVE-2025-66442', 'reason': 'not used'},
         {'cve': 'GHSA-2qrg-x229-3v8q', 'reason': 'not used'},
-    ]
+    )
 
     cve, ghsa = vex.build(model).statements
     assert cve.nvd_url == 'https://nvd.nist.gov/vuln/detail/CVE-2025-66442'
@@ -1124,10 +1131,10 @@ def test_vex_build_nvd_url() -> None:
 
 def _sbom_with_exclusions():
     model = _sbom_with_file()
-    model.packages[1].cve_exclude_list = [
+    model.packages[1].assessments = _assessments(
         {'cve': 'CVE-2020-1', 'reason': 'not used'},
         {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
-    ]
+    )
     return model
 
 
@@ -1331,7 +1338,7 @@ def test_vex_justification_and_response_rendered() -> None:
 
     model = _sbom_with_exclusions()
     model.packages[1].purl = 'pkg:github/example/lib@2.0'
-    model.packages[1].cve_exclude_list[0].update(justification='vulnerable_code_not_present')
+    model.packages[1].assessments[0].justification = vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT
 
     text = cyclonedx.render(model, version='1.6')
     assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
@@ -1383,7 +1390,7 @@ def test_vex_nvd_url_rendered() -> None:
     url = 'https://nvd.nist.gov/vuln/detail/CVE-2025-66442'
     model = _sbom_with_file()
     model.packages[1].purl = 'pkg:github/example/lib@2.0'
-    model.packages[1].cve_exclude_list = [{'cve': 'CVE-2025-66442', 'reason': 'not used'}]
+    model.packages[1].assessments = _assessments({'cve': 'CVE-2025-66442', 'reason': 'not used'})
 
     text = cyclonedx.render(model, version='1.6')
     assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
@@ -1540,7 +1547,7 @@ def test_parse_vex_rejects_two_sboms() -> None:
 
 
 def test_vex_apply() -> None:
-    """apply() puts the statements into cve_exclude_list, which is where the rest
+    """apply() puts the statements into the assessments, which is where the rest
     of the tool already reads exclusions from."""
     from esp_idf_sbom.libsbom import openvex
     from esp_idf_sbom.libsbom import vex
@@ -1549,14 +1556,14 @@ def test_vex_apply() -> None:
 
     model = _sbom_with_file()
     model.packages[1].purl = 'pkg:github/example/lib@2.0'
-    assert model.packages[1].cve_exclude_list == []
+    assert model.packages[1].assessments == []
 
     vex.apply(model, document)
-    assert model.packages[1].cve_exclude_list == [
+    assert model.packages[1].assessments == _assessments(
         {'cve': 'CVE-2020-1', 'reason': 'not used'},
         {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
-    ]
-    assert model.packages[0].cve_exclude_list == []
+    )
+    assert model.packages[0].assessments == []
 
 
 def test_vex_apply_suppresses_not_affected_and_fixed() -> None:
@@ -1590,11 +1597,11 @@ def test_vex_apply_suppresses_not_affected_and_fixed() -> None:
     )
 
     # A fixed statement needs no text of its own, so the status is reported.
-    assert model.packages[1].cve_exclude_list == [
+    assert model.packages[1].assessments == _assessments(
         {'cve': 'CVE-2020-9', 'reason': 'fixed'},
         {'cve': 'CVE-2020-10', 'reason': 'not used'},
         {'cve': 'CVE-2020-11', 'reason': 'component_not_present'},
-    ]
+    )
 
 
 def test_vex_apply_replaces_existing_entry() -> None:
@@ -1621,10 +1628,10 @@ def test_vex_apply_replaces_existing_entry() -> None:
     )
 
     vex.apply(model, document)
-    assert model.packages[1].cve_exclude_list == [
+    assert model.packages[1].assessments == _assessments(
         {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
         {'cve': 'CVE-2020-1', 'reason': 're-checked, still not used'},
-    ]
+    )
 
 
 def test_parse_sbom_reads_document_id() -> None:
@@ -1669,7 +1676,7 @@ def _freertos_sbom_and_vex(tmp_path, sbom_format='cyclonedx-json', vex_format='c
         version='10.0.0',
         purl='pkg:generic/freertos@10.0.0',
         cpes=[cpe],
-        cve_exclude_list=[{'cve': 'CVE-2021-31571', 'reason': 'evaluated in the VEX file'}],
+        assessments=_assessments({'cve': 'CVE-2021-31571', 'reason': 'evaluated in the VEX file'}),
     )
     model = SBOM(name='app', root='PROJECT-app', packages=[proj, comp])
 
@@ -1679,7 +1686,7 @@ def _freertos_sbom_and_vex(tmp_path, sbom_format='cyclonedx-json', vex_format='c
 
     # The SBOM itself is clean, as create --vex-output writes it.
     for pkg in model.packages:
-        pkg.cve_exclude_list = []
+        pkg.assessments = []
 
     sbom_file = tmp_path / 'app.cdx.json'
     assert backend is not None
@@ -2335,7 +2342,7 @@ def test_kev_fields() -> None:
         return {'cve': cve}
 
     def record(cve_id: str, kev: bool, pkg: str, exclude: bool = False) -> dict:
-        exclude_list = {cve_id: {'cve': cve_id, 'reason': 'not applicable'}} if exclude else {}
+        exclude_list = {cve_id: _assessments({'cve': cve_id, 'reason': 'not applicable'})[0]} if exclude else {}
         return report.create_vulnerable_record(
             nvd_cve(cve_id, kev), exclude_list, f'cpe:2.3:a:test:{pkg}:1.0.0:*:*:*:*:*:*:*', '', pkg, '1.0.0'
         )
@@ -2646,7 +2653,7 @@ def test_create_vulnerable_record_maybe() -> None:
     assert report.create_vulnerable_record(awaiting, {}, cpe, '', 'lwip', '2.2.0')['vulnerable'] == 'YES'
 
     # Exclusion still wins over maybe.
-    excluded = {'CVE-2020-22283': {'cve': 'CVE-2020-22283', 'reason': 'fixed'}}
+    excluded = {'CVE-2020-22283': _assessments({'cve': 'CVE-2020-22283', 'reason': 'fixed'})[0]}
     rec = report.create_vulnerable_record(vuln, excluded, cpe, '', 'lwip', '2.2.0', maybe=True)
     assert rec['vulnerable'] == 'EXCLUDED'
 
@@ -2764,11 +2771,56 @@ def test_validate_excluded_cves_justification(tmp_path: Path) -> None:
     assert '`justification` must be one of' in p.stderr
 
 
+def test_assessment_from_exclusion() -> None:
+    """A cve-exclude-list entry is a not_affected assessment, and the response is
+    always will_not_fix. Other keys are ignored, and an unknown justification is
+    skipped."""
+    from esp_idf_sbom.libsbom import sbom
+
+    entry = {
+        'cve': 'CVE-2020-1',
+        'reason': 'not used',
+        'justification': 'vulnerable_code_not_present',
+        'response': ['update'],
+        'other': 'ignored',
+    }
+    assert sbom.assessment_from_exclusion(entry) == sbom.VexAssessment(
+        vulnerability='CVE-2020-1',
+        status=sbom.VexStatus.NOT_AFFECTED,
+        justification=sbom.VexJustification.VULNERABLE_CODE_NOT_PRESENT,
+        response=[sbom.VexResponse.WILL_NOT_FIX],
+        impact_statement='not used',
+    )
+
+    unknown = sbom.assessment_from_exclusion({'cve': 'CVE-2020-2', 'reason': 'not used', 'justification': 'x'})
+    assert unknown.justification is None
+
+
+def test_spdx_comment_keeps_assessments() -> None:
+    """SPDX 2.2 has no VEX fields, so the assessments go into the package comment
+    as the cve-exclude-list, in the manifest form. Both SPDX 2.2 formats read
+    them back."""
+    from esp_idf_sbom.libsbom import spdx
+
+    model = _sbom_with_file()
+    model.packages[1].assessments = _assessments(
+        {'cve': 'CVE-2020-1', 'reason': 'not used', 'justification': 'vulnerable_code_not_present'},
+        {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
+    )
+
+    assert 'justification: vulnerable_code_not_present' in spdx.render(model, format='tagvalue', version='2.2')
+    for fmt in ('tagvalue', 'json'):
+        back = spdx.parse(spdx.render(model, format=fmt, version='2.2'), format=fmt)
+        by_ref = {pkg.ref: pkg for pkg in back.packages}
+        assert by_ref['COMPONENT-lib'].assessments == model.packages[1].assessments
+
+
 def test_merge_excluded_cves(tmp_path: Path) -> None:
-    """The entry of the package wins field by field over the matching entry in
-    excluded_cves.yaml. A global entry is used only when its CPE matches, and
-    keys that are not exclusion fields are dropped."""
+    """The assessment of the package wins over the matching entry in
+    excluded_cves.yaml, except for a justification that it does not set. A
+    global entry is used only when its CPE matches."""
     from esp_idf_sbom.libsbom import nvd
+    from esp_idf_sbom.libsbom import sbom
 
     global_file = tmp_path / 'excluded_cves.yaml'
     global_file.write_text(
@@ -2790,25 +2842,25 @@ def test_merge_excluded_cves(tmp_path: Path) -> None:
     )
     nvd.get_excluded_cves(path=str(global_file))
 
-    entries: list = [
-        {'cve': 'CVE-2020-1000', 'reason': 'package reason', 'response': ['update'], 'other': 'dropped'},
+    assessments = _assessments(
+        {'cve': 'CVE-2020-1000', 'reason': 'package reason'},
         {'cve': 'CVE-2020-1002', 'reason': 'only package'},
-    ]
-    assert nvd.merge_excluded_cves(entries, ['cpe:2.3:a:vendor:product:1.0:*:*:*:*:*:*:*']) == {
-        'CVE-2020-1000': {
-            'cve': 'CVE-2020-1000',
-            'reason': 'package reason',
-            'justification': 'vulnerable_code_not_present',
-        },
-        'CVE-2020-1001': {'cve': 'CVE-2020-1001', 'reason': 'only global'},
-        'CVE-2020-1002': {'cve': 'CVE-2020-1002', 'reason': 'only package'},
-    }
+    )
+
+    def expected(*entries: dict) -> dict:
+        return {a.vulnerability: a for a in _assessments(*entries)}
+
+    assert sbom.merge_excluded_cves(assessments, ['cpe:2.3:a:vendor:product:1.0:*:*:*:*:*:*:*']) == expected(
+        {'cve': 'CVE-2020-1000', 'reason': 'package reason', 'justification': 'vulnerable_code_not_present'},
+        {'cve': 'CVE-2020-1001', 'reason': 'only global'},
+        {'cve': 'CVE-2020-1002', 'reason': 'only package'},
+    )
 
     # Version 2.0 is out of the range, so nothing comes from the global file.
-    assert nvd.merge_excluded_cves(entries, ['cpe:2.3:a:vendor:product:2.0:*:*:*:*:*:*:*']) == {
-        'CVE-2020-1000': {'cve': 'CVE-2020-1000', 'reason': 'package reason'},
-        'CVE-2020-1002': {'cve': 'CVE-2020-1002', 'reason': 'only package'},
-    }
+    assert sbom.merge_excluded_cves(assessments, ['cpe:2.3:a:vendor:product:2.0:*:*:*:*:*:*:*']) == expected(
+        {'cve': 'CVE-2020-1000', 'reason': 'package reason'},
+        {'cve': 'CVE-2020-1002', 'reason': 'only package'},
+    )
 
 
 def test_merge_local_excluded_cves(tmp_path: Path) -> None:

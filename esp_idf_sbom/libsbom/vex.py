@@ -18,8 +18,7 @@ affected or under_investigation without any backend change.
 import re
 from dataclasses import dataclass
 from dataclasses import field
-from typing import Any
-from typing import Dict
+from dataclasses import fields
 from typing import List
 from typing import Optional
 
@@ -27,8 +26,10 @@ from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
-from esp_idf_sbom.libsbom.vexvalues import VexJustification
-from esp_idf_sbom.libsbom.vexvalues import VexResponse
+from esp_idf_sbom.libsbom.sbom import VexAssessment
+from esp_idf_sbom.libsbom.sbom import assessment_from_exclusion
+from esp_idf_sbom.libsbom.vexvalues import VexJustification as VexJustification  # re-export for the backends
+from esp_idf_sbom.libsbom.vexvalues import VexResponse as VexResponse  # re-export for the backends
 from esp_idf_sbom.libsbom.vexvalues import VexStatus
 
 
@@ -50,16 +51,10 @@ class VexProduct:
 
 
 @dataclass
-class VexStatement:
+class VexStatement(VexAssessment):
     """One assessment: this vulnerability has this status for these products."""
 
-    vulnerability: str  # CVE id
-    status: VexStatus
     products: List[VexProduct] = field(default_factory=list)
-    justification: Optional[VexJustification] = None
-    response: List[VexResponse] = field(default_factory=list)
-    impact_statement: str = ''  # why not affected, the reason from the manifest
-    action_statement: str = ''  # what to do, CISA requires it for the affected status
     # The NVD page of the CVE. CISA requires the description of the vulnerability or
     # a link to it.
     nvd_url: str = ''
@@ -108,46 +103,24 @@ def _nvd_url(vulnerability: str) -> str:
     return f'https://nvd.nist.gov/vuln/detail/{vulnerability}' if _CVE_RE.fullmatch(vulnerability) else ''
 
 
-def _justification(entry: Dict[str, Any]) -> Optional[VexJustification]:
-    """The justification of a cve-exclude-list entry. Manifests are validated, but
-    an excluded_cves.yaml file outside this repository is not, so an unknown value
-    is skipped."""
-    value = entry.get('justification')
-    if value is None:
-        return None
-    try:
-        return VexJustification(value)
-    except ValueError:
-        log.warn(f'Ignoring unknown justification "{value}" for {entry["cve"]}.')
-        return None
+def _statement(assessment: VexAssessment, pkg: Package) -> VexStatement:
+    """The statement for one assessment of a package. The package is the product."""
+    values = {f.name: getattr(assessment, f.name) for f in fields(VexAssessment)}
+    return VexStatement(**values, products=[_product(pkg)], nvd_url=_nvd_url(assessment.vulnerability))
 
 
 def build(sbom: SBOM, sbom_id: str = '') -> Vex:
     """Create a VEX model from an SBOM model. This is the VEX side of sbom.build().
 
-    Each cve-exclude-list entry becomes one not-affected statement for its own
-    package. Entries are not merged across packages, even for the same CVE with
-    the same reason, because then it would not be clear which package each reason
-    was written for.
+    Each assessment becomes one statement for its own package. Statements are not
+    merged across packages, even for the same CVE with the same reason, because
+    then it would not be clear which package each reason was written for.
 
-    :param sbom: the SBOM model to read the exclusions from
+    :param sbom: the SBOM model to read the assessments from
     :param sbom_id: id of the document the SBOM was read from. Backends that link
         a standalone VEX to the SBOM need it. Leave it empty for embedded VEX.
     """
-    statements = [
-        VexStatement(
-            vulnerability=entry['cve'],
-            status=VexStatus.NOT_AFFECTED,
-            products=[_product(pkg)],
-            justification=_justification(entry),
-            # The CVE does not affect this version, so no fix is planned.
-            response=[VexResponse.WILL_NOT_FIX],
-            impact_statement=entry['reason'],
-            nvd_url=_nvd_url(entry['cve']),
-        )
-        for pkg in sbom.packages
-        for entry in pkg.cve_exclude_list
-    ]
+    statements = [_statement(assessment, pkg) for pkg in sbom.packages for assessment in pkg.assessments]
 
     return Vex(statements=statements, sbom_id=sbom_id, sbom_name=sbom.name, manufacturer=sbom.manufacturer)
 
@@ -175,9 +148,9 @@ def _reason(statement: VexStatement) -> str:
 def apply(sbom: SBOM, vexdoc: Vex) -> None:
     """Merge the statements of a VEX document into the SBOM model.
 
-    The statements end up in Package.cve_exclude_list, which is where every
-    consumer of the model already reads them from, so nothing downstream has to
-    know a VEX file was involved. Only the statuses in _SUPPRESSING are used.
+    The statements end up in Package.assessments, which is where every consumer
+    of the model already reads them from, so nothing downstream has to know a
+    VEX file was involved. Only the statuses in _SUPPRESSING are used.
 
     Products are matched by ref first, then by PURL, then by CPE. Formats that
     point into an SBOM document give a ref, the others give PURL and CPE.
@@ -207,9 +180,10 @@ def apply(sbom: SBOM, vexdoc: Vex) -> None:
                 continue
             # The VEX file is the newer document, so it wins over an exclusion
             # of the same CVE already in the SBOM.
-            entries = [e for e in pkg.cve_exclude_list if e['cve'] != statement.vulnerability]
-            entries.append({'cve': statement.vulnerability, 'reason': _reason(statement)})
-            pkg.cve_exclude_list = entries
+            assessments = [a for a in pkg.assessments if a.vulnerability != statement.vulnerability]
+            entry = {'cve': statement.vulnerability, 'reason': _reason(statement)}
+            assessments.append(assessment_from_exclusion(entry))
+            pkg.assessments = assessments
 
     if unmatched:
         # Not an error. A VEX file may cover a whole product line, so it can name

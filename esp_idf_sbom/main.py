@@ -117,7 +117,7 @@ def cmd_create(args: Dict[str, Any]) -> int:
         # All formats write their vulnerability information from this one list.
         # Clearing it is enough.
         for pkg in model.packages:
-            pkg.cve_exclude_list = []
+            pkg.assessments = []
 
     # Create the document id here and pass it to render(). The VEX file needs the
     # same id to link to this SBOM.
@@ -249,14 +249,14 @@ def cmd_check(args: Dict[str, Any]) -> int:
                 # utils.expand_cpe_aliases).
                 cpes = utils.expand_cpe_aliases(cpes)
 
-                # The package's own exclusions, merged with the global ones for any
-                # of its CPEs. Used for the CPE, keyword and NA-version scans.
-                cve_exclude_list = nvd.merge_excluded_cves(pkg.cve_exclude_list, cpes)
+                # The package's own assessments, merged with the global exclusions for
+                # any of its CPEs. Used for the CPE, keyword and NA-version scans.
+                assessments = sbom.merge_excluded_cves(pkg.assessments, cpes)
 
                 for cpe in cpes:
                     vulns = nvd.check_cpe(cpe, args['local_db'])
                     for vuln in vulns:
-                        record = report.create_vulnerable_record(vuln, cve_exclude_list, cpe, '', pkg_name, pkg_ver)
+                        record = report.create_vulnerable_record(vuln, assessments, cpe, '', pkg_name, pkg_ver)
                         pkg_records.append(record)
                         package_added = True
 
@@ -270,7 +270,7 @@ def cmd_check(args: Dict[str, Any]) -> int:
                                 existing_record['keyword'] += f', {keyword}'
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, cve_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
+                                vuln, assessments, '', keyword, pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True
@@ -292,7 +292,7 @@ def cmd_check(args: Dict[str, Any]) -> int:
                                 # Already reported by the version or keyword scan.
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, cve_exclude_list, na_cpe, '', pkg_name, pkg_ver, maybe=True
+                                vuln, assessments, na_cpe, '', pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True
@@ -514,12 +514,13 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
 
                 # The manifest's own exclusions, merged with the global ones for any
                 # of its CPEs. Used for the CPE, keyword and NA-version scans.
-                cve_exclude_list = nvd.merge_excluded_cves(manifest.get('cve-exclude-list', []), cpes)
+                exclusions = [sbom.assessment_from_exclusion(entry) for entry in manifest.get('cve-exclude-list', [])]
+                assessments = sbom.merge_excluded_cves(exclusions, cpes)
 
                 for cpe in cpes:
                     vulns = nvd.check_cpe(cpe, args['local_db'])
                     for vuln in vulns:
-                        record = report.create_vulnerable_record(vuln, cve_exclude_list, cpe, '', pkg_name, pkg_ver)
+                        record = report.create_vulnerable_record(vuln, assessments, cpe, '', pkg_name, pkg_ver)
                         pkg_records.append(record)
                         package_added = True
 
@@ -533,7 +534,7 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                                 existing_record['keyword'] += f', {keyword}'
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, cve_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
+                                vuln, assessments, '', keyword, pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True
@@ -555,7 +556,7 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                                 # Already reported by the version or keyword scan.
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, cve_exclude_list, na_cpe, '', pkg_name, pkg_ver, maybe=True
+                                vuln, assessments, na_cpe, '', pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True

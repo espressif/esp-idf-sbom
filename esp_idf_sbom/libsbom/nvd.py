@@ -378,27 +378,6 @@ def get_excluded_cves_for_cpe(cpe: str) -> Dict[str, Dict[str, Any]]:
     return result
 
 
-def merge_excluded_cves(entries: List[Dict[str, Any]], cpes: List[str]) -> Dict[str, Dict[str, Any]]:
-    """Merge the excluded CVEs of a package with the CPE-scoped entries of
-    excluded_cves.yaml that match one of its CPEs.
-
-    The entry of the package is more specific, so it wins field by field: a field
-    that it does not set comes from the global entry.
-
-    :param entries: the cve-exclude-list of the package, from its manifest or SBOM
-    :param cpes: the CPEs to look up in excluded_cves.yaml
-    :returns: ``{cve_id: entry}``, each entry with the CVE_EXCLUDE_FIELDS keys that are set
-    """
-    merged: Dict[str, Dict[str, Any]] = {}
-    for cpe in cpes:
-        for cve_id, global_entry in get_excluded_cves_for_cpe(cpe).items():
-            merged.setdefault(cve_id, global_entry)
-    for entry in entries:
-        fields = {key: value for key, value in entry.items() if key in CVE_EXCLUDE_FIELDS}
-        merged[entry['cve']] = {**merged.get(entry['cve'], {}), **fields}
-    return merged
-
-
 def get_globally_excluded_cves() -> Dict[str, str]:
     """Return ``{cve_id: reason}`` for CVEs that are unrelated to any Espressif product.
 
