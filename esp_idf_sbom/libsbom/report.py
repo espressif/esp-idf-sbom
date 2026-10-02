@@ -17,6 +17,7 @@ from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import nvd
 from esp_idf_sbom.libsbom import utils
 from esp_idf_sbom.libsbom.sbom import VexAssessment
+from esp_idf_sbom.libsbom.vexvalues import VexStatus
 
 REPORT_VERSION = 2
 empty_record = {
@@ -447,6 +448,19 @@ def select_cvss_metric(metrics: Optional[Dict[str, List[Dict[str, Any]]]]) -> Op
     return None
 
 
+def _exclude_reason(assessment: VexAssessment) -> str:
+    """The text reported for an excluded CVE.
+
+    A not_affected assessment carries an impact statement or a justification. A
+    fixed one needs neither, so fall back to the status itself.
+    """
+    if assessment.impact_statement:
+        return assessment.impact_statement
+    if assessment.justification is not None:
+        return assessment.justification.value
+    return assessment.status.value
+
+
 def create_vulnerable_record(
     vuln: Dict[str, Any],
     assessments: Dict[str, VexAssessment],
@@ -466,9 +480,9 @@ def create_vulnerable_record(
         return record
 
     cve_id = vuln['cve']['id']
-    status = vuln['cve']['vulnStatus']
+    status = vuln['cve'].get('vulnStatus', '')
     cve_link = f'https://nvd.nist.gov/vuln/detail/{cve_id}'
-    cve_desc = [desc['value'] for desc in vuln['cve']['descriptions'] if desc['lang'] == 'en'][0]
+    cve_desc = next((desc['value'] for desc in vuln['cve'].get('descriptions', []) if desc['lang'] == 'en'), '')
     vulnerable = ''
     exclude_reason = ''
     cvss_version = ''
@@ -492,9 +506,14 @@ def create_vulnerable_record(
     kev_added = vuln['cve'].get('cisaExploitAdd', '')
     kev_name = vuln['cve'].get('cisaVulnerabilityName', '')
 
-    if cve_id in assessments:
-        exclude_reason = assessments[cve_id].impact_statement
+    assessment = assessments.get(cve_id)
+    if assessment is not None and assessment.suppresses:
+        exclude_reason = _exclude_reason(assessment)
         vulnerable = 'EXCLUDED'
+    elif assessment is not None and assessment.status is VexStatus.AFFECTED:
+        # The VEX says that the CVE applies, so a keyword or NA-version match is
+        # confirmed.
+        vulnerable = 'YES'
     elif maybe:
         # The caller could not confirm the CVE applies to the scanned version (a
         # keyword-description match, or a match against a CPE whose version is

@@ -123,6 +123,16 @@ class VexAssessment:
     impact_statement: str = ''  # why not affected, the reason from the manifest
     action_statement: str = ''  # what to do, CISA requires it for the affected status
 
+    @property
+    def suppresses(self) -> bool:
+        """Whether the status says that the CVE does not apply to the product.
+
+        not_affected means it was never affected, fixed means the product carries
+        the fix. grype and trivy both filter on these two. The other two say the CVE
+        does apply, or that nobody knows yet, so they must not hide anything.
+        """
+        return self.status in (VexStatus.NOT_AFFECTED, VexStatus.FIXED)
+
 
 @dataclass
 class Package:
@@ -273,8 +283,9 @@ def merge_excluded_cves(assessments: List[VexAssessment], cpes: List[str]) -> Di
     """Merge the assessments of a package with the CPE-scoped entries of
     excluded_cves.yaml that match one of its CPEs.
 
-    The assessment of the package is more specific, so it wins. Only a
-    justification that it does not set comes from the global entry.
+    The assessment of the package is more specific, so it wins, whatever its
+    status. A not_affected assessment without a justification takes the one of
+    the global entry.
 
     :param assessments: the assessments of the package, from its manifest or SBOM
     :param cpes: the CPEs to look up in excluded_cves.yaml
@@ -286,7 +297,7 @@ def merge_excluded_cves(assessments: List[VexAssessment], cpes: List[str]) -> Di
             merged.setdefault(cve_id, assessment_from_exclusion(entry))
     for assessment in assessments:
         known = merged.get(assessment.vulnerability)
-        if known is not None and assessment.justification is None:
+        if known is not None and assessment.status is VexStatus.NOT_AFFECTED and assessment.justification is None:
             assessment = replace(assessment, justification=known.justification)
         merged[assessment.vulnerability] = assessment
     return merged

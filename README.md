@@ -331,7 +331,17 @@ The option can be used more than once. A CycloneDX VEX is refused for any SBOM
 other than the one it was created with.
 
 A CVE is excluded when the VEX file says that it does not apply, or that it is
-already fixed.
+already fixed. When the VEX file says that the CVE affects the package, `check`
+reports it, even if a manifest or `excluded_cves.yaml` excludes it, because the
+VEX file is the newer document. A statement that the CVE is under investigation
+does not change what the scan found.
+
+The scan finds the CVEs that NVD lists for the CPEs of a package. `check` also
+reports the CVE of a statement in the SBOM or in the VEX file when the scan did
+not find it, for example because NVD has no CPE data for the CVE yet. The
+report shows such a CVE without a score and a description. It is excluded or
+reported as described above, and a CVE under investigation is reported as a
+possible vulnerability.
 
 
 ## Usage example
