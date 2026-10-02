@@ -1355,7 +1355,8 @@ def test_parse_vex_rejects_two_sboms() -> None:
 
 def test_vex_apply() -> None:
     """apply() puts the statements into the assessments, which is where the rest
-    of the tool already reads exclusions from."""
+    of the tool already reads them from. OpenVEX has no response, so none comes
+    back."""
     from esp_idf_sbom.libsbom import openvex
     from esp_idf_sbom.libsbom import vex
 
@@ -1366,10 +1367,11 @@ def test_vex_apply() -> None:
     assert model.packages[1].assessments == []
 
     vex.apply(model, document)
-    assert model.packages[1].assessments == _assessments(
-        {'cve': 'CVE-2020-1', 'reason': 'not used'},
-        {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
-    )
+    not_affected = vex.VexStatus.NOT_AFFECTED
+    assert model.packages[1].assessments == [
+        vex.VexAssessment(vulnerability='CVE-2020-1', status=not_affected, impact_statement='not used'),
+        vex.VexAssessment(vulnerability='CVE-2020-2', status=not_affected, impact_statement='not reachable'),
+    ]
     assert model.packages[0].assessments == []
 
 
@@ -1410,44 +1412,6 @@ def test_vex_apply_reaches_every_package_with_the_cpe() -> None:
     assert with_statement == ['SUBMODULE-json-cJSON', 'COMPONENT-espressif-cjson']
 
 
-def test_vex_apply_suppresses_not_affected_and_fixed() -> None:
-    """not_affected and fixed both mean the CVE does not apply, and both grype and
-    trivy filter on the two of them. affected and under_investigation say the CVE
-    does apply, or that nobody knows yet, so they must not silence anything."""
-    from esp_idf_sbom.libsbom import vex
-
-    def statement(cve, status, **kwargs):
-        return vex.VexStatement(
-            vulnerability=cve, status=status, products=[vex.VexProduct(ref='COMPONENT-lib')], **kwargs
-        )
-
-    model = _sbom_with_file()
-    vex.apply(
-        model,
-        vex.Vex(
-            statements=[
-                statement('CVE-2020-7', vex.VexStatus.AFFECTED),
-                statement('CVE-2020-8', vex.VexStatus.UNDER_INVESTIGATION),
-                statement('CVE-2020-9', vex.VexStatus.FIXED),
-                statement('CVE-2020-10', vex.VexStatus.NOT_AFFECTED, impact_statement='not used'),
-                # A not_affected statement may carry a justification instead of text.
-                statement(
-                    'CVE-2020-11',
-                    vex.VexStatus.NOT_AFFECTED,
-                    justification=vex.VexJustification.COMPONENT_NOT_PRESENT,
-                ),
-            ]
-        ),
-    )
-
-    # A fixed statement needs no text of its own, so the status is reported.
-    assert model.packages[1].assessments == _assessments(
-        {'cve': 'CVE-2020-9', 'reason': 'fixed'},
-        {'cve': 'CVE-2020-10', 'reason': 'not used'},
-        {'cve': 'CVE-2020-11', 'reason': 'component_not_present'},
-    )
-
-
 def test_vex_apply_replaces_existing_entry() -> None:
     """The VEX file is the newer document, so it wins over the same CVE already in
     the SBOM. A statement that matches no package is ignored, not an error."""
@@ -1472,10 +1436,14 @@ def test_vex_apply_replaces_existing_entry() -> None:
     )
 
     vex.apply(model, document)
-    assert model.packages[1].assessments == _assessments(
-        {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
-        {'cve': 'CVE-2020-1', 'reason': 're-checked, still not used'},
-    )
+    assert model.packages[1].assessments == [
+        *_assessments({'cve': 'CVE-2020-2', 'reason': 'not reachable'}),
+        vex.VexAssessment(
+            vulnerability='CVE-2020-1',
+            status=vex.VexStatus.NOT_AFFECTED,
+            impact_statement='re-checked, still not used',
+        ),
+    ]
 
 
 def test_parse_sbom_reads_document_id() -> None:
@@ -2502,6 +2470,40 @@ def test_create_vulnerable_record_maybe() -> None:
     assert rec['vulnerable'] == 'EXCLUDED'
 
 
+def test_create_vulnerable_record_uses_vex_status() -> None:
+    """not_affected and fixed exclude the CVE. A fixed assessment needs no text of
+    its own, so the status is the reason. affected confirms a MAYBE match, and
+    under_investigation changes nothing."""
+    from esp_idf_sbom.libsbom import report
+    from esp_idf_sbom.libsbom.sbom import VexAssessment
+    from esp_idf_sbom.libsbom.vexvalues import VexJustification
+    from esp_idf_sbom.libsbom.vexvalues import VexStatus
+
+    cpe = 'cpe:2.3:a:lwip_project:lwip:-:*:*:*:*:*:*:*'
+    vuln = {
+        'cve': {
+            'id': 'CVE-2020-22283',
+            'vulnStatus': 'Analyzed',
+            'descriptions': [{'lang': 'en', 'value': 'buffer overflow'}],
+            'metrics': {},
+        }
+    }
+
+    def record(maybe: bool, **fields) -> tuple:
+        assessments = {'CVE-2020-22283': VexAssessment(vulnerability='CVE-2020-22283', **fields)}
+        rec = report.create_vulnerable_record(vuln, assessments, cpe, '', 'lwip', '2.2.0', maybe=maybe)
+        return rec['vulnerable'], rec['exclude_reason']
+
+    not_affected = VexStatus.NOT_AFFECTED
+    assert record(False, status=not_affected, impact_statement='not used') == ('EXCLUDED', 'not used')
+    justification = VexJustification.COMPONENT_NOT_PRESENT
+    assert record(False, status=not_affected, justification=justification) == ('EXCLUDED', 'component_not_present')
+    assert record(True, status=VexStatus.FIXED) == ('EXCLUDED', 'fixed')
+    assert record(True, status=VexStatus.AFFECTED) == ('YES', '')
+    assert record(True, status=VexStatus.UNDER_INVESTIGATION) == ('MAYBE', '')
+    assert record(False, status=VexStatus.UNDER_INVESTIGATION) == ('YES', '')
+
+
 def test_evaluate_cpematch_ignores_na_target_for_versioned_criteria(monkeypatch: pytest.MonkeyPatch) -> None:
     """An NA (-) source must not match a versioned/ranged criteria via the :- name.
 
@@ -2608,6 +2610,28 @@ def test_spdx_comment_keeps_assessments() -> None:
         assert by_ref['COMPONENT-lib'].assessments == model.packages[1].assessments
 
 
+def test_spdx_comment_has_only_excluded_cves() -> None:
+    """Released versions read every cve-exclude-list entry as excluded, so the
+    package comment must not get an assessment that says the CVE applies."""
+    from esp_idf_sbom.libsbom import spdx
+    from esp_idf_sbom.libsbom.sbom import VexAssessment
+    from esp_idf_sbom.libsbom.vexvalues import VexStatus
+
+    model = _sbom_with_file()
+    model.packages[1].assessments = [
+        VexAssessment(vulnerability='CVE-2020-1', status=VexStatus.NOT_AFFECTED, impact_statement='not used'),
+        VexAssessment(vulnerability='CVE-2020-2', status=VexStatus.FIXED),
+        VexAssessment(vulnerability='CVE-2020-3', status=VexStatus.AFFECTED),
+        VexAssessment(vulnerability='CVE-2020-4', status=VexStatus.UNDER_INVESTIGATION),
+    ]
+
+    text = spdx.render(model, format='tagvalue', version='2.2')
+    assert 'CVE-2020-1' in text
+    assert 'CVE-2020-2' in text
+    assert 'CVE-2020-3' not in text
+    assert 'CVE-2020-4' not in text
+
+
 def test_merge_excluded_cves(tmp_path: Path) -> None:
     """The assessment of the package wins over the matching entry in
     excluded_cves.yaml, except for a justification that it does not set. A
@@ -2654,6 +2678,12 @@ def test_merge_excluded_cves(tmp_path: Path) -> None:
         {'cve': 'CVE-2020-1000', 'reason': 'package reason'},
         {'cve': 'CVE-2020-1002', 'reason': 'only package'},
     )
+
+    # An affected assessment of the package wins over the global exclusion, and a
+    # justification is only for not_affected.
+    affected = sbom.VexAssessment(vulnerability='CVE-2020-1000', status=sbom.VexStatus.AFFECTED)
+    merged = sbom.merge_excluded_cves([affected], ['cpe:2.3:a:vendor:product:1.0:*:*:*:*:*:*:*'])
+    assert merged['CVE-2020-1000'] == affected
 
 
 def test_merge_local_excluded_cves(tmp_path: Path) -> None:

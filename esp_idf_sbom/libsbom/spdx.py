@@ -83,8 +83,11 @@ def _package_comment(pkg: Package) -> str:
     structured cve-exclude-list / cve-keywords carried on the model."""
     comment = ''
 
-    if pkg.assessments:
-        cve_info = {'cve-exclude-list': [_cve_exclude_entry(a) for a in pkg.assessments]}
+    # Released versions read every entry of this list as excluded, so it gets only
+    # the assessments that say the CVE does not apply.
+    exclusions = [_cve_exclude_entry(a) for a in pkg.assessments if a.suppresses]
+    if exclusions:
+        cve_info = {'cve-exclude-list': exclusions}
         cve_info_yaml = yaml.dump(cve_info, indent=4)
         cve_info_desc = (
             '# The cve-exclude-list list contains CVEs, which were already evaluated and the package is not vulnerable.'

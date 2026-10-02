@@ -10,9 +10,8 @@ here, so the two cannot differ.
 
 The status, justification and response values are in vexvalues.py.
 
-A statement has a status, it is not just an excluded CVE. esp-idf-sbom writes
-only not_affected today, but with an explicit status, check can later report
-affected or under_investigation without any backend change.
+A statement has a status, it is not just an excluded CVE. create writes only
+not_affected, for the excluded CVEs. check uses the status of each statement.
 """
 
 import re
@@ -28,10 +27,9 @@ from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
 from esp_idf_sbom.libsbom.sbom import VexAssessment
-from esp_idf_sbom.libsbom.sbom import assessment_from_exclusion
 from esp_idf_sbom.libsbom.vexvalues import VexJustification as VexJustification  # re-export for the backends
 from esp_idf_sbom.libsbom.vexvalues import VexResponse as VexResponse  # re-export for the backends
-from esp_idf_sbom.libsbom.vexvalues import VexStatus
+from esp_idf_sbom.libsbom.vexvalues import VexStatus as VexStatus  # re-export for the backends
 
 
 @dataclass
@@ -126,24 +124,9 @@ def build(sbom: SBOM, sbom_id: str = '') -> Vex:
     return Vex(statements=statements, sbom_id=sbom_id, sbom_name=sbom.name, manufacturer=sbom.manufacturer)
 
 
-# Statuses that say the CVE does not apply to the product. not_affected means it
-# was never affected, fixed means the product carries the fix. grype and trivy
-# both filter on these two. The other two say the CVE does apply, or that nobody
-# knows yet, so they must not silence anything.
-_SUPPRESSING = (VexStatus.NOT_AFFECTED, VexStatus.FIXED)
-
-
-def _reason(statement: VexStatement) -> str:
-    """The text reported for a suppressed CVE.
-
-    A not_affected statement carries an impact statement or a justification. A
-    fixed one needs neither, so fall back to the status itself.
-    """
-    if statement.impact_statement:
-        return statement.impact_statement
-    if statement.justification is not None:
-        return statement.justification.value
-    return statement.status.value
+def _assessment(statement: VexStatement) -> VexAssessment:
+    """The statement without its products."""
+    return VexAssessment(**{f.name: getattr(statement, f.name) for f in fields(VexAssessment)})
 
 
 def _cpe_key(cpe: str) -> Tuple[str, str]:
@@ -196,25 +179,22 @@ def apply(sbom: SBOM, vexdoc: Vex) -> None:
 
     The statements end up in Package.assessments, which is where every consumer
     of the model already reads them from, so nothing downstream has to know a
-    VEX file was involved. Only the statuses in _SUPPRESSING are used.
+    VEX file was involved. Statements of all statuses are kept.
 
     The packages of a statement are found with find_packages(). Formats that
     point into an SBOM document give a ref, the others give PURL and CPE.
     """
     unmatched = 0
     for statement in vexdoc.statements:
-        if statement.status not in _SUPPRESSING:
-            continue
         for product in statement.products:
             packages = find_packages(sbom, product)
             if not packages:
                 unmatched += 1
             for pkg in packages:
                 # The VEX file is the newer document, so it wins over an
-                # exclusion of the same CVE already in the SBOM.
+                # assessment of the same CVE already in the SBOM.
                 assessments = [a for a in pkg.assessments if a.vulnerability != statement.vulnerability]
-                entry = {'cve': statement.vulnerability, 'reason': _reason(statement)}
-                assessments.append(assessment_from_exclusion(entry))
+                assessments.append(_assessment(statement))
                 pkg.assessments = assessments
 
     if unmatched:

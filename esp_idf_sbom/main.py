@@ -297,6 +297,20 @@ def cmd_check(args: Dict[str, Any]) -> int:
                             pkg_records.append(record)
                             package_added = True
 
+                # The CVE of every VEX statement is reported, also when the scan did not
+                # find it. For example, NVD may have no CPE data for the CVE yet.
+                for assessment in pkg.assessments:
+                    cve_id = assessment.vulnerability
+                    if report.find_record_by_cve(pkg_records, cve_id):
+                        # The scan found it.
+                        continue
+                    # Only the id. The record has no data from NVD.
+                    vuln = {'cve': {'id': cve_id}}
+                    # The scan did not find the CVE, so under_investigation gives MAYBE, not YES.
+                    record = report.create_vulnerable_record(vuln, assessments, '', '', pkg_name, pkg_ver, maybe=True)
+                    pkg_records.append(record)
+                    package_added = True
+
                 if not package_added:
                     # No vulnerabilities found for given package
                     record = report.create_non_vulnerable_record(cpes, keywords, pkg_name, pkg_ver)
@@ -968,9 +982,11 @@ def create(ctx: click.Context, **params: Any) -> None:
     multiple=True,
     help=(
         'Read a standalone VEX document, as written by "create --vex-output", and use its '
-        'not_affected statements when reporting. Can be used more than once. A '
-        'CycloneDX VEX links to one SBOM and is refused for any other one. An '
-        'OpenVEX document names products by PURL and CPE and works with any SBOM.'
+        'statements when reporting. A CVE with the status not_affected or fixed is '
+        'excluded, and a CVE with the status affected is reported. The CVE of a statement '
+        'from the VEX file is reported also when the scan does not find it. Can be used '
+        'more than once. A CycloneDX VEX links to one SBOM and is refused for any other one. '
+        'An OpenVEX document names products by PURL and CPE and works with any SBOM.'
     ),
 )
 @extended_scan_option
