@@ -1009,6 +1009,11 @@ def _parse_json(text: str) -> SBOM:
     )
 
 
+# Reverse of _JUSTIFICATION_TYPE. SPDX 3.0.1 has the same five values as the
+# model, so nothing is lost.
+_VEX_JUSTIFICATION_TYPE = {value: key for key, value in _JUSTIFICATION_TYPE.items()}
+
+
 def _parse_jsonld(text: str) -> SBOM:
     """Recover the scan-relevant parts of an SPDX 3.0 JSON-LD document: the
     packages with their CPEs, the dependsOn graph and the not-affected VEX
@@ -1060,6 +1065,9 @@ def _parse_jsonld(text: str) -> SBOM:
             depends.setdefault(_id(e.get('from')), []).extend(_id(d) for d in _as_list(e.get('to')))
         elif t == 'security_VexNotAffectedVulnAssessmentRelationship':
             entry = {'cve': vuln_cve.get(_id(e.get('from')), ''), 'reason': e.get('security_impactStatement', '')}
+            justification = _VEX_JUSTIFICATION_TYPE.get(e.get('security_justificationType', ''))
+            if justification is not None:
+                entry['justification'] = justification.value
             for to in _as_list(e.get('to')):
                 excludes.setdefault(_id(to), []).append(assessment_from_exclusion(entry))
         elif t == 'SpdxDocument':
