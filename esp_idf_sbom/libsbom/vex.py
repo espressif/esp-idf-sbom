@@ -15,6 +15,7 @@ only not_affected today, but with an explicit status, check can later report
 affected or under_investigation without any backend change.
 """
 
+import datetime
 import re
 from dataclasses import dataclass
 from dataclasses import field
@@ -88,6 +89,27 @@ class Vex:
     # The author of the statements: the manufacturer from the document key of the
     # project manifest, as SBOM.manufacturer. Empty if the manifest does not say.
     manufacturer: Organization = field(default_factory=Organization)
+
+
+_FRACTION_RE = re.compile(r'\.(\d+)')
+
+
+def parse_time(value: str) -> Optional[datetime.datetime]:
+    """Read an ISO 8601 time, as VEX and SBOM files write it. Return None when it
+    cannot be read. A time without a time zone is in UTC.
+
+    Python before 3.11 reads a fraction of a second only with 3 or 6 digits, but
+    go-vex, for example, writes up to 9. So the fraction is cut or filled to 6
+    digits first.
+    """
+    value = _FRACTION_RE.sub(lambda m: '.' + m.group(1)[:6].ljust(6, '0'), value.replace('Z', '+00:00'))
+    try:
+        time = datetime.datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if time.tzinfo is None:
+        time = time.replace(tzinfo=datetime.timezone.utc)
+    return time
 
 
 def _product(pkg: Package) -> VexProduct:

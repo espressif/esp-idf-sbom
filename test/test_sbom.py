@@ -765,7 +765,7 @@ def test_spdx_jsonld_parses_bare_refs() -> None:
     assert set(by_ref) == {'PROJECT-app', 'COMPONENT-lib'}
     assert by_ref['PROJECT-app'].depends_on == ['COMPONENT-lib']
     # The graph is still keyed on full ids, so this breaks if the two ever drift.
-    assert by_ref['COMPONENT-lib'].assessments == _assessments({'cve': 'CVE-2020-1', 'reason': 'not used'})
+    assert [a.vulnerability for a in by_ref['COMPONENT-lib'].assessments] == ['CVE-2020-1']
 
     graph = json.loads(spdx.render(back, format='json-ld', version='3.0.1'))['@graph']
     assert all(e.get('spdxId', '').count('#') <= 1 for e in graph)
@@ -1661,20 +1661,87 @@ def test_cyclonedx_vex_justification_from_other_tools() -> None:
     assert unknown is vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT
 
 
-def test_spdx_jsonld_reads_back_justification() -> None:
-    """SPDX 3.0.1 has the CISA justifications, so they come back as they were."""
+def test_spdx_jsonld_reads_back_all_statuses() -> None:
+    """SPDX 3.0.1 has one relationship class for each status, with the CISA
+    justifications. Everything but the response comes back as it was, because
+    SPDX has no response. The document must still validate."""
+    import urllib.request
+    from dataclasses import replace
+
+    import jsonschema
+
     from esp_idf_sbom.libsbom import spdx
 
     model = _sbom_with_file()
-    model.packages[1].assessments = _assessments(
-        {'cve': 'CVE-2020-1', 'reason': 'not used', 'justification': 'component_not_present'},
-        {'cve': 'CVE-2020-2', 'reason': 'not reachable', 'justification': 'vulnerable_code_not_in_execute_path'},
-        {'cve': 'CVE-2020-3', 'reason': 'no justification'},
-    )
+    model.packages[1].assessments = _assessments_of_all_statuses()
 
-    back = spdx.parse(spdx.render(model, format='json-ld', version='3.0.1'), format='json-ld')
+    text = spdx.render(model, format='json-ld', version='3.0.1')
+    graph = json.loads(text)['@graph']
+    relationships = [e for e in graph if e['type'].startswith('security_Vex')]
+    assert [(e['type'], e['relationshipType']) for e in relationships] == [
+        ('security_VexNotAffectedVulnAssessmentRelationship', 'doesNotAffect'),
+        ('security_VexFixedVulnAssessmentRelationship', 'fixedIn'),
+        ('security_VexAffectedVulnAssessmentRelationship', 'affects'),
+        ('security_VexUnderInvestigationVulnAssessmentRelationship', 'underInvestigationFor'),
+    ]
+    affected = relationships[2]
+    assert affected['security_actionStatement'] == 'Update to version 2.1.'
+    assert affected['security_statusNotes'] == 'The TLS server is enabled.'
+    assert relationships[1]['security_modifiedTime'] == '2026-02-01T10:00:00Z'
+
+    back = spdx.parse(text, format='json-ld')
     by_ref = {pkg.ref: pkg for pkg in back.packages}
-    assert by_ref['COMPONENT-lib'].assessments == model.packages[1].assessments
+    assert by_ref['COMPONENT-lib'].assessments == [replace(a, response=[]) for a in model.packages[1].assessments]
+
+    try:
+        with urllib.request.urlopen('https://spdx.org/schema/3.0.1/spdx-json-schema.json', timeout=30) as resp:
+            schema = json.loads(resp.read())
+    except Exception as e:
+        pytest.skip(f'cannot fetch the SPDX 3.0.1 schema: {e}')
+    errors = list(jsonschema.Draft202012Validator(schema).iter_errors(json.loads(text)))
+    assert not errors, f'SPDX 3.0 file validation failed: {errors[:2]}'
+
+
+def test_vex_parse_time() -> None:
+    """parse_time() reads the times that VEX and SBOM files write. Python before 3.11
+    reads a fraction of a second only with 3 or 6 digits, and go-vex writes up to 9."""
+    from esp_idf_sbom.libsbom import vex
+
+    def read(value: str) -> str:
+        time = vex.parse_time(value)
+        return time.isoformat() if time else ''
+
+    assert read('2026-10-08T10:49:12Z') == '2026-10-08T10:49:12+00:00'
+    assert read('2026-10-08T10:49:12.123456789Z') == '2026-10-08T10:49:12.123456+00:00'
+    assert read('2026-10-08T10:49:12.5Z') == '2026-10-08T10:49:12.500000+00:00'
+    assert read('2026-10-08T12:49:12.123+02:00') == '2026-10-08T12:49:12.123000+02:00'
+    # A time without a time zone is in UTC.
+    assert read('2026-10-08T10:49:12') == '2026-10-08T10:49:12+00:00'
+    assert read('yesterday') == read('') == ''
+
+
+def test_spdx_jsonld_writes_times_in_utc() -> None:
+    """SPDX 3.0.1 requires UTC times with whole seconds and a Z. A time read from
+    another file may have another form, and a time that cannot be read is
+    skipped."""
+    from esp_idf_sbom.libsbom import spdx
+    from esp_idf_sbom.libsbom.sbom import VexAssessment
+    from esp_idf_sbom.libsbom.vexvalues import VexStatus
+
+    model = _sbom_with_file()
+    model.packages[1].assessments = [
+        VexAssessment(
+            vulnerability='CVE-2020-1',
+            status=VexStatus.UNDER_INVESTIGATION,
+            first_issued='2026-01-01T10:00:00.123+02:00',
+            last_updated='yesterday',
+        )
+    ]
+
+    graph = json.loads(spdx.render(model, format='json-ld', version='3.0.1'))['@graph']
+    relationship = next(e for e in graph if e['type'].startswith('security_Vex'))
+    assert relationship['security_publishedTime'] == '2026-01-01T08:00:00Z'
+    assert 'security_modifiedTime' not in relationship
 
 
 def test_parse_vex_detects_format(tmp_path: Path) -> None:
