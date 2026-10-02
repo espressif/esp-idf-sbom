@@ -1812,7 +1812,14 @@ def test_check_vex_affected_wins_over_global_exclusion(tmp_path: Path) -> None:
     ]  # fmt: skip
     p = run(cmd, capture_output=True, text=True, env=env)
     rows = [row for row in csv.DictReader(io.StringIO(p.stdout)) if row['cve_id'] == 'CVE-2025-27810']
-    assert [row['vulnerable'] for row in rows] == ['YES']
+    assert [(row['vulnerable'], row['vex_status'], row['vex_action']) for row in rows] == [
+        ('YES', 'affected', 'Update to Mbed TLS 3.6.3.')
+    ]
+
+    cmd.remove('--format')
+    cmd.remove('csv')
+    p = run(cmd, capture_output=True, text=True, env={**env, 'COLUMNS': '200'})
+    assert 'Update to Mbed TLS 3.6.3.' in p.stdout
 
 
 def test_check_vex_reports_cve_not_found_by_scan(tmp_path: Path) -> None:
@@ -1847,7 +1854,11 @@ def test_check_vex_reports_cve_not_found_by_scan(tmp_path: Path) -> None:
 
     p = _check_freertos(sbom_file, '--vex', str(vex_file))
     rows = {row['cve_id']: row for row in csv.DictReader(io.StringIO(p.stdout))}
-    assert [rows[s.vulnerability]['vulnerable'] for s in statements] == ['YES', 'EXCLUDED', 'MAYBE']
+    assert [(rows[s.vulnerability]['vulnerable'], rows[s.vulnerability]['vex_status']) for s in statements] == [
+        ('YES', 'affected'),
+        ('EXCLUDED', 'not_affected'),
+        ('MAYBE', 'under_investigation'),
+    ]
     row = rows['CVE-2025-27810']
     assert (row['status'], row['cvss_base_score'], row['cve_desc'], row['cpe']) == ('', '', '', '')
 
@@ -2749,6 +2760,47 @@ def test_create_vulnerable_record_maybe() -> None:
     excluded = {'CVE-2020-22283': _assessments({'cve': 'CVE-2020-22283', 'reason': 'fixed'})[0]}
     rec = report.create_vulnerable_record(vuln, excluded, cpe, '', 'lwip', '2.2.0', maybe=True)
     assert rec['vulnerable'] == 'EXCLUDED'
+
+
+def test_create_vulnerable_record_vex_fields() -> None:
+    """A record shows what the VEX says about its CVE. A record without a VEX
+    statement leaves the fields empty."""
+    from esp_idf_sbom.libsbom import report
+    from esp_idf_sbom.libsbom.sbom import VexAssessment
+    from esp_idf_sbom.libsbom.vexvalues import VexJustification
+    from esp_idf_sbom.libsbom.vexvalues import VexStatus
+
+    cpe = 'cpe:2.3:a:lwip_project:lwip:2.2.0:*:*:*:*:*:*:*'
+    vuln = {
+        'cve': {
+            'id': 'CVE-2020-22283',
+            'vulnStatus': 'Analyzed',
+            'descriptions': [{'lang': 'en', 'value': 'buffer overflow'}],
+            'metrics': {},
+        }
+    }
+    fields = ('vex_status', 'vex_justification', 'vex_detail', 'vex_action')
+
+    def record(assessment: VexAssessment) -> tuple:
+        rec = report.create_vulnerable_record(vuln, {'CVE-2020-22283': assessment}, cpe, '', 'lwip', '2.2.0')
+        return tuple(rec[field] for field in fields)
+
+    affected = VexAssessment(
+        vulnerability='CVE-2020-22283',
+        status=VexStatus.AFFECTED,
+        impact_statement='The product enables PPP.',
+        action_statement='Update to lwIP 2.2.1.',
+    )
+    assert record(affected) == ('affected', '', 'The product enables PPP.', 'Update to lwIP 2.2.1.')
+    not_affected = VexAssessment(
+        vulnerability='CVE-2020-22283',
+        status=VexStatus.NOT_AFFECTED,
+        justification=VexJustification.VULNERABLE_CODE_NOT_PRESENT,
+    )
+    assert record(not_affected) == ('not_affected', 'vulnerable_code_not_present', '', '')
+
+    rec = report.create_vulnerable_record(vuln, {}, cpe, '', 'lwip', '2.2.0')
+    assert all(rec[field] == '' for field in fields)
 
 
 def test_create_vulnerable_record_uses_vex_status() -> None:
