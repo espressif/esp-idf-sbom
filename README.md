@@ -152,6 +152,10 @@ the report into **json**, **csv** or **markdown** format.
 If NVD reports that a CVE is in CISA's [Known Exploited Vulnerabilities][12] (KEV)
 catalog, this information is included in the report.
 
+If a VEX statement covers a CVE, the report shows its status, justification,
+detail and action. The **json**, **csv** and **markdown** formats have them in the
+`vex_status`, `vex_justification`, `vex_detail` and `vex_action` fields.
+
 If package is not vulnerable to a specific CVE, it can be added to the manifest **cve-exclude-list**
 list and checker will not report it as identified vulnerability, but as excluded vulnerability.
 

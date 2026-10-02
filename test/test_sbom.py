@@ -2470,6 +2470,47 @@ def test_create_vulnerable_record_maybe() -> None:
     assert rec['vulnerable'] == 'EXCLUDED'
 
 
+def test_create_vulnerable_record_vex_fields() -> None:
+    """A record shows what the VEX says about its CVE. A record without a VEX
+    statement leaves the fields empty."""
+    from esp_idf_sbom.libsbom import report
+    from esp_idf_sbom.libsbom.sbom import VexAssessment
+    from esp_idf_sbom.libsbom.vexvalues import VexJustification
+    from esp_idf_sbom.libsbom.vexvalues import VexStatus
+
+    cpe = 'cpe:2.3:a:lwip_project:lwip:2.2.0:*:*:*:*:*:*:*'
+    vuln = {
+        'cve': {
+            'id': 'CVE-2020-22283',
+            'vulnStatus': 'Analyzed',
+            'descriptions': [{'lang': 'en', 'value': 'buffer overflow'}],
+            'metrics': {},
+        }
+    }
+    fields = ('vex_status', 'vex_justification', 'vex_detail', 'vex_action')
+
+    def record(assessment: VexAssessment) -> tuple:
+        rec = report.create_vulnerable_record(vuln, {'CVE-2020-22283': assessment}, cpe, '', 'lwip', '2.2.0')
+        return tuple(rec[field] for field in fields)
+
+    affected = VexAssessment(
+        vulnerability='CVE-2020-22283',
+        status=VexStatus.AFFECTED,
+        impact_statement='The product enables PPP.',
+        action_statement='Update to lwIP 2.2.1.',
+    )
+    assert record(affected) == ('affected', '', 'The product enables PPP.', 'Update to lwIP 2.2.1.')
+    not_affected = VexAssessment(
+        vulnerability='CVE-2020-22283',
+        status=VexStatus.NOT_AFFECTED,
+        justification=VexJustification.VULNERABLE_CODE_NOT_PRESENT,
+    )
+    assert record(not_affected) == ('not_affected', 'vulnerable_code_not_present', '', '')
+
+    rec = report.create_vulnerable_record(vuln, {}, cpe, '', 'lwip', '2.2.0')
+    assert all(rec[field] == '' for field in fields)
+
+
 def test_create_vulnerable_record_uses_vex_status() -> None:
     """not_affected and fixed exclude the CVE. A fixed assessment needs no text of
     its own, so the status is the reason. affected confirms a MAYBE match, and

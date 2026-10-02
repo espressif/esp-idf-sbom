@@ -19,7 +19,7 @@ from esp_idf_sbom.libsbom import utils
 from esp_idf_sbom.libsbom.sbom import VexAssessment
 from esp_idf_sbom.libsbom.vexvalues import VexStatus
 
-REPORT_VERSION = 2
+REPORT_VERSION = 3
 empty_record = {
     'vulnerable': '',
     'pkg_name': '',
@@ -37,6 +37,11 @@ empty_record = {
     'status': '',
     'kev_added': '',
     'kev_name': '',
+    # What the VEX says about the CVE for this package.
+    'vex_status': '',
+    'vex_justification': '',
+    'vex_detail': '',
+    'vex_action': '',
 }
 
 
@@ -49,6 +54,22 @@ def add_kev_rows(info_table: Table, record: Dict[str, str]) -> None:
 
     info_table.add_row('[red]KEV', record['kev_name'])
     info_table.add_row('[red]Added', record['kev_added'])
+
+
+def add_vex_rows(info_table: Table, record: Dict[str, str]) -> None:
+    """Add what the VEX says about the CVE to its information table. Nothing is
+    added for a CVE without a VEX statement."""
+    if not record['vex_status']:
+        return
+
+    info_table.add_row('[yellow]VEX', record['vex_status'])
+    if record['vex_justification']:
+        info_table.add_row('[yellow]Justif.', record['vex_justification'])
+    # An excluded CVE already shows the impact statement in its Reason row.
+    if record['vex_detail'] and record['vulnerable'] != 'EXCLUDED':
+        info_table.add_row('[yellow]Detail', record['vex_detail'])
+    if record['vex_action']:
+        info_table.add_row('[yellow]Action', record['vex_action'])
 
 
 def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '', proj_ver: str = '') -> None:
@@ -257,6 +278,7 @@ def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '
             info_table.add_row('[yellow]CPE', r['cpe'])
             info_table.add_row('[yellow]Link', r['cve_link'])
             info_table.add_row('[yellow]Desc.', r['cve_desc'])
+            add_vex_rows(info_table, r)
             add_kev_rows(info_table, r)
 
         table.add_row(
@@ -293,6 +315,7 @@ def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '
             info_table.add_row('[yellow]Keyword', r['keyword'])
             info_table.add_row('[yellow]Link', r['cve_link'])
             info_table.add_row('[yellow]Desc.', r['cve_desc'])
+            add_vex_rows(info_table, r)
             add_kev_rows(info_table, r)
 
         table.add_row(
@@ -333,6 +356,7 @@ def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '
             info_table.add_row('[yellow]Link', r['cve_link'])
             info_table.add_row('[yellow]Desc.', r['cve_desc'])
             info_table.add_row('[yellow]Reason', r['exclude_reason'])
+            add_vex_rows(info_table, r)
             add_kev_rows(info_table, r)
 
         table.add_row(
@@ -538,6 +562,11 @@ def create_vulnerable_record(
     record['status'] = status
     record['kev_added'] = kev_added
     record['kev_name'] = kev_name
+    if assessment is not None:
+        record['vex_status'] = assessment.status.value
+        record['vex_justification'] = assessment.justification.value if assessment.justification else ''
+        record['vex_detail'] = assessment.impact_statement
+        record['vex_action'] = assessment.action_statement
 
     return record
 
