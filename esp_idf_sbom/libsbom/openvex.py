@@ -65,11 +65,13 @@ def _statement(statement: vex.VexStatement) -> Optional[Dict[str, Any]]:
     vulnerability: Dict[str, Any] = {'name': statement.vulnerability}
     if statement.nvd_url:
         vulnerability['@id'] = statement.nvd_url
-    entry: Dict[str, Any] = {
-        'vulnerability': vulnerability,
-        'products': products,
-        'status': statement.status.value,
-    }
+    entry: Dict[str, Any] = {'vulnerability': vulnerability}
+    if statement.first_issued:
+        entry['timestamp'] = statement.first_issued
+    if statement.last_updated:
+        entry['last_updated'] = statement.last_updated
+    entry['products'] = products
+    entry['status'] = statement.status.value
     # A not_affected statement needs a justification or an impact_statement. We
     # write the impact_statement, because the manifest reason is free text.
     if statement.justification is not None:
@@ -83,21 +85,24 @@ def _statement(statement: vex.VexStatement) -> Optional[Dict[str, Any]]:
 
 
 def _render_json(vexdoc: vex.Vex, version: str) -> str:
-    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    # timestamp is when the document was first issued.
+    timestamp = vexdoc.first_issued or datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     statements = [s for s in (_statement(statement) for statement in vexdoc.statements) if s]
 
     # @id must be an IRI for this document. A urn:uuid is an IRI and does not use
     # a domain name we do not own.
     document: Dict[str, Any] = {
         '@context': f'https://openvex.dev/ns/v{version}',
-        '@id': 'urn:uuid:' + str(uuid.uuid4()),
+        '@id': vexdoc.doc_id or 'urn:uuid:' + str(uuid.uuid4()),
         # The manufacturer name has the form 'Organization: ...'. OpenVEX wants only the name.
         'author': vexdoc.manufacturer.name.split(': ', 1)[-1] or _UNKNOWN_AUTHOR,
         'timestamp': timestamp,
-        'version': 1,
-        'tooling': f'{TOOL_NAME} {TOOL_VERSION} ({TOOL_PURL})',
-        'statements': statements,
     }
+    if vexdoc.last_updated:
+        document['last_updated'] = vexdoc.last_updated
+    document['version'] = vexdoc.doc_version
+    document['tooling'] = f'{TOOL_NAME} {TOOL_VERSION} ({TOOL_PURL})'
+    document['statements'] = statements
 
     return json.dumps(document, indent=2)
 
@@ -130,7 +135,7 @@ def _parse_product(product: Dict[str, Any]) -> vex.VexProduct:
     return vex.VexProduct(purl=purl, cpes=[cpe] if cpe else [])
 
 
-def _parse_statement(statement: Dict[str, Any]) -> Optional[vex.VexStatement]:
+def _parse_statement(statement: Dict[str, Any], issued: str) -> Optional[vex.VexStatement]:
     try:
         status = vex.VexStatus(statement.get('status', ''))
     except ValueError:
@@ -139,6 +144,7 @@ def _parse_statement(statement: Dict[str, Any]) -> Optional[vex.VexStatement]:
         log.warn(f'Skipping OpenVEX statement with unknown status "{statement.get("status", "")}".')
         return None
 
+    first_issued = statement.get('timestamp') or issued
     justification = None
     if statement.get('justification'):
         try:
@@ -153,6 +159,8 @@ def _parse_statement(statement: Dict[str, Any]) -> Optional[vex.VexStatement]:
         justification=justification,
         impact_statement=statement.get('impact_statement', ''),
         action_statement=statement.get('action_statement', ''),
+        first_issued=first_issued,
+        last_updated=statement.get('last_updated') or first_issued,
     )
 
 
@@ -160,8 +168,19 @@ def parse_vex(text: str) -> vex.Vex:
     """Parse an OpenVEX document into the format-neutral VEX model.
 
     OpenVEX uses the CISA values, so status and justification are read as they
-    are. The document does not name an SBOM, so sbom_id stays empty.
+    are. The document does not name an SBOM, so sbom_id stays empty. A statement
+    without a timestamp gets the timestamp of the document, as the OpenVEX
+    inheritance rules say. A statement without last_updated was not changed since
+    it was first issued, as CISA says the two are initially the same.
     """
     document = json.loads(text)
-    statements = [s for s in (_parse_statement(s) for s in document.get('statements', [])) if s]
-    return vex.Vex(statements=statements, author=document.get('author', ''))
+    issued = document.get('timestamp', '')
+    statements = [s for s in (_parse_statement(s, issued) for s in document.get('statements', [])) if s]
+    return vex.Vex(
+        statements=statements,
+        doc_id=document.get('@id', ''),
+        doc_version=int(document.get('version', 1)),
+        first_issued=issued,
+        last_updated=document.get('last_updated', ''),
+        author=document.get('author', ''),
+    )

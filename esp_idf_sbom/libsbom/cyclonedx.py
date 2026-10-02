@@ -305,6 +305,10 @@ def _vulnerability(statement: vex.VexStatement, bom_link: str = '') -> Dict[str,
     if statement.response:
         analysis['response'] = [response.value for response in statement.response]
     analysis['detail'] = statement.impact_statement
+    if statement.first_issued:
+        analysis['firstIssued'] = statement.first_issued
+    if statement.last_updated:
+        analysis['lastUpdated'] = statement.last_updated
 
     vulnerability: Dict[str, Any] = {
         'bom-ref': f'vex-{statement.products[0].ref}-{statement.vulnerability}',
@@ -398,8 +402,9 @@ def _bom_link(vexdoc: vex.Vex) -> str:
 
 
 def _render_vex_json(vexdoc: vex.Vex, version: str) -> str:
-    serial = 'urn:uuid:' + str(uuid.uuid4())
-    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    serial = vexdoc.doc_id or 'urn:uuid:' + str(uuid.uuid4())
+    # metadata.timestamp is when this version of the BOM was created.
+    timestamp = vexdoc.last_updated or datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     link = _bom_link(vexdoc)
 
     # A BOM with assessments only, no components and no dependencies. The SBOM is
@@ -409,7 +414,7 @@ def _render_vex_json(vexdoc: vex.Vex, version: str) -> str:
         'bomFormat': 'CycloneDX',
         'specVersion': version,
         'serialNumber': serial,
-        'version': 1,
+        'version': vexdoc.doc_version,
         'metadata': {
             'timestamp': timestamp,
             'tools': {'components': [_tool_component()]},
@@ -487,9 +492,16 @@ def _parse_justification(vulnerability: Dict[str, Any]) -> Optional[vex.VexJusti
     return _VEX_JUSTIFICATION.get(justification)
 
 
-def _parse_assessment(vulnerability: Dict[str, Any]) -> Optional[VexAssessment]:
+def _parse_assessment(vulnerability: Dict[str, Any], issued: str) -> Optional[VexAssessment]:
     """Read the analysis of a vulnerability entry, in an SBOM or in a standalone
-    VEX. Return None for an unknown state."""
+    VEX. Return None for an unknown state.
+
+    issued is the metadata.timestamp of the document. An analysis without
+    firstIssued gets it, so that its time does not change when a newer version
+    of the document gets a newer timestamp. An analysis without lastUpdated was
+    not changed since it was first issued, as CISA says the two are initially the
+    same.
+    """
     cve = vulnerability.get('id', '')
     analysis = vulnerability.get('analysis', {})
     state = analysis.get('state', '')
@@ -497,6 +509,7 @@ def _parse_assessment(vulnerability: Dict[str, Any]) -> Optional[VexAssessment]:
         log.warn(f'Skipping CycloneDX vulnerability "{cve}" with unknown analysis state "{state}".')
         return None
 
+    first_issued = analysis.get('firstIssued') or issued
     response = []
     for value in analysis.get('response', []):
         try:
@@ -511,6 +524,8 @@ def _parse_assessment(vulnerability: Dict[str, Any]) -> Optional[VexAssessment]:
         response=response,
         impact_statement=analysis.get('detail', ''),
         action_statement=vulnerability.get('recommendation', ''),
+        first_issued=first_issued,
+        last_updated=analysis.get('lastUpdated') or first_issued,
     )
 
 
@@ -561,10 +576,11 @@ def parse_vex(text: str) -> vex.Vex:
     # The document reference is where the pairing belongs. The links in affects[]
     # have to agree with it, and stand in for it when it is missing.
     sbom_id, sbom_version = _parse_bom_reference(bom)
+    timestamp = bom.get('metadata', {}).get('timestamp', '')
 
     statements = []
     for vulnerability in bom.get('vulnerabilities', []):
-        assessment = _parse_assessment(vulnerability)
+        assessment = _parse_assessment(vulnerability, timestamp)
         if assessment is None:
             continue
 
@@ -583,7 +599,14 @@ def parse_vex(text: str) -> vex.Vex:
 
         statements.append(vex.VexStatement(**vars(assessment), products=products))
 
-    return vex.Vex(statements=statements, sbom_id=sbom_id, sbom_version=sbom_version)
+    return vex.Vex(
+        statements=statements,
+        doc_id=bom.get('serialNumber', ''),
+        doc_version=int(bom.get('version', 1)),
+        last_updated=timestamp,
+        sbom_id=sbom_id,
+        sbom_version=sbom_version,
+    )
 
 
 # ===========================================================================
@@ -689,8 +712,9 @@ def _parse_json(text: str) -> SBOM:
 
     # VEX statements -> per-component assessments.
     assessments: Dict[str, List[VexAssessment]] = defaultdict(list)
+    timestamp = bom.get('metadata', {}).get('timestamp', '')
     for vuln in bom.get('vulnerabilities', []):
-        assessment = _parse_assessment(vuln)
+        assessment = _parse_assessment(vuln, timestamp)
         if assessment is None:
             continue
         for affect in vuln.get('affects', []):
