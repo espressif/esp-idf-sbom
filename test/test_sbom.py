@@ -1323,6 +1323,43 @@ def test_vex_apply() -> None:
     assert model.packages[0].cve_exclude_list == []
 
 
+def _sbom_for_lookup():
+    """Packages for find_packages(): a package with a PURL, two copies of cJSON
+    with the same CPE and name, and Mbed TLS under the arm vendor name."""
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    def package(ref: str, name: str, cpe: str, purl: str = '') -> Package:
+        return Package(ref=ref, name=name, package_name=name, kind=PackageKind.COMPONENT, purl=purl, cpes=[cpe])
+
+    cjson = 'cpe:2.3:a:cjson_project:cjson:1.7.19:*:*:*:*:*:*:*'
+    packages = [
+        package('COMPONENT-lib', 'lib', 'cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*', 'pkg:github/example/lib@2.0'),
+        package('SUBMODULE-json-cJSON', 'cJSON', cjson),
+        package('COMPONENT-espressif-cjson', 'cJSON', cjson),
+        package('SUBMODULE-mbedtls-mbedtls', 'mbedtls', 'cpe:2.3:a:arm:mbed_tls:3.6.2:*:*:*:*:*:*:*'),
+    ]
+    return SBOM(name='app', root='COMPONENT-lib', packages=packages)
+
+
+def test_vex_apply_reaches_every_package_with_the_cpe() -> None:
+    """A statement found by CPE goes to every package with that CPE. Before, only
+    the last package with the CPE got it."""
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_for_lookup()
+    statement = vex.VexStatement(
+        vulnerability='CVE-2020-1',
+        status=vex.VexStatus.NOT_AFFECTED,
+        products=[vex.VexProduct(cpes=['cpe:2.3:a:cjson_project:cjson:1.7.19:*:*:*:*:*:*:*'])],
+        impact_statement='not used',
+    )
+    vex.apply(model, vex.Vex(statements=[statement]))
+    with_statement = [pkg.ref for pkg in model.packages if pkg.cve_exclude_list]
+    assert with_statement == ['SUBMODULE-json-cJSON', 'COMPONENT-espressif-cjson']
+
+
 def test_vex_apply_suppresses_not_affected_and_fixed() -> None:
     """not_affected and fixed both mean the CVE does not apply, and both grype and
     trivy filter on the two of them. affected and under_investigation say the CVE
