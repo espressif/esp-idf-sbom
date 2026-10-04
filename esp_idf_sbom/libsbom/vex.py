@@ -22,8 +22,10 @@ from dataclasses import field
 from dataclasses import fields
 from typing import List
 from typing import Optional
+from typing import Tuple
 
 from esp_idf_sbom.libsbom import log
+from esp_idf_sbom.libsbom import utils
 from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
@@ -157,6 +159,51 @@ def _assessment(statement: VexStatement) -> VexAssessment:
     return VexAssessment(**{f.name: getattr(statement, f.name) for f in fields(VexAssessment)})
 
 
+def _cpe_key(cpe: str) -> Tuple[str, str]:
+    """The part, vendor and product of a CPE, and its version, without case."""
+    parts = cpe.lower().split(':')
+    return ':'.join(parts[2:5]), parts[5] if len(parts) > 5 else '*'
+
+
+def _cpe_matches(cpe: str, package_cpes: List[str]) -> bool:
+    """Whether a CPE names a package with these CPEs.
+
+    Part, vendor and product are compared without case, also for the aliases of
+    the CPE. The version is compared only when the CPE has one. A CPE from an
+    NA-version match in the check report has '-', so it has none. The other
+    fields are not compared.
+    """
+    wanted = [_cpe_key(alias) for alias in utils.expand_cpe_aliases([cpe])]
+    for name, version in (_cpe_key(package_cpe) for package_cpe in package_cpes):
+        for wanted_name, wanted_version in wanted:
+            if name == wanted_name and wanted_version in ('*', '-', version):
+                return True
+    return False
+
+
+def find_packages(sbom: SBOM, product: VexProduct) -> List[Package]:
+    """The packages of the SBOM that a VEX product names.
+
+    The product is looked up by its ref, then by its PURL, then by its CPEs and
+    last by its name. The first of these that finds a package is used. A ref
+    names one package. A PURL, a CPE or a name can name more than one, for
+    example two copies of the same library, and then all of them are returned.
+    """
+    lookups = (
+        (product.ref, lambda pkg: pkg.ref == product.ref),
+        (product.purl, lambda pkg: pkg.purl == product.purl),
+        (product.cpes, lambda pkg: any(_cpe_matches(cpe, pkg.cpes) for cpe in product.cpes)),
+        (product.name, lambda pkg: pkg.package_name == product.name),
+    )
+    for value, matches in lookups:
+        if not value:
+            continue
+        found = [pkg for pkg in sbom.packages if matches(pkg)]
+        if found:
+            return found
+    return []
+
+
 def apply(sbom: SBOM, vexdoc: Vex) -> None:
     """Merge the statements of a VEX document into the SBOM model.
 
@@ -164,35 +211,21 @@ def apply(sbom: SBOM, vexdoc: Vex) -> None:
     of the model already reads them from, so nothing downstream has to know a
     VEX file was involved. Statements of all statuses are kept.
 
-    Products are matched by ref first, then by PURL, then by CPE. Formats that
+    The packages of a statement are found with find_packages(). Formats that
     point into an SBOM document give a ref, the others give PURL and CPE.
     """
-    by_ref = {pkg.ref: pkg for pkg in sbom.packages}
-    by_purl = {pkg.purl: pkg for pkg in sbom.packages if pkg.purl}
-    by_cpe = {cpe: pkg for pkg in sbom.packages for cpe in pkg.cpes}
-
-    def find(product: VexProduct) -> Optional[Package]:
-        pkg = by_ref.get(product.ref) if product.ref else None
-        if pkg is None and product.purl:
-            pkg = by_purl.get(product.purl)
-        for cpe in product.cpes:
-            if pkg is not None:
-                break
-            pkg = by_cpe.get(cpe)
-        return pkg
-
     unmatched = 0
     for statement in vexdoc.statements:
         for product in statement.products:
-            pkg = find(product)
-            if pkg is None:
+            packages = find_packages(sbom, product)
+            if not packages:
                 unmatched += 1
-                continue
-            # The VEX file is the newer document, so it wins over an assessment
-            # of the same CVE already in the SBOM.
-            assessments = [a for a in pkg.assessments if a.vulnerability != statement.vulnerability]
-            assessments.append(_assessment(statement))
-            pkg.assessments = assessments
+            for pkg in packages:
+                # The VEX file is the newer document, so it wins over an
+                # assessment of the same CVE already in the SBOM.
+                assessments = [a for a in pkg.assessments if a.vulnerability != statement.vulnerability]
+                assessments.append(_assessment(statement))
+                pkg.assessments = assessments
 
     if unmatched:
         # Not an error. A VEX file may cover a whole product line, so it can name

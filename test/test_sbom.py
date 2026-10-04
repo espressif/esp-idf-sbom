@@ -1830,6 +1830,75 @@ def test_vex_apply() -> None:
     assert model.packages[0].assessments == []
 
 
+def _sbom_for_lookup():
+    """Packages for find_packages(): a package with a PURL, two copies of cJSON
+    with the same CPE and name, and Mbed TLS under the arm vendor name."""
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    def package(ref: str, name: str, cpe: str, purl: str = '') -> Package:
+        return Package(ref=ref, name=name, package_name=name, kind=PackageKind.COMPONENT, purl=purl, cpes=[cpe])
+
+    cjson = 'cpe:2.3:a:cjson_project:cjson:1.7.19:*:*:*:*:*:*:*'
+    packages = [
+        package('COMPONENT-lib', 'lib', 'cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*', 'pkg:github/example/lib@2.0'),
+        package('SUBMODULE-json-cJSON', 'cJSON', cjson),
+        package('COMPONENT-espressif-cjson', 'cJSON', cjson),
+        package('SUBMODULE-mbedtls-mbedtls', 'mbedtls', 'cpe:2.3:a:arm:mbed_tls:3.6.2:*:*:*:*:*:*:*'),
+    ]
+    return SBOM(name='app', root='COMPONENT-lib', packages=packages)
+
+
+def test_find_packages() -> None:
+    """A product is found by its ref, PURL, CPE or name, in this order. A CPE is
+    compared without case, its version only when it has one, and also through its
+    aliases. A CPE or a name can find more than one package."""
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_for_lookup()
+
+    def refs(**fields) -> list:
+        return [pkg.ref for pkg in vex.find_packages(model, vex.VexProduct(**fields))]
+
+    def cpe(vendor: str, product: str, version: str) -> str:
+        return f'cpe:2.3:a:{vendor}:{product}:{version}:*:*:*:*:*:*:*'
+
+    cjson = ['SUBMODULE-json-cJSON', 'COMPONENT-espressif-cjson']
+    assert refs(ref='COMPONENT-lib') == ['COMPONENT-lib']
+    assert refs(purl='pkg:github/example/lib@2.0') == ['COMPONENT-lib']
+    assert refs(cpes=[cpe('cjson_project', 'cjson', '1.7.19')]) == cjson
+    assert refs(cpes=[cpe('CJSON_PROJECT', 'cJSON', '1.7.19')]) == cjson
+    assert refs(cpes=[cpe('cjson_project', 'cjson', '*')]) == cjson
+    assert refs(cpes=[cpe('cjson_project', 'cjson', '-')]) == cjson
+    assert refs(cpes=[cpe('cjson_project', 'cjson', '1.7.18')]) == []
+    # NVD names Mbed TLS also under trustedfirmware, see utils.CPE_ALIASES.
+    assert refs(cpes=[cpe('trustedfirmware', 'mbed_tls', '3.6.2')]) == ['SUBMODULE-mbedtls-mbedtls']
+    assert refs(name='cJSON') == cjson
+    assert refs(name='unknown') == []
+    # The ref is tried first, so the CPE does not add the other copy.
+    assert refs(ref='SUBMODULE-json-cJSON', cpes=[cpe('cjson_project', 'cjson', '1.7.19')]) == cjson[:1]
+    # A PURL that is not in the SBOM falls back to the CPE.
+    assert refs(purl='pkg:github/other/lib@1.0', cpes=[cpe('example', 'lib', '2.0')]) == ['COMPONENT-lib']
+
+
+def test_vex_apply_reaches_every_package_with_the_cpe() -> None:
+    """A statement found by CPE goes to every package with that CPE. Before, only
+    the last package with the CPE got it."""
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_for_lookup()
+    statement = vex.VexStatement(
+        vulnerability='CVE-2020-1',
+        status=vex.VexStatus.NOT_AFFECTED,
+        products=[vex.VexProduct(cpes=['cpe:2.3:a:cjson_project:cjson:1.7.19:*:*:*:*:*:*:*'])],
+        impact_statement='not used',
+    )
+    vex.apply(model, vex.Vex(statements=[statement]))
+    with_statement = [pkg.ref for pkg in model.packages if pkg.assessments]
+    assert with_statement == ['SUBMODULE-json-cJSON', 'COMPONENT-espressif-cjson']
+
+
 def test_vex_apply_keeps_all_statuses() -> None:
     """apply() keeps the statements of all four statuses with all their fields.
     What a status means is up to the consumer, for example the check report."""
