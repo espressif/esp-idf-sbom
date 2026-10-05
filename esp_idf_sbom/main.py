@@ -13,6 +13,7 @@ from typing import IO
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 import rich_click as click
@@ -29,6 +30,7 @@ from esp_idf_sbom.libsbom import report
 from esp_idf_sbom.libsbom import sbom
 from esp_idf_sbom.libsbom import utils
 from esp_idf_sbom.libsbom import vex
+from esp_idf_sbom.libsbom import vexyaml
 
 EXTENDED_SCAN_HELP = (
     'If available, use the product part of the CPE and the keywords found '
@@ -138,40 +140,36 @@ def cmd_create(args: Dict[str, Any]) -> int:
     return 0
 
 
-def _apply_vex_files(model: sbom.SBOM, paths: Tuple[str, ...]) -> None:
-    """Merge standalone VEX documents into the SBOM model that was just loaded.
+def _load_vex(path: str) -> vex.Vex:
+    """Read a standalone VEX document. The model keeps its format and its text."""
+    try:
+        vexdoc = formats.load_vex(path)
+    except (OSError, ValueError) as e:
+        log.die(f'cannot read VEX file "{path}": {e}')
+    return vexdoc
 
-    A VEX that names the SBOM it belongs to, which for CycloneDX is the
-    serialNumber in the BOM-Link, is used only with that SBOM. OpenVEX names
-    products by PURL and CPE and has no such link, so it is used with any SBOM.
-    """
-    for path in paths:
-        try:
-            vexdoc = formats.load_vex(path)
-        except (OSError, ValueError) as e:
-            log.die(f'cannot read VEX file "{path}": {e}')
 
-        if vexdoc.sbom_id and vexdoc.sbom_id != model.doc_id:
-            if not model.doc_id:
-                # serialNumber is optional in CycloneDX, and an SPDX document may
-                # carry no namespace either.
-                log.die(
-                    f'The VEX file "{path}" links to a CycloneDX SBOM with a BOM-Link, but '
-                    f'the SBOM being checked has no serialNumber to match it against.'
-                )
-            if not model.doc_id.startswith('urn:uuid:'):
-                # A CycloneDX serialNumber is a urn:uuid, an SPDX document
-                # namespace is a URL, so the two can be told apart.
-                log.die(
-                    f'The VEX file "{path}" links to a CycloneDX SBOM with a BOM-Link, and '
-                    f'the SBOM being checked is not a CycloneDX document.'
-                )
-            log.die(
-                f'The VEX file "{path}" belongs to another SBOM. It links to '
-                f'"{vexdoc.sbom_id}", but this SBOM is "{model.doc_id}".'
-            )
+def _check_sbom(model: sbom.SBOM, vexdoc: vex.Vex, path: str) -> None:
+    """Stop when the VEX document read from path belongs to another SBOM."""
+    try:
+        vex.check_sbom(model, vexdoc)
+    except ValueError as e:
+        log.die(f'cannot use "{path}": {e}')
 
+
+def _apply_vex(model: sbom.SBOM, vexdoc: vex.Vex, path: str) -> None:
+    """Merge the VEX document read from path into the SBOM model. Stop when it
+    belongs to another SBOM."""
+    try:
         vex.apply(model, vexdoc)
+    except ValueError as e:
+        log.die(f'cannot use "{path}": {e}')
+
+
+def _apply_vex_files(model: sbom.SBOM, paths: Tuple[str, ...]) -> None:
+    """Merge standalone VEX documents into the SBOM model that was just loaded."""
+    for path in paths:
+        _apply_vex(model, _load_vex(path), path)
 
 
 def cmd_check(args: Dict[str, Any]) -> int:
@@ -336,6 +334,82 @@ def cmd_check(args: Dict[str, Any]) -> int:
     report.show(record_list, args, proj_name, proj_ver)
 
     return exit_code
+
+
+def _product_name(product: vex.VexProduct) -> str:
+    """How a message names a VEX product."""
+    return product.ref or product.purl or next(iter(product.cpes), '') or product.name
+
+
+def _check_products(model: sbom.SBOM, vexdoc: vex.Vex, path: str) -> None:
+    """Stop when a statement names no package of the SBOM, because it would be
+    written nowhere. Warn when a statement names more than one package, for example
+    two copies of a library with the same CPE. The statement then applies to all of
+    them."""
+    unmatched = []
+    for statement in vexdoc.statements:
+        for product in statement.products:
+            packages = vex.find_packages(model, product)
+            if not packages:
+                unmatched.append(f'  {statement.vulnerability}: {_product_name(product)}')
+            elif len(packages) > 1:
+                refs = ', '.join(pkg.ref for pkg in packages)
+                log.warn(
+                    f'{statement.vulnerability} in "{path}": "{_product_name(product)}" names '
+                    f'{len(packages)} packages, {refs}. The statement applies to all of them.'
+                )
+    if unmatched:
+        names = '\n'.join(unmatched)
+        log.die(f'{len(unmatched)} statement(s) in "{path}" name a package that is not in the SBOM:\n{names}')
+
+
+def cmd_vex_update(args: Dict[str, Any]) -> int:
+    vex_file = args['vex_file']
+    if vex_file and args['format']:
+        log.die('--format cannot be used with --vex. The updated VEX document keeps the format of the VEX file.')
+
+    try:
+        model = formats.load_sbom(args['input_file'])
+    except (OSError, ValueError) as e:
+        log.die(f'cannot read SBOM file: {e}')
+
+    # Only the statements of the statements files go into the model. The statements
+    # embedded in the SBOM stay there and are not written to the VEX document, and
+    # check reads both.
+    for pkg in model.packages:
+        pkg.assessments = []
+    # A later file wins, because apply() replaces the statement of the same CVE.
+    for statements_file in args['statements_files']:
+        try:
+            with open(statements_file) as f:
+                statements = vexyaml.parse_vex(f.read())
+        except (OSError, ValueError) as e:
+            log.die(f'cannot read statements file "{statements_file}": {e}')
+        _check_products(model, statements, statements_file)
+        _apply_vex(model, statements, statements_file)
+
+    current: Optional[vex.Vex] = None
+    if vex_file:
+        current = _load_vex(vex_file)
+        _check_sbom(model, current, vex_file)
+
+    try:
+        if current is not None:
+            # Write the statements where they differ from the VEX file, and keep the rest of it.
+            backend = formats.VEX_FORMATS[current.format_name].backend
+            text = backend.update_vex(current, vex.build(model).statements, model)
+        else:
+            vexfmt = formats.VEX_FORMATS[args['format'] or 'openvex']
+            vexdoc = vex.build(model, sbom_id=model.doc_id if vexfmt.linked else '')
+            text = vexfmt.backend.render_vex(vexdoc, format=vexfmt.encoding, version=vexfmt.version)
+    except ValueError as e:
+        log.die(f'cannot write the VEX document: {e}')
+
+    # Without emoji=False, rich would replace a text like :warning: with an emoji.
+    # A VEX file that did not change is printed as it is, without an added new line.
+    unchanged = current is not None and text == current.text
+    log.print(text, markup=False, emoji=False, end='' if unchanged else '\n')
+    return 0
 
 
 def cmd_license(args: Dict[str, Any]) -> int:
@@ -981,7 +1055,7 @@ def create(ctx: click.Context, **params: Any) -> None:
     metavar='VEX_FILE',
     multiple=True,
     help=(
-        'Read a standalone VEX document, as written by "create --vex-output", and use its '
+        'Read a standalone VEX document, as written by "create --vex-output" or "vex update", and use its '
         'statements when reporting. A CVE with the status not_affected or fixed is '
         'excluded, and a CVE with the status affected is reported. The CVE of a statement '
         'from the VEX file is reported also when the scan does not find it. Can be used '
@@ -1189,6 +1263,62 @@ def manifest_license(ctx: click.Context, **params: Any) -> None:
 def manifest_aggregate(ctx: click.Context, **params: Any) -> None:
     """Combine all manifest files in AGGREGATE_PATH into a single SBOM manifest using the referenced manifests."""
     _dispatch(ctx, cmd_manifest_aggregate, **params)
+
+
+@main.group('vex', invoke_without_command=True)
+@click.pass_context
+def vex_group(ctx: click.Context) -> None:
+    """Commands operating on VEX documents."""
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help(), err=True)
+        ctx.exit(1)
+
+
+@vex_group.command('update')
+@click.argument('input_file', metavar='SBOM_FILE')
+@click.argument('statements_files', metavar='STATEMENTS_FILE...', nargs=-1, required=True)
+@click.option(
+    '-o',
+    '--output',
+    '--output-file',
+    'output_file',
+    metavar='OUTPUT_FILE',
+    default=None,
+    help='Print output to the specified file instead of stdout.',
+)
+@click.option(
+    '--vex',
+    'vex_file',
+    metavar='VEX_FILE',
+    default=None,
+    help=(
+        'The current VEX document of SBOM_FILE. The updated document keeps its format and '
+        'id, and gets a higher version when something changed. Only the new and changed '
+        'statements are written into it, and the rest of the document stays as it is. '
+        'Without --vex, a new VEX document is written with the statements in STATEMENTS_FILE.'
+    ),
+)
+@click.option(
+    '--format',
+    type=click.Choice(list(formats.VEX_FORMATS)),
+    default=None,
+    help=(
+        'The format of a new VEX document. It cannot be used with --vex. '
+        'openvex - OpenVEX 0.2.0. It works with any SBOM format. This is default. '
+        'cyclonedx-json - CycloneDX 1.6. It needs a CycloneDX SBOM.'
+    ),
+)
+@click.pass_context
+def vex_update(ctx: click.Context, **params: Any) -> None:
+    """Update a VEX document with the statements in STATEMENTS_FILE.
+
+    STATEMENTS_FILE is a YAML file with the status of CVEs in the packages of
+    SBOM_FILE. A statement in it replaces the statement of the same CVE for the
+    same package. More than one file can be given, and a later file wins, for
+    example a file shared by several products first and the file of one product
+    last. The statements embedded in SBOM_FILE are not written to the VEX document.
+    """
+    _dispatch(ctx, cmd_vex_update, **params)
 
 
 if __name__ == '__main__':

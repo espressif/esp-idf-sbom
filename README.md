@@ -19,6 +19,7 @@ the [National Vulnerability Database][4] (NVD) based on the
 - [VEX documents](#vex-documents)
   - [VEX formats](#vex-formats)
   - [Using a VEX file with check](#using-a-vex-file-with-check)
+  - [Updating a VEX file](#updating-a-vex-file)
 - [Usage example](#usage-example)
 - [SBOM layout](#sbom-layout)
 - [Output formats](#output-formats)
@@ -310,9 +311,9 @@ With `--vex-format none` the assessments are lost. `check` and other scanners
 then report CVEs that were already analyzed and found not applicable. Use a VEX
 format to keep the assessments.
 
-esp-idf-sbom does not update a VEX file. The assessments are kept in the VEX
-document and are maintained there. Building the project again and running
-`create` writes a new SBOM and a new VEX file, replacing both.
+The assessments are kept in the VEX document. `vex update` adds or changes
+assessments in it, see [Updating a VEX file](#updating-a-vex-file). Building the
+project again and running `create` writes a new SBOM and a new VEX file.
 
 ### VEX formats
 
@@ -346,6 +347,121 @@ not find it, for example because NVD has no CPE data for the CVE yet. The
 report shows such a CVE without a score and a description. It is excluded or
 reported as described above, and a CVE under investigation is reported as a
 possible vulnerability.
+
+### Updating a VEX file
+
+`create` writes the first assessments, from the manifests. Later, `check` finds
+new CVEs, and you decide about each of them. `vex update` adds your statements
+about them to the VEX document. The whole flow, with a CycloneDX SBOM and VEX:
+
+Create the SBOM and a separate VEX document:
+
+    esp-idf-sbom create --format cyclonedx-json --vex-format cyclonedx-json \
+                        --vex-output app.vex.cdx.json -o app.cdx.json \
+                        build/project_description.json
+
+Check the SBOM with the VEX document:
+
+    esp-idf-sbom check --vex app.vex.cdx.json app.cdx.json
+
+Write a statement about each new CVE to a YAML file, for example
+`statements.yaml`. The file lists the packages, and for each package the
+statements about its CVEs:
+
+    packages:
+      - package: cpe:2.3:o:amazon:freertos:10.5.1:*:*:*:*:*:*:*
+        vulnerabilities:
+          - cve: CVE-2099-1111
+            status: not_affected
+            justification: vulnerable_code_not_in_execute_path
+          - cve: CVE-2099-2222
+            status: affected
+            detail: The product calls the affected function from the TCP task.
+            action: Update to ESP-IDF v5.5.2 in firmware 1.3.
+            response: [update]
+
+Update the VEX document. The result goes to a new file, so the VEX file you
+started with stays as it is:
+
+    esp-idf-sbom vex update --vex app.vex.cdx.json -o app.updated.vex.cdx.json \
+                            app.cdx.json statements.yaml
+
+Check the SBOM again, with the updated VEX document. The report shows the VEX
+status of each CVE that a statement covers:
+
+    esp-idf-sbom check --vex app.updated.vex.cdx.json app.cdx.json
+
+The keys of the statements file:
+
+* `package` - the package in the SBOM. The value can be one of these ids:
+  * a CPE 2.3 string, as the `check` report shows it. Part, vendor and product
+    are compared without case. The version is compared only if the CPE has one.
+  * a PURL.
+  * a CycloneDX BOM-Link, `urn:cdx:<serial>/<version>#<bom-ref>`.
+  * an SPDX 3.0.1 element id, `<namespace>#<id>`.
+  * an SPDX 2.2 id, `SPDXRef-<id>`.
+  * the ref of the package, for example `COMPONENT-freertos`, or its name.
+* `vulnerabilities` - the statements about the CVEs of the package:
+  * `cve` - the CVE id.
+  * `status` - `not_affected`, `affected`, `fixed` or `under_investigation`.
+  * `justification` - only for `not_affected`. One of `component_not_present`,
+    `vulnerable_code_not_present`, `vulnerable_code_not_in_execute_path`,
+    `vulnerable_code_cannot_be_controlled_by_adversary` or
+    `inline_mitigations_already_exist`.
+  * `detail` - why the status applies. `not_affected` needs a `justification`
+    or a `detail`.
+  * `action` - what users should do. `affected` needs it.
+  * `response` - what you do about the CVE, a list with one or more of
+    `can_not_fix`, `will_not_fix`, `update`, `rollback` and
+    `workaround_available`. Only a CycloneDX VEX document keeps it. Without it,
+    `not_affected` gets `will_not_fix`, as the CVEs that the manifests exclude.
+    CycloneDX strongly recommends it for `affected`.
+
+Unknown keys are ignored, so that a newer version can add keys.
+
+A statement in a statements file replaces the statement of the same CVE for the
+same package in the VEX document. The statements embedded in the SBOM are
+not written to the VEX document. They stay in the SBOM, and `check` uses both,
+see [Using a VEX file with check](#using-a-vex-file-with-check).
+
+More than one statements file can be given. For the same CVE and package, the
+statement of the later file is used, for example:
+
+    esp-idf-sbom vex update --vex app.vex.cdx.json -o app.updated.vex.cdx.json \
+                            app.cdx.json shared.yaml product.yaml
+
+It is an error when a statement in a statements file names a package that is
+not in the SBOM. A statement in the VEX file for such a package stays as it is,
+because a VEX file can cover a whole product line. A statement that names more
+than one package, for example two copies of one library with the same CPE,
+applies to all of them, and a warning is printed.
+
+The updated VEX document has the same format and id as the VEX file. If a
+statement is new or changed, the version is increased by one and the update time
+of the document is set to now. Otherwise the output is the VEX file as it is.
+
+`vex update` changes only what it knows in the VEX file: the version and the
+update time of the document, and the status, justification, detail, action,
+response and times of the statements. Everything else stays as it is, also the
+fields that you added by hand, for example `ratings` in a CycloneDX VEX.
+Packages with the same new statement share one statement.
+
+In a CycloneDX VEX, a changed statement is changed in place. It keeps the time
+when it was first issued and gets the current time as the time when it was last
+updated. A new statement gets the current time as both times. When a statement
+names several packages and only some of them change, these packages move to a
+copy of the statement.
+
+An OpenVEX document is a history of statements. When it has more than one
+statement about a CVE of a package, the newest statement is used. So
+`vex update` does not change the statements in an OpenVEX document. For the new
+and changed statements, it adds statements with the current time at the end of
+the document. Such a statement names only the packages whose statement is new or
+changed.
+
+Without `--vex`, `vex update` writes a new VEX document with the statements
+from the statements files. `--format` selects its format: `openvex` (the
+default) or `cyclonedx-json`, which needs a CycloneDX SBOM.
 
 
 ## Usage example

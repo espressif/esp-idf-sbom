@@ -10,9 +10,9 @@ here, so the two cannot differ.
 
 The status, justification and response values are in vexvalues.py.
 
-A statement has a status, it is not just an excluded CVE. esp-idf-sbom writes
-only not_affected today, but with an explicit status, check can later report
-affected or under_investigation without any backend change.
+A statement has a status, it is not just an excluded CVE. create writes only
+not_affected, for the excluded CVEs. vex update writes the status that the user
+decided.
 """
 
 import datetime
@@ -91,6 +91,11 @@ class Vex:
     # The author of the statements: the manufacturer from the document key of the
     # project manifest, as SBOM.manufacturer. Empty if the manifest does not say.
     manufacturer: Organization = field(default_factory=Organization)
+    # The format, as a key of formats.VEX_FORMATS, and the text of the file that the
+    # document was read from. vex update writes into this text. Both are empty for a
+    # document made by build().
+    format_name: str = ''
+    text: str = field(default='', repr=False, compare=False)
 
 
 _FRACTION_RE = re.compile(r'\.(\d+)')
@@ -211,6 +216,27 @@ def find_packages(sbom: SBOM, product: VexProduct) -> List[Package]:
     return []
 
 
+def _replace_assessment(pkg: Package, assessment: VexAssessment) -> None:
+    """Replace the assessment of the same CVE at its position, so that the order
+    does not change. A new CVE goes at the end."""
+    for index, old in enumerate(pkg.assessments):
+        if old.vulnerability == assessment.vulnerability:
+            pkg.assessments[index] = assessment
+            return
+    pkg.assessments.append(assessment)
+
+
+def check_sbom(sbom: SBOM, vexdoc: Vex) -> None:
+    """Raise ValueError when the VEX document names another SBOM.
+
+    A VEX document that names its SBOM, for example a CycloneDX VEX with a
+    BOM-Link, is used only with that SBOM.
+    """
+    if vexdoc.sbom_id and vexdoc.sbom_id != sbom.doc_id:
+        this_sbom = f'this SBOM is "{sbom.doc_id}"' if sbom.doc_id else 'this SBOM has no id'
+        raise ValueError(f'VEX belongs to another SBOM. It links to "{vexdoc.sbom_id}", but {this_sbom}.')
+
+
 def apply(sbom: SBOM, vexdoc: Vex) -> None:
     """Merge the statements of a VEX document into the SBOM model.
 
@@ -220,7 +246,12 @@ def apply(sbom: SBOM, vexdoc: Vex) -> None:
 
     The packages of a statement are found with find_packages(). Formats that
     point into an SBOM document give a ref, the others give PURL and CPE.
+
+    Raise ValueError when the VEX document belongs to another SBOM, see
+    check_sbom().
     """
+    check_sbom(sbom, vexdoc)
+
     unmatched = 0
     for statement in vexdoc.statements:
         for product in statement.products:
@@ -230,9 +261,7 @@ def apply(sbom: SBOM, vexdoc: Vex) -> None:
             for pkg in packages:
                 # The VEX file is the newer document, so it wins over an
                 # assessment of the same CVE already in the SBOM.
-                assessments = [a for a in pkg.assessments if a.vulnerability != statement.vulnerability]
-                assessments.append(_assessment(statement))
-                pkg.assessments = assessments
+                _replace_assessment(pkg, _assessment(statement))
 
     if unmatched:
         # Not an error. A VEX file may cover a whole product line, so it can name

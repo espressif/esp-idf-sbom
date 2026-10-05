@@ -1785,7 +1785,8 @@ def test_spdx_jsonld_writes_times_in_utc() -> None:
 
 
 def test_parse_vex_detects_format(tmp_path: Path) -> None:
-    """formats.load_vex detects the format from the top-level keys, like load_sbom does."""
+    """formats.load_vex detects the format from the top-level keys, like load_sbom does.
+    The model keeps the format and the text of the file."""
     from esp_idf_sbom.libsbom import cyclonedx
     from esp_idf_sbom.libsbom import formats
     from esp_idf_sbom.libsbom import openvex
@@ -1794,11 +1795,15 @@ def test_parse_vex_detects_format(tmp_path: Path) -> None:
 
     cdx_file = tmp_path / 'a.vex.cdx.json'
     cdx_file.write_text(cyclonedx.render_vex(original))
-    assert formats.load_vex(str(cdx_file)).sbom_id == original.sbom_id
+    vexdoc = formats.load_vex(str(cdx_file))
+    assert vexdoc.sbom_id == original.sbom_id
+    assert (vexdoc.format_name, vexdoc.text) == ('cyclonedx-json', cdx_file.read_text())
 
     ovx_file = tmp_path / 'a.openvex.json'
     ovx_file.write_text(openvex.render_vex(original))
-    assert len(formats.load_vex(str(ovx_file)).statements) == 2
+    vexdoc = formats.load_vex(str(ovx_file))
+    assert len(vexdoc.statements) == 2
+    assert (vexdoc.format_name, vexdoc.text) == ('openvex', ovx_file.read_text())
 
     other = tmp_path / 'other.json'
     other.write_text(json.dumps({'spdxVersion': 'SPDX-2.2'}))
@@ -2109,9 +2114,33 @@ def test_vex_apply_keeps_all_statuses() -> None:
     assert model.packages[1].assessments == assessments
 
 
+def test_vex_apply_refuses_another_sbom() -> None:
+    """A VEX document that names its SBOM is used only with that SBOM."""
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_exclusions()
+    model.doc_id = 'urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79'
+    vex.apply(model, vex.Vex(sbom_id=model.doc_id))
+    vex.apply(model, vex.Vex())
+    with pytest.raises(ValueError, match='belongs to another SBOM'):
+        vex.apply(model, vex.Vex(sbom_id='urn:uuid:00000000-0000-0000-0000-000000000000'))
+
+
+def test_cyclonedx_vex_needs_a_serial_number() -> None:
+    """A BOM-Link needs the serialNumber of a CycloneDX SBOM, not an SPDX namespace."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import vex
+
+    with pytest.raises(ValueError, match='needs the serialNumber of its SBOM'):
+        cyclonedx.render_vex(vex.Vex())
+    with pytest.raises(ValueError, match='needs the serialNumber of a CycloneDX SBOM'):
+        cyclonedx.render_vex(vex.Vex(sbom_id='https://spdx.org/spdxdocs/app-1234'))
+
+
 def test_vex_apply_replaces_existing_entry() -> None:
-    """The VEX file is the newer document, so it wins over the same CVE already in
-    the SBOM. A statement that matches no package is ignored, not an error."""
+    """The VEX file is the newer document, so its statement replaces the same CVE
+    in the SBOM, at the same position. A statement that matches no package is
+    ignored, not an error."""
     from esp_idf_sbom.libsbom import vex
 
     model = _sbom_with_exclusions()
@@ -2134,12 +2163,12 @@ def test_vex_apply_replaces_existing_entry() -> None:
 
     vex.apply(model, document)
     assert model.packages[1].assessments == [
-        *_assessments({'cve': 'CVE-2020-2', 'reason': 'not reachable'}),
         vex.VexAssessment(
             vulnerability='CVE-2020-1',
             status=vex.VexStatus.NOT_AFFECTED,
             impact_statement='re-checked, still not used',
         ),
+        *_assessments({'cve': 'CVE-2020-2', 'reason': 'not reachable'}),
     ]
 
 
@@ -2423,7 +2452,8 @@ def test_check_vex_rejects_foreign_cyclonedx_vex(tmp_path: Path) -> None:
 
 
 def test_check_vex_rejects_cyclonedx_vex_with_spdx_sbom(tmp_path: Path) -> None:
-    """An SPDX SBOM has no serialNumber for a BOM-Link to resolve against."""
+    """A CycloneDX VEX links to the serialNumber of a CycloneDX SBOM, so an SPDX
+    SBOM is another SBOM."""
     from esp_idf_sbom.libsbom import cyclonedx
     from esp_idf_sbom.libsbom import spdx
 
@@ -2433,7 +2463,7 @@ def test_check_vex_rejects_cyclonedx_vex_with_spdx_sbom(tmp_path: Path) -> None:
 
     result = _check_freertos(spdx_file, '--vex', str(vex_file))
     assert result.returncode != 0
-    assert 'is not a CycloneDX document' in result.stderr
+    assert 'belongs to another SBOM' in result.stderr
 
 
 def test_check_vex_rejects_cyclonedx_vex_without_serial(tmp_path: Path) -> None:
@@ -2448,7 +2478,735 @@ def test_check_vex_rejects_cyclonedx_vex_without_serial(tmp_path: Path) -> None:
 
     result = _check_freertos(no_serial, '--vex', str(vex_file))
     assert result.returncode != 0
-    assert 'has no serialNumber to match it against' in result.stderr
+    assert 'this SBOM has no id' in result.stderr
+
+
+_OLD_TIME = '2020-01-01T00:00:00Z'
+
+
+def _vex_update(*args: str):
+    cmd = [sys.executable, '-m', 'esp_idf_sbom', 'vex', 'update', *args]
+    return run(cmd, capture_output=True, text=True)
+
+
+def _vex_assessment(cve: str, status: str, **values):
+    from esp_idf_sbom.libsbom import vex
+
+    return vex.VexAssessment(vulnerability=cve, status=vex.VexStatus(status), **values)
+
+
+def _write_statements(tmp_path: Path, *statements: dict, name: str = 'statements.yaml') -> Path:
+    """Write a statements file. Each statement names its package, and the
+    statements for the same package are grouped under it."""
+    packages: dict = {}
+    for statement in statements:
+        fields = dict(statement)
+        packages.setdefault(fields.pop('package'), []).append(fields)
+    path = tmp_path / name
+    # JSON is also YAML.
+    path.write_text(json.dumps({'packages': [{'package': p, 'vulnerabilities': v} for p, v in packages.items()]}))
+    return path
+
+
+def _vex_update_files(tmp_path: Path, vex_format: str = 'cyclonedx-json', statements=(), embedded=()):
+    """A CycloneDX SBOM of an app with FreeRTOS 10.0.0 and a VEX file for it, both
+    from 2020. statements are the assessments in the VEX file, embedded are the
+    assessments in the SBOM. Returns the two file paths."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    proj = Package(
+        ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT, depends_on=['COMPONENT-freertos']
+    )
+    comp = Package(
+        ref='COMPONENT-freertos',
+        name='freertos',
+        package_name='freertos',
+        kind=PackageKind.COMPONENT,
+        version='10.0.0',
+        purl='pkg:generic/freertos@10.0.0',
+        cpes=['cpe:2.3:o:amazon:freertos:10.0.0:*:*:*:*:*:*:*'],
+        assessments=list(statements),
+    )
+    model = SBOM(name='app', root='PROJECT-app', packages=[proj, comp])
+    doc_id = cyclonedx.new_document_id(model)
+    vexdoc = vex.build(model, sbom_id=doc_id)
+    # The statements have no times, so they get the times of the document.
+    vexdoc.first_issued = vexdoc.last_updated = _OLD_TIME
+
+    comp.assessments = list(embedded)
+    bom = json.loads(cyclonedx.render(model, version='1.6', doc_id=doc_id))
+    bom['metadata']['timestamp'] = _OLD_TIME
+    sbom_file = tmp_path / 'app.cdx.json'
+    sbom_file.write_text(json.dumps(bom, indent=2))
+
+    vex_file = tmp_path / 'app.vex.json'
+    backend = cyclonedx if vex_format == 'cyclonedx-json' else openvex
+    vex_file.write_text(backend.render_vex(vexdoc))
+    return sbom_file, vex_file
+
+
+def test_vex_update_adds_statement(tmp_path: Path) -> None:
+    """A statement about a new CVE becomes a new statement in the VEX document,
+    issued now. The document keeps its id and gets the next version. The other
+    statement keeps its times."""
+    sbom_file, vex_file = _vex_update_files(
+        tmp_path, statements=[_vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='Not used.')]
+    )
+    statements = _write_statements(
+        tmp_path,
+        {
+            'cve': 'CVE-2026-0002',
+            'package': 'pkg:generic/freertos@10.0.0',
+            'status': 'affected',
+            'action': 'Update FreeRTOS.',
+        },
+    )
+    output = tmp_path / 'new.vex.json'
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+
+    old = json.loads(vex_file.read_text())
+    new = json.loads(output.read_text())
+    assert new['serialNumber'] == old['serialNumber']
+    assert new['version'] == old['version'] + 1
+    assert new['externalReferences'] == old['externalReferences']
+    now = new['metadata']['timestamp']
+    assert now != _OLD_TIME
+
+    kept, added = new['vulnerabilities']
+    assert kept == old['vulnerabilities'][0]
+    assert added['id'] == 'CVE-2026-0002'
+    assert added['analysis']['state'] == 'exploitable'
+    assert added['recommendation'] == 'Update FreeRTOS.'
+    assert added['analysis']['firstIssued'] == added['analysis']['lastUpdated'] == now
+
+
+def test_vex_update_adds_an_openvex_statement(tmp_path: Path) -> None:
+    """An OpenVEX document keeps the history of a CVE, and a newer statement
+    overrides an older one. So a change is a new statement at the end, with the
+    current time, and the older statements stay as they are. The document keeps its
+    id and the time when it was first issued."""
+    sbom_file, vex_file = _vex_update_files(
+        tmp_path,
+        'openvex',
+        statements=[
+            _vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='First.'),
+            _vex_assessment('CVE-2026-0002', 'not_affected', impact_statement='Second.'),
+        ],
+    )
+    statements = _write_statements(
+        tmp_path,
+        {
+            'cve': 'CVE-2026-0001',
+            'package': 'cpe:2.3:o:amazon:freertos:10.0.0:*:*:*:*:*:*:*',
+            'status': 'fixed',
+            'detail': 'Patched.',
+        },
+    )
+    output = tmp_path / 'new.openvex.json'
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+
+    old = json.loads(vex_file.read_text())
+    new = json.loads(output.read_text())
+    assert new['@id'] == old['@id']
+    assert new['version'] == 2
+    assert new['timestamp'] == _OLD_TIME
+    assert new['last_updated'] != _OLD_TIME
+
+    *kept, added = new['statements']
+    assert kept == old['statements']
+    assert (added['vulnerability']['name'], added['status']) == ('CVE-2026-0001', 'fixed')
+    assert added['timestamp'] == added['last_updated'] == new['last_updated']
+
+
+def test_vex_update_without_change_keeps_the_version(tmp_path: Path) -> None:
+    """When nothing changed, the output is the VEX file as it is. A statement that
+    repeats a cve-exclude-list entry, as create writes it, is no change, also with
+    the response that CycloneDX writes for it."""
+    from esp_idf_sbom.libsbom import sbom
+
+    for vex_format in ('cyclonedx-json', 'openvex'):
+        sbom_file, vex_file = _vex_update_files(
+            tmp_path,
+            vex_format,
+            statements=[sbom.assessment_from_exclusion({'cve': 'CVE-2026-0001', 'reason': 'Not used.'})],
+        )
+        statements = _write_statements(
+            tmp_path,
+            {'cve': 'CVE-2026-0001', 'package': 'COMPONENT-freertos', 'status': 'not_affected', 'detail': 'Not used.'},
+        )
+        output = tmp_path / 'new.vex.json'
+        result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(statements))
+        assert result.returncode == 0, result.stderr
+        assert output.read_text() == vex_file.read_text()
+
+
+def test_vex_update_response(tmp_path: Path) -> None:
+    """CycloneDX writes the response of a statement. OpenVEX cannot keep it, so a
+    second update with the same statements file changes nothing."""
+    statements = _write_statements(
+        tmp_path,
+        {
+            'cve': 'CVE-2026-0002',
+            'package': 'COMPONENT-freertos',
+            'status': 'affected',
+            'action': 'Update FreeRTOS.',
+            'response': ['update'],
+        },
+    )
+
+    sbom_file, vex_file = _vex_update_files(tmp_path)
+    output = tmp_path / 'new.vex.json'
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+    (added,) = json.loads(output.read_text())['vulnerabilities']
+    assert added['analysis']['response'] == ['update']
+
+    sbom_file, vex_file = _vex_update_files(tmp_path, 'openvex')
+    first = tmp_path / 'first.openvex.json'
+    second = tmp_path / 'second.openvex.json'
+    for current, updated in ((vex_file, first), (first, second)):
+        result = _vex_update('--vex', str(current), '-o', str(updated), str(sbom_file), str(statements))
+        assert result.returncode == 0, result.stderr
+    assert json.loads(first.read_text())['version'] == 2
+    assert json.loads(second.read_text())['version'] == 2
+
+
+def test_vex_update_keeps_unknown_cyclonedx_fields(tmp_path: Path) -> None:
+    """vex update changes only what the model knows. The other fields stay, in the
+    document and in each entry, also in a changed one. An unchanged entry stays as
+    it is, also with a state that the model cannot hold."""
+    sbom_file, vex_file = _vex_update_files(
+        tmp_path,
+        statements=[
+            _vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='Not used.'),
+            _vex_assessment('CVE-2026-0002', 'not_affected', impact_statement='Not used.'),
+        ],
+    )
+    bom = json.loads(vex_file.read_text())
+    bom['properties'] = [{'name': 'acme:product', 'value': 'Widget'}]
+    unchanged, changed = bom['vulnerabilities']
+    unchanged['analysis']['state'] = 'false_positive'
+    for entry in (unchanged, changed):
+        entry['ratings'] = [{'source': {'name': 'NVD'}, 'score': 9.3, 'severity': 'critical', 'method': 'CVSSv4'}]
+        entry['properties'] = [{'name': 'acme:ticket', 'value': 'SEC-1 :warning:'}]
+    vex_file.write_text(json.dumps(bom, indent=2))
+
+    statements = _write_statements(
+        tmp_path,
+        {'cve': 'CVE-2026-0002', 'package': 'COMPONENT-freertos', 'status': 'affected', 'action': 'Update FreeRTOS.'},
+        {'cve': 'CVE-2026-0003', 'package': 'COMPONENT-freertos', 'status': 'under_investigation'},
+    )
+    output = tmp_path / 'new.vex.json'
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+
+    new = json.loads(output.read_text())
+    assert new['version'] == 2
+    assert new['properties'] == bom['properties']
+    first, second, added = new['vulnerabilities']
+    assert first == unchanged
+    assert (second['ratings'], second['properties']) == (changed['ratings'], changed['properties'])
+    assert (second['analysis']['state'], second['recommendation']) == ('exploitable', 'Update FreeRTOS.')
+    assert second['analysis']['firstIssued'] == _OLD_TIME
+    assert second['analysis']['lastUpdated'] == new['metadata']['timestamp']
+    assert (added['id'], added['analysis']['state']) == ('CVE-2026-0003', 'in_triage')
+
+
+def test_vex_update_keeps_unknown_openvex_fields(tmp_path: Path) -> None:
+    """OpenVEX keeps the fields that the model does not know too: a change adds a
+    new statement and does not touch the older ones. The new statement has only
+    the fields that come from the model."""
+    sbom_file, vex_file = _vex_update_files(
+        tmp_path,
+        'openvex',
+        statements=[
+            _vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='Not used.'),
+            _vex_assessment('CVE-2026-0002', 'not_affected', impact_statement='Not used.'),
+        ],
+    )
+    document = json.loads(vex_file.read_text())
+    document['role'] = 'Document Creator'
+    unchanged, changed = document['statements']
+    for entry in (unchanged, changed):
+        entry['status_notes'] = 'Checked by the security team :warning:'
+    vex_file.write_text(json.dumps(document, indent=2))
+
+    statements = _write_statements(
+        tmp_path,
+        {'cve': 'CVE-2026-0002', 'package': 'COMPONENT-freertos', 'status': 'affected', 'action': 'Update FreeRTOS.'},
+    )
+    output = tmp_path / 'new.openvex.json'
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+
+    new = json.loads(output.read_text())
+    assert (new['version'], new['role']) == (2, 'Document Creator')
+    *kept, added = new['statements']
+    assert kept == [unchanged, changed]
+    assert (added['status'], added['action_statement']) == ('affected', 'Update FreeRTOS.')
+    assert 'status_notes' not in added and 'impact_statement' not in added
+
+
+def test_vex_update_moves_a_changed_package_out_of_an_entry(tmp_path: Path) -> None:
+    """A CycloneDX entry can name several packages. When the statement for one of
+    them changes, that package moves into a copy of the entry, and the other
+    packages keep the old statement. When all of them change the same way, the
+    entry is written in place. OpenVEX adds a statement instead, see
+    test_vex_update_adds_an_openvex_statement_for_changed_packages()."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    def component(name: str, version: str, cpe: str) -> Package:
+        return Package(
+            ref=f'COMPONENT-{name}',
+            name=name,
+            package_name=name,
+            kind=PackageKind.COMPONENT,
+            version=version,
+            purl=f'pkg:generic/{name}@{version}',
+            cpes=[cpe],
+            assessments=[_vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='Not used.')],
+        )
+
+    packages = [
+        Package(ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT),
+        component('freertos', '10.0.0', 'cpe:2.3:o:amazon:freertos:10.0.0:*:*:*:*:*:*:*'),
+        component('lwip', '2.2.0', 'cpe:2.3:a:lwip_project:lwip:2.2.0:*:*:*:*:*:*:*'),
+    ]
+    model = SBOM(name='app', root='PROJECT-app', packages=packages)
+    doc_id = cyclonedx.new_document_id(model)
+    vexdoc = vex.build(model, sbom_id=doc_id)
+    vexdoc.first_issued = vexdoc.last_updated = _OLD_TIME
+    sbom_file = tmp_path / 'app.cdx.json'
+    sbom_file.write_text(cyclonedx.render(model, version='1.6', doc_id=doc_id))
+    document = json.loads(cyclonedx.render_vex(vexdoc))
+    # build() wrote one entry for both packages, because they have the same statement.
+    (entry,) = document['vulnerabilities']
+    entry['notes'] = 'Kept.'
+    vex_file = tmp_path / 'app.vex.json'
+    vex_file.write_text(json.dumps(document, indent=2))
+    output = tmp_path / 'new.vex.json'
+    affected = {'cve': 'CVE-2026-0001', 'status': 'affected', 'action': 'Update.'}
+
+    lwip_only = _write_statements(tmp_path, {**affected, 'package': 'COMPONENT-lwip'}, name='lwip.yaml')
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(lwip_only))
+    assert result.returncode == 0, result.stderr
+    old_entry, new_entry = json.loads(output.read_text())['vulnerabilities']
+    assert old_entry['affects'] == entry['affects'][:1]
+    assert new_entry['affects'] == entry['affects'][1:]
+    assert old_entry['notes'] == new_entry['notes'] == 'Kept.'
+    assert (old_entry['analysis']['state'], new_entry['analysis']['state']) == ('not_affected', 'exploitable')
+
+    both = _write_statements(
+        tmp_path,
+        {**affected, 'package': 'COMPONENT-freertos'},
+        {**affected, 'package': 'COMPONENT-lwip'},
+        name='both.yaml',
+    )
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(both))
+    assert result.returncode == 0, result.stderr
+    (changed,) = json.loads(output.read_text())['vulnerabilities']
+    assert changed['affects'] == entry['affects']
+    assert (changed['notes'], changed['analysis']['state']) == ('Kept.', 'exploitable')
+
+
+def test_vex_update_writes_every_entry_of_a_package(tmp_path: Path) -> None:
+    """A CycloneDX file can have two entries for one CVE of a package. Both get the
+    new statement, so that they agree afterwards."""
+    import copy
+
+    old = [_vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='Not used.')]
+    statements = _write_statements(
+        tmp_path, {'cve': 'CVE-2026-0001', 'package': 'COMPONENT-freertos', 'status': 'fixed', 'detail': 'Patched.'}
+    )
+    output = tmp_path / 'new.vex.json'
+
+    sbom_file, vex_file = _vex_update_files(tmp_path, statements=old)
+    bom = json.loads(vex_file.read_text())
+    second = copy.deepcopy(bom['vulnerabilities'][0])
+    second['bom-ref'] += '-second'
+    bom['vulnerabilities'].append(second)
+    vex_file.write_text(json.dumps(bom, indent=2))
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+    assert [v['analysis']['state'] for v in json.loads(output.read_text())['vulnerabilities']] == ['resolved'] * 2
+
+
+def test_vex_update_keeps_bom_refs_unique(tmp_path: Path) -> None:
+    """The entry for FreeRTOS and lwIP is named after FreeRTOS, its first package.
+    When FreeRTOS moves into a copy, the copy cannot take that name, so it gets a
+    number."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    def component(name: str) -> Package:
+        return Package(
+            ref=f'COMPONENT-{name}',
+            name=name,
+            package_name=name,
+            kind=PackageKind.COMPONENT,
+            version='1.0',
+            assessments=[_vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='Not used.')],
+        )
+
+    project = Package(ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT)
+    model = SBOM(name='app', root='PROJECT-app', packages=[project, component('freertos'), component('lwip')])
+    doc_id = cyclonedx.new_document_id(model)
+    sbom_file = tmp_path / 'app.cdx.json'
+    sbom_file.write_text(cyclonedx.render(model, version='1.6', doc_id=doc_id))
+    vex_file = tmp_path / 'app.vex.json'
+    vex_file.write_text(cyclonedx.render_vex(vex.build(model, sbom_id=doc_id)))
+    statements = _write_statements(
+        tmp_path, {'cve': 'CVE-2026-0001', 'package': 'COMPONENT-freertos', 'status': 'fixed'}
+    )
+
+    result = _vex_update('--vex', str(vex_file), str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+    entries = json.loads(result.stdout)['vulnerabilities']
+    assert [(entry['bom-ref'], len(entry['affects'])) for entry in entries] == [
+        ('vex-COMPONENT-freertos-CVE-2026-0001', 1),
+        ('vex-COMPONENT-freertos-CVE-2026-0001-2', 1),
+    ]
+
+
+def test_vex_update_adds_an_openvex_statement_for_changed_packages(tmp_path: Path) -> None:
+    """An OpenVEX statement can name several packages. When the statement for one of
+    them changes, a new statement names only that package. The old statement stays
+    as it is, also its fields that the model does not have."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    def component(name: str) -> Package:
+        return Package(
+            ref=f'COMPONENT-{name}',
+            name=name,
+            package_name=name,
+            kind=PackageKind.COMPONENT,
+            version='1.0',
+            purl=f'pkg:generic/{name}@1.0',
+            assessments=[_vex_assessment('CVE-2026-0001', 'affected', action_statement='Update.')],
+        )
+
+    project = Package(ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT)
+    model = SBOM(name='app', root='PROJECT-app', packages=[project, component('freertos'), component('lwip')])
+    sbom_file = tmp_path / 'app.cdx.json'
+    sbom_file.write_text(cyclonedx.render(model, version='1.6'))
+    document = json.loads(openvex.render_vex(vex.build(model)))
+    # One statement for both packages, which have a purl as their @id.
+    (statement,) = document['statements']
+    assert [product['@id'] for product in statement['products']] == ['pkg:generic/freertos@1.0', 'pkg:generic/lwip@1.0']
+    statement['@id'] = 'urn:uuid:11111111-2222-3333-4444-555555555555'
+    statement['version'] = 3
+    statement['action_statement_timestamp'] = _OLD_TIME
+    vex_file = tmp_path / 'app.openvex.json'
+    vex_file.write_text(json.dumps(document, indent=2))
+    output = tmp_path / 'new.openvex.json'
+    cve = {'cve': 'CVE-2026-0001'}
+
+    # lwIP gets another action.
+    lwip = _write_statements(
+        tmp_path,
+        {**cve, 'package': 'COMPONENT-lwip', 'status': 'affected', 'action': 'Update lwIP.'},
+        name='lwip.yaml',
+    )
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(lwip))
+    assert result.returncode == 0, result.stderr
+    old, new = json.loads(output.read_text())['statements']
+    assert old == statement
+    assert new['products'] == statement['products'][1:]
+    assert (new['status'], new['action_statement']) == ('affected', 'Update lwIP.')
+
+    # Both packages change the same way, so one new statement names both.
+    not_affected = {**cve, 'status': 'not_affected', 'justification': 'component_not_present'}
+    both = _write_statements(
+        tmp_path,
+        {**not_affected, 'package': 'COMPONENT-freertos'},
+        {**not_affected, 'package': 'COMPONENT-lwip'},
+        name='both.yaml',
+    )
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(both))
+    assert result.returncode == 0, result.stderr
+    old, new = json.loads(output.read_text())['statements']
+    assert old == statement
+    assert (new['products'], new['status']) == (statement['products'], 'not_affected')
+
+
+def test_vex_update_uses_the_newest_openvex_statement(tmp_path: Path) -> None:
+    """vex update compares with the newest OpenVEX statement about the CVE of a
+    package, also when it is not the last one in the document. The newest is the
+    one with the newest timestamp, as in go-vex."""
+    sbom_file, vex_file = _vex_update_files(
+        tmp_path, 'openvex', statements=[_vex_assessment('CVE-2026-0001', 'affected', action_statement='Update.')]
+    )
+    document = json.loads(vex_file.read_text())
+    (older,) = document['statements']
+    older['timestamp'] = '2026-01-01T10:00:00Z'
+    newer = {key: value for key, value in older.items() if key != 'action_statement'}
+    newer.update(timestamp='2026-02-01T10:00:00Z', status='fixed')
+    document['statements'] = [newer, older]
+    vex_file.write_text(json.dumps(document, indent=2))
+    output = tmp_path / 'new.openvex.json'
+    cve = {'cve': 'CVE-2026-0001', 'package': 'COMPONENT-freertos'}
+
+    fixed = _write_statements(tmp_path, {**cve, 'status': 'fixed'}, name='fixed.yaml')
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(fixed))
+    assert result.returncode == 0, result.stderr
+    assert output.read_text() == vex_file.read_text()
+
+    # The older statement says this, but it is not in effect, so it is added again.
+    affected = _write_statements(tmp_path, {**cve, 'status': 'affected', 'action': 'Update.'}, name='affected.yaml')
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(affected))
+    assert result.returncode == 0, result.stderr
+    *kept, added = json.loads(output.read_text())['statements']
+    assert kept == [newer, older]
+    assert (added['status'], added['action_statement']) == ('affected', 'Update.')
+
+    # last_updated does not count, so the newer statement stays in effect.
+    older['last_updated'] = '2026-03-01T10:00:00Z'
+    vex_file.write_text(json.dumps(document, indent=2))
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(fixed))
+    assert result.returncode == 0, result.stderr
+    assert output.read_text() == vex_file.read_text()
+
+
+def test_vex_update_ignores_sbom_statements(tmp_path: Path) -> None:
+    """A statement in the statements file replaces the statement of the same CVE in
+    the VEX file. The statements embedded in the SBOM are not written to the VEX
+    document."""
+    sbom_file, vex_file = _vex_update_files(
+        tmp_path,
+        statements=[
+            _vex_assessment('CVE-2026-0001', 'affected', action_statement='From the VEX file.'),
+            _vex_assessment('CVE-2026-0002', 'affected', action_statement='From the VEX file.'),
+        ],
+        embedded=[
+            _vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='From the SBOM.'),
+            _vex_assessment('CVE-2026-0003', 'not_affected', impact_statement='From the SBOM.'),
+        ],
+    )
+    statements = _write_statements(
+        tmp_path,
+        {
+            'cve': 'CVE-2026-0002',
+            'package': 'COMPONENT-freertos',
+            'status': 'fixed',
+            'detail': 'From the statements file.',
+        },
+    )
+    output = tmp_path / 'new.vex.json'
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+
+    old = {v['id']: v for v in json.loads(vex_file.read_text())['vulnerabilities']}
+    vulnerabilities = {v['id']: v for v in json.loads(output.read_text())['vulnerabilities']}
+    assert list(vulnerabilities) == ['CVE-2026-0001', 'CVE-2026-0002']
+    assert vulnerabilities['CVE-2026-0001'] == old['CVE-2026-0001']
+    assert vulnerabilities['CVE-2026-0002']['analysis']['detail'] == 'From the statements file.'
+    changed = vulnerabilities['CVE-2026-0002']['analysis']
+    assert changed['firstIssued'] == _OLD_TIME != changed['lastUpdated']
+
+
+def test_vex_update_new_document(tmp_path: Path) -> None:
+    """Without --vex, a new VEX document is made from the statements file only. The
+    statements embedded in the SBOM are not in it."""
+    sbom_file, _ = _vex_update_files(
+        tmp_path, embedded=[_vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='Not used.')]
+    )
+    statements = _write_statements(
+        tmp_path, {'cve': 'CVE-2026-0002', 'package': 'freertos', 'status': 'under_investigation'}
+    )
+
+    result = _vex_update(str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+    document = json.loads(result.stdout)
+    assert document['@context'].startswith('https://openvex.dev/')
+    assert document['version'] == 1
+    (decided,) = document['statements']
+    assert decided['vulnerability']['name'] == 'CVE-2026-0002'
+    # As in create, the statement has no time of its own, so it has the time of the document.
+    assert 'timestamp' not in decided
+    assert document['timestamp'] != _OLD_TIME
+
+    result = _vex_update('--format', 'cyclonedx-json', str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+    serial = json.loads(sbom_file.read_text())['serialNumber']
+    link = json.loads(result.stdout)['externalReferences'][0]['url']
+    assert link == 'urn:cdx:' + serial[len('urn:uuid:') :] + '/1'
+
+
+def test_vex_update_statement_for_several_packages(tmp_path: Path) -> None:
+    """A CPE can name two copies of one library. The statement applies to both, with
+    a warning, and it is written once for both."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    cpe = 'cpe:2.3:a:cjson_project:cjson:1.7.19:*:*:*:*:*:*:*'
+    packages = [
+        Package(ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT),
+        Package(
+            ref='SUBMODULE-cjson',
+            name='cjson',
+            package_name='cjson',
+            kind=PackageKind.SUBMODULE,
+            version='1.7.19',
+            cpes=[cpe],
+        ),
+        Package(
+            ref='COMPONENT-espressif__cjson',
+            name='espressif__cjson',
+            package_name='cjson',
+            kind=PackageKind.COMPONENT,
+            version='1.7.19',
+            cpes=[cpe],
+        ),
+    ]
+    sbom_file = tmp_path / 'app.cdx.json'
+    sbom_file.write_text(cyclonedx.render(SBOM(name='app', root='PROJECT-app', packages=packages), version='1.6'))
+    statements = _write_statements(
+        tmp_path, {'cve': 'CVE-2026-0001', 'package': cpe, 'status': 'affected', 'action': 'Update cJSON.'}
+    )
+
+    result = _vex_update(str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+    (statement,) = json.loads(result.stdout)['statements']
+    assert [(p['@id'], p['identifiers']['cpe23']) for p in statement['products']] == [
+        ('SUBMODULE-cjson', cpe),
+        ('COMPONENT-espressif__cjson', cpe),
+    ]
+    assert 'names 2 packages, SUBMODULE-cjson, COMPONENT-espressif__cjson' in result.stderr
+
+
+def test_vex_update_several_statements_files(tmp_path: Path) -> None:
+    """Several statements files can be given, and a later file wins. When a later
+    file sets a statement back to what the VEX file says, it is no change."""
+    from esp_idf_sbom.libsbom import sbom
+
+    sbom_file, vex_file = _vex_update_files(
+        tmp_path, statements=[sbom.assessment_from_exclusion({'cve': 'CVE-2026-0001', 'reason': 'Not used.'})]
+    )
+    freertos = {'package': 'COMPONENT-freertos'}
+    affected = {**freertos, 'cve': 'CVE-2026-0001', 'status': 'affected', 'action': 'Update FreeRTOS.'}
+    first = _write_statements(
+        tmp_path, affected, {**freertos, 'cve': 'CVE-2026-0002', 'status': 'under_investigation'}, name='first.yaml'
+    )
+    second = _write_statements(tmp_path, {**freertos, 'cve': 'CVE-2026-0002', 'status': 'fixed'}, name='second.yaml')
+    output = tmp_path / 'new.vex.json'
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(first), str(second))
+    assert result.returncode == 0, result.stderr
+    states = {v['id']: v['analysis']['state'] for v in json.loads(output.read_text())['vulnerabilities']}
+    assert states == {'CVE-2026-0001': 'exploitable', 'CVE-2026-0002': 'resolved'}
+
+    change = _write_statements(tmp_path, affected, name='change.yaml')
+    back = _write_statements(
+        tmp_path,
+        {**freertos, 'cve': 'CVE-2026-0001', 'status': 'not_affected', 'detail': 'Not used.'},
+        name='back.yaml',
+    )
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(change), str(back))
+    assert result.returncode == 0, result.stderr
+    assert output.read_text() == vex_file.read_text()
+
+
+def test_vex_update_keeps_statements_for_other_packages(tmp_path: Path) -> None:
+    """A VEX file can name packages that are not in the SBOM, for example when it
+    covers a whole product line. Their statements stay as they are."""
+    sbom_file, vex_file = _vex_update_files(
+        tmp_path, 'openvex', statements=[_vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='Not used.')]
+    )
+    document = json.loads(vex_file.read_text())
+    document['statements'][0]['products'] = [
+        {'@id': 'pkg:generic/other@1', 'identifiers': {'purl': 'pkg:generic/other@1'}}
+    ]
+    vex_file.write_text(json.dumps(document))
+    statements = _write_statements(tmp_path, {'cve': 'CVE-2026-0002', 'package': 'freertos', 'status': 'fixed'})
+
+    result = _vex_update('--vex', str(vex_file), str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+    kept, added = json.loads(result.stdout)['statements']
+    assert kept == document['statements'][0]
+    assert added['vulnerability']['name'] == 'CVE-2026-0002'
+
+
+def test_vex_update_errors(tmp_path: Path) -> None:
+    """vex update stops when it cannot write a correct VEX document."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import spdx
+
+    sbom_file, vex_file = _vex_update_files(
+        tmp_path, 'openvex', statements=[_vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='Not used.')]
+    )
+    statements = _write_statements(tmp_path, {'cve': 'CVE-2026-0002', 'package': 'freertos', 'status': 'fixed'})
+
+    # A statement for a package that is not in the SBOM.
+    unknown = _write_statements(
+        tmp_path, {'cve': 'CVE-2026-0003', 'package': 'pkg:generic/other@1', 'status': 'fixed'}, name='unknown.yaml'
+    )
+    result = _vex_update('--vex', str(vex_file), str(sbom_file), str(unknown))
+    assert result.returncode != 0
+    assert 'CVE-2026-0003: pkg:generic/other@1' in result.stderr
+
+    # A CycloneDX VEX file belongs to one SBOM.
+    cdx = tmp_path / 'cdx'
+    cdx.mkdir()
+    cdx_sbom, cdx_vex = _vex_update_files(cdx)
+    bom = json.loads(cdx_sbom.read_text())
+    bom['serialNumber'] = 'urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79'
+    other_sbom = cdx / 'other.cdx.json'
+    other_sbom.write_text(json.dumps(bom))
+    result = _vex_update('--vex', str(cdx_vex), str(other_sbom), str(statements))
+    assert result.returncode != 0
+    assert 'belongs to another SBOM' in result.stderr
+
+    result = _vex_update('--vex', str(vex_file), '--format', 'openvex', str(sbom_file), str(statements))
+    assert result.returncode != 0
+    assert '--format cannot be used with --vex' in result.stderr
+
+    spdx_file = tmp_path / 'app.spdx'
+    spdx_file.write_text(spdx.render(cyclonedx.parse(sbom_file.read_text())))
+    result = _vex_update('--format', 'cyclonedx-json', str(spdx_file), str(statements))
+    assert result.returncode != 0
+    assert 'needs the serialNumber of a CycloneDX SBOM' in result.stderr
+
+    bom = json.loads(sbom_file.read_text())
+    del bom['serialNumber']
+    no_serial = tmp_path / 'no-serial.cdx.json'
+    no_serial.write_text(json.dumps(bom))
+    result = _vex_update('--format', 'cyclonedx-json', str(no_serial), str(statements))
+    assert result.returncode != 0
+    assert 'needs the serialNumber of its SBOM' in result.stderr
+
+    # A statements file belongs to one SBOM, like a VEX file.
+    other = _write_statements(
+        tmp_path,
+        {
+            'cve': 'CVE-2026-0002',
+            'package': 'urn:cdx:3e671687-395b-41f5-a30f-a58921a69b79/1#COMPONENT-freertos',
+            'status': 'fixed',
+        },
+        name='other.yaml',
+    )
+    result = _vex_update(str(sbom_file), str(other))
+    assert result.returncode != 0
+    assert 'belongs to another SBOM' in result.stderr
 
 
 def test_output_file_kept_on_failure(hello_world_build: Path, tmp_path: Path) -> None:

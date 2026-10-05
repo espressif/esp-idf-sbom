@@ -18,12 +18,17 @@ A package with no purl and no CPE cannot be named here, see _product().
 import datetime
 import json
 import uuid
+from dataclasses import replace
 from typing import Any
 from typing import Dict
+from typing import List
 from typing import Optional
+from typing import Set
+from typing import Tuple
 
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import vex
+from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import TOOL_NAME
 from esp_idf_sbom.libsbom.sbom import TOOL_PURL
 from esp_idf_sbom.libsbom.sbom import TOOL_VERSION
@@ -57,6 +62,20 @@ def _product(product: vex.VexProduct) -> Optional[Dict[str, Any]]:
     return {'@id': identifiers.get('purl', product.ref), 'identifiers': identifiers}
 
 
+def _fields(statement: vex.VexStatement) -> Dict[str, Any]:
+    """The status fields of an OpenVEX statement. They come from the model."""
+    fields: Dict[str, Any] = {'status': statement.status.value}
+    # A not_affected statement needs a justification or an impact_statement. We
+    # write the impact_statement, because the manifest reason is free text.
+    if statement.justification is not None:
+        fields['justification'] = statement.justification.value
+    if statement.impact_statement:
+        fields['impact_statement'] = statement.impact_statement
+    if statement.action_statement:
+        fields['action_statement'] = statement.action_statement
+    return fields
+
+
 def _statement(statement: vex.VexStatement) -> Optional[Dict[str, Any]]:
     products = [p for p in (_product(product) for product in statement.products) if p]
     if not products:
@@ -71,16 +90,7 @@ def _statement(statement: vex.VexStatement) -> Optional[Dict[str, Any]]:
     if statement.last_updated:
         entry['last_updated'] = statement.last_updated
     entry['products'] = products
-    entry['status'] = statement.status.value
-    # A not_affected statement needs a justification or an impact_statement. We
-    # write the impact_statement, because the manifest reason is free text.
-    if statement.justification is not None:
-        entry['justification'] = statement.justification.value
-    if statement.impact_statement:
-        entry['impact_statement'] = statement.impact_statement
-    if statement.action_statement:
-        entry['action_statement'] = statement.action_statement
-
+    entry.update(_fields(statement))
     return entry
 
 
@@ -183,4 +193,91 @@ def parse_vex(text: str) -> vex.Vex:
         first_issued=issued,
         last_updated=document.get('last_updated', ''),
         author=document.get('author', ''),
+        text=text,
     )
+
+
+# ===========================================================================
+# Update: statements -> an existing OpenVEX document
+# ===========================================================================
+
+# The fields of a statement that come from the model, without the times.
+_STATUS_FIELDS = ('status', 'justification', 'impact_statement', 'action_statement')
+
+
+def _says(entry: Dict[str, Any]) -> Tuple[Any, ...]:
+    """What a statement says: the fields that come from the model, without the
+    times. A missing field and an empty one are the same."""
+    return tuple(entry.get(key) or None for key in _STATUS_FIELDS)
+
+
+def _package_refs(product: Dict[str, Any], sbom: SBOM) -> Set[str]:
+    """The refs of the packages that a product of a statement names."""
+    return {pkg.ref for pkg in vex.find_packages(sbom, _parse_product(product))}
+
+
+def _statement_time(entry: Dict[str, Any], issued: str) -> datetime.datetime:
+    """The time of a statement: its timestamp, or issued, the timestamp of the
+    document, which it inherits. last_updated does not count, see
+    vex.VexStatement.time. A statement whose time cannot be read counts as the
+    oldest."""
+    time = vex.parse_time(str(entry.get('timestamp') or issued))
+    if time is None:
+        return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+    return time
+
+
+def _statement_in_effect(
+    entries: List[Dict[str, Any]], cve: str, ref: str, sbom: SBOM, issued: str
+) -> Optional[Dict[str, Any]]:
+    """The statement in effect for the CVE of the package, or None. It is the newest
+    statement that names them. Of statements with the same time, it is the last
+    one."""
+    naming = [
+        entry
+        for entry in entries
+        if entry.get('vulnerability', {}).get('name') == cve
+        and any(ref in _package_refs(product, sbom) for product in entry.get('products', []))
+    ]
+    if not naming:
+        return None
+    return sorted(naming, key=lambda entry: _statement_time(entry, issued))[-1]
+
+
+def update_vex(current: vex.Vex, statements: List[vex.VexStatement], sbom: SBOM) -> str:
+    """Write statements into the OpenVEX document current.
+
+    An OpenVEX document keeps the history of a CVE: a newer statement overrides an
+    older one. So no statement is changed. When the statement in effect for a
+    package says something else, or there is none, the package gets a new
+    statement with the current time at the end, and the older statements stay as
+    they are. When nothing differs, the text of the document is returned as it is.
+
+    :param current: the OpenVEX document, as it was read
+    :param statements: the statements to write, from vex.build()
+    :param sbom: the SBOM model, to find the packages that the statements name
+    """
+    document = json.loads(current.text)
+    entries = document.setdefault('statements', [])
+    # A statement without its own time has the time of the document.
+    issued = document.get('timestamp', '')
+    now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    changed = False
+    for statement in statements:
+        fields = _fields(statement)
+        new = []
+        for product in statement.products:
+            in_effect = _statement_in_effect(entries, statement.vulnerability, product.ref, sbom, issued)
+            if in_effect is None or _says(in_effect) != _says(fields):
+                new.append(product)
+        if new:
+            written = _statement(replace(statement, products=new, first_issued=now, last_updated=now))
+            if written is not None:
+                entries.append(written)
+                changed = True
+
+    if not changed:
+        return current.text
+    document['version'] = current.doc_version + 1
+    document['last_updated'] = now
+    return json.dumps(document, indent=2)
