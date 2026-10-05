@@ -18,6 +18,8 @@ import uuid
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
+from typing import Tuple
 
 import yaml
 
@@ -852,10 +854,19 @@ def render(sbom: SBOM, format: str = 'tagvalue', version: str = '2.2', doc_id: s
 # ===========================================================================
 
 
-def _unref(spdxid: str) -> str:
+def unref(spdxid: str) -> str:
     """Strip the SPDXRef- prefix from an SPDXID, leaving the model ref."""
     prefix = 'SPDXRef-'
     return spdxid[len(prefix) :] if spdxid.startswith(prefix) else spdxid
+
+
+def split_element_id(value: str) -> Optional[Tuple[str, str]]:
+    """Split an SPDX 3.0 element id, an IRI of the form '<namespace>#<ref>', into
+    the namespace of its document and the ref. Return None for any other value."""
+    namespace, sep, ref = value.rpartition('#')
+    if not sep or ':' not in namespace or not ref:
+        return None
+    return namespace, ref
 
 
 def _unref_jsonld(spdxid: str, docns: str) -> str:
@@ -867,7 +878,7 @@ def _unref_jsonld(spdxid: str, docns: str) -> str:
 
 
 def _package_from_tags(spdxid: str, tags: Dict[str, List[str]]) -> Package:
-    ref = _unref(spdxid)
+    ref = unref(spdxid)
     # The SPDXID is SPDXRef-<MARK>-<sanitized name>; recover kind and name from it.
     kind, name = kind_and_name(ref)
 
@@ -886,7 +897,7 @@ def _package_from_tags(spdxid: str, tags: Dict[str, List[str]]) -> Package:
     for rel in tags.get('Relationship', []):
         _, sep, dst = rel.partition(' DEPENDS_ON ')
         if sep:
-            depends_on.append(_unref(dst.strip()))
+            depends_on.append(unref(dst.strip()))
 
     comment = parse_package_comment(tags)
 
@@ -935,7 +946,7 @@ def _parse_tagvalue(text: str) -> SBOM:
         elif not doc_id and line.startswith('DocumentNamespace:'):
             doc_id = line.split(':', 1)[1].strip()
         elif not root and line.startswith('Relationship:') and ' DESCRIBES ' in line:
-            root = _unref(line.split(' DESCRIBES ', 1)[1].strip())
+            root = unref(line.split(' DESCRIBES ', 1)[1].strip())
         elif not creator and line.startswith('Creator: Tool:'):
             creator = line[len('Creator: Tool:') :].strip()
         if name and root and creator and doc_id:
@@ -968,7 +979,7 @@ def _comment_to_dict(comment: str) -> Dict[str, Any]:
 
 
 def _package_from_json(obj: Dict[str, Any], depends_on: List[str]) -> Package:
-    ref = _unref(obj.get('SPDXID', ''))
+    ref = unref(obj.get('SPDXID', ''))
     kind, name = kind_and_name(ref)
 
     cpes: List[str] = []
@@ -1024,9 +1035,9 @@ def _parse_json(text: str) -> SBOM:
         src = rel.get('spdxElementId', '')
         dst = rel.get('relatedSpdxElement', '')
         if rel_type == 'DESCRIBES' and src == 'SPDXRef-DOCUMENT':
-            root = _unref(dst)
+            root = unref(dst)
         elif rel_type == 'DEPENDS_ON':
-            depends_on.setdefault(src, []).append(_unref(dst))
+            depends_on.setdefault(src, []).append(unref(dst))
 
     packages = [
         _package_from_json(obj, depends_on.get(obj.get('SPDXID', ''), [])) for obj in document.get('packages', [])
@@ -1129,7 +1140,8 @@ def _parse_jsonld(text: str) -> SBOM:
         elif t == 'SpdxDocument':
             doc_name = e.get('name', '')
             # Our namespace. render writes it as '<docns>#SPDXRef-DOCUMENT'.
-            docns = _id(e.get('spdxId')).rsplit('#', 1)[0]
+            element = split_element_id(_id(e.get('spdxId')))
+            docns = element[0] if element else _id(e.get('spdxId'))
             roots = _as_list(e.get('rootElement'))
             if roots:
                 root = _id(roots[0])

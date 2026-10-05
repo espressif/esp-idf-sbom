@@ -537,6 +537,16 @@ _BOM_LINK_DOCUMENT_RE = re.compile(f'^{_BOM_LINK}$')
 _BOM_LINK_ELEMENT_RE = re.compile(f'^{_BOM_LINK}' + r'#(?P<ref>.+)$')
 
 
+def parse_bom_link(value: str) -> Optional[Tuple[str, str, int]]:
+    """Split a BOM-Link to one element of a CycloneDX document into the ref of the
+    element and the serialNumber and version of the document. Return None for
+    any other value."""
+    match = _BOM_LINK_ELEMENT_RE.match(value)
+    if not match:
+        return None
+    return match.group('ref'), 'urn:uuid:' + match.group('serial'), int(match.group('version'))
+
+
 def _parse_bom_reference(bom: Dict[str, Any]) -> Tuple[str, int]:
     """The SBOM a standalone VEX names in its document level references.
 
@@ -559,14 +569,11 @@ def _parse_affects(ref: str) -> Tuple[vex.VexProduct, str, int]:
     version as well as the component ref. A VEX embedded in an SBOM uses a plain
     bom-ref, and then there is no SBOM id to read.
     """
-    match = _BOM_LINK_ELEMENT_RE.match(ref)
-    if not match:
+    link = parse_bom_link(ref)
+    if link is None:
         return vex.VexProduct(ref=ref), '', 1
-    return (
-        vex.VexProduct(ref=match.group('ref')),
-        'urn:uuid:' + match.group('serial'),
-        int(match.group('version')),
-    )
+    element, sbom_id, version = link
+    return vex.VexProduct(ref=element), sbom_id, version
 
 
 def parse_vex(text: str) -> vex.Vex:

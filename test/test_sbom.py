@@ -1899,6 +1899,149 @@ def test_vex_apply_reaches_every_package_with_the_cpe() -> None:
     assert with_statement == ['SUBMODULE-json-cJSON', 'COMPONENT-espressif-cjson']
 
 
+def test_vexyaml_parses_statements() -> None:
+    """Each CVE of a package becomes a statement for that package. The form of the
+    package id says which id of the package it is, and find_packages() then finds
+    the package. Unknown keys are ignored, so that a newer version can add keys."""
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom import vexyaml
+
+    cjson_cpe = 'cpe:2.3:a:cjson_project:cjson:1.7.19:*:*:*:*:*:*:*'
+    text = dedent(
+        f"""\
+        future: ignored
+        packages:
+          - package: {cjson_cpe}
+            future: ignored
+            vulnerabilities:
+              - cve: CVE-2026-1
+                status: not_affected
+                justification: vulnerable_code_not_in_execute_path
+                detail: Not used.
+                future: ignored
+              - cve: CVE-2026-6
+                status: fixed
+          - package: pkg:github/example/lib@2.0
+            vulnerabilities:
+              - cve: CVE-2026-2
+                status: affected
+                detail: The server is enabled.
+                action: Update to 2.1.
+          - package: urn:cdx:11111111-2222-3333-4444-555555555555/1#COMPONENT-lib
+            vulnerabilities:
+              - cve: CVE-2026-3
+                status: fixed
+          - package: SPDXRef-COMPONENT-lib
+            vulnerabilities:
+              - cve: CVE-2026-4
+                status: under_investigation
+          - package: cJSON
+            vulnerabilities:
+              - cve: CVE-2026-5
+                status: under_investigation
+        """
+    )
+    document = vexyaml.parse_vex(text)
+
+    statements = document.statements
+    assert [s.vulnerability for s in statements] == [f'CVE-2026-{n}' for n in (1, 6, 2, 3, 4, 5)]
+    assert statements[0].status is vex.VexStatus.NOT_AFFECTED
+    assert statements[0].justification is vex.VexJustification.VULNERABLE_CODE_NOT_IN_EXECUTE_PATH
+    assert statements[0].impact_statement == 'Not used.'
+    affected = statements[2]
+    assert affected.status is vex.VexStatus.AFFECTED
+    assert (affected.impact_statement, affected.action_statement) == ('The server is enabled.', 'Update to 2.1.')
+    assert [s.products for s in statements] == [
+        [vex.VexProduct(cpes=[cjson_cpe])],
+        [vex.VexProduct(cpes=[cjson_cpe])],
+        [vex.VexProduct(purl='pkg:github/example/lib@2.0')],
+        [vex.VexProduct(ref='COMPONENT-lib')],
+        [vex.VexProduct(ref='COMPONENT-lib')],
+        [vex.VexProduct(ref='cJSON', name='cJSON')],
+    ]
+    # The BOM-Link names the SBOM it was copied from.
+    assert (document.sbom_id, document.sbom_version) == ('urn:uuid:11111111-2222-3333-4444-555555555555', 1)
+
+    model = _sbom_for_lookup()
+    cjson = ['SUBMODULE-json-cJSON', 'COMPONENT-espressif-cjson']
+    lib = ['COMPONENT-lib']
+    found = [[pkg.ref for pkg in vex.find_packages(model, s.products[0])] for s in statements]
+    assert found == [cjson, cjson, lib, lib, lib, cjson]
+
+
+def test_vexyaml_spdx_element_id() -> None:
+    """An SPDX 3.0.1 element id gives the ref, and its namespace names the SBOM.
+    Package ids that name two different SBOMs are an error."""
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom import vexyaml
+
+    namespace = 'https://spdx.org/spdxdocs/app-11111111-2222-3333-4444-555555555555'
+    entry = {'package': f'{namespace}#COMPONENT-lib', 'vulnerabilities': [{'cve': 'CVE-2026-1', 'status': 'fixed'}]}
+    document = vexyaml.parse_vex(json.dumps({'packages': [entry]}))
+    assert document.sbom_id == namespace
+    assert document.statements[0].products == [vex.VexProduct(ref='COMPONENT-lib')]
+
+    link = {**entry, 'package': 'urn:cdx:11111111-2222-3333-4444-555555555555/1#COMPONENT-lib'}
+    with pytest.raises(ValueError, match='more than one SBOM'):
+        vexyaml.parse_vex(json.dumps({'packages': [entry, link]}))
+
+
+def test_vexyaml_rejects_invalid_entries() -> None:
+    """A missing or unknown value is an error. So is a field that the status does
+    not allow, or a field that it needs, as CISA describes them."""
+    from esp_idf_sbom.libsbom import vexyaml
+
+    def parse(package: str = 'lib', **fields):
+        cve_entry = {'cve': 'CVE-2026-1', 'status': 'fixed', **fields}
+        cve_entry = {key: value for key, value in cve_entry.items() if value is not None}
+        return vexyaml.parse_vex(json.dumps({'packages': [{'package': package, 'vulnerabilities': [cve_entry]}]}))
+
+    assert len(parse().statements) == 1
+
+    def error(**fields) -> str:
+        with pytest.raises(ValueError) as info:
+            parse(**fields)
+        return str(info.value)
+
+    assert error(status=None).startswith("packages[0] (lib): vulnerabilities[0] (CVE-2026-1): Missing key: 'status'")
+    assert 'Status "bad" must be one of' in error(status='bad')
+    assert 'Justification "bad" must be one of' in error(status='not_affected', justification='bad')
+    assert 'only for the not_affected status' in error(justification='component_not_present')
+    assert 'needs a justification or a detail' in error(status='not_affected')
+    assert 'needs an action' in error(status='affected')
+    assert 'Response "bad" must be one of' in error(response=['bad'])
+    assert 'The response must be a list' in error(response='update')
+    assert 'not a CPE 2.3 string' in error(package='cpe:/a:example:lib:2.0')
+    assert 'must not be empty' in error(package='')
+    with pytest.raises(ValueError, match="packages\\[0\\]: Missing key: 'vulnerabilities'"):
+        vexyaml.parse_vex(json.dumps({'packages': [{'package': 'lib'}]}))
+    with pytest.raises(ValueError, match='needs a "packages" list'):
+        vexyaml.parse_vex('vulnerabilities: []')
+    with pytest.raises(ValueError, match='not valid YAML'):
+        vexyaml.parse_vex('packages: [')
+
+
+def test_vexyaml_response() -> None:
+    """The response is a list of CycloneDX values. Without it, not_affected gets
+    will_not_fix, like a cve-exclude-list entry, and the other statuses get none."""
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom import vexyaml
+
+    def response(**fields):
+        cve_entry = {'cve': 'CVE-2026-1', **fields}
+        document = vexyaml.parse_vex(json.dumps({'packages': [{'package': 'lib', 'vulnerabilities': [cve_entry]}]}))
+        return document.statements[0].response
+
+    not_affected = {'status': 'not_affected', 'detail': 'Not used.'}
+    assert response(**not_affected) == [vex.VexResponse.WILL_NOT_FIX]
+    assert response(**not_affected, response=[]) == []
+    assert response(status='affected', action='Update.', response=['update', 'workaround_available']) == [
+        vex.VexResponse.UPDATE,
+        vex.VexResponse.WORKAROUND_AVAILABLE,
+    ]
+    assert response(status='fixed') == []
+
+
 def test_vex_apply_keeps_all_statuses() -> None:
     """apply() keeps the statements of all four statuses with all their fields.
     What a status means is up to the consumer, for example the check report."""
