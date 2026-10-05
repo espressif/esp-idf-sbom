@@ -2457,14 +2457,15 @@ def _document_manifest() -> str:
         ({'document': {'supplier': {'name': 'Organization: A', 'contact': 'a@b.io'}}}, True),
         ({'document': {'supplier': {'name': 'Person: A', 'url': 'https://a.example'}}}, True),
         ({'document': {}}, True),
+        # Unknown keys are ignored, so that a newer version can add keys.
+        ({'document': {'author': {'name': 'Organization: A', 'contact': 'a@b.io'}}}, True),
+        ({'document': {'supplier': {'name': 'Organization: A', 'contact': 'a@b.io', 'phone': '1'}}}, True),
         # A name alone identifies the entity but gives no way to reach it.
         ({'document': {'supplier': {'name': 'Organization: A'}}}, False),
         # The "Person: "/"Organization: " prefix is required, as for suppliers.
         ({'document': {'supplier': {'name': 'A', 'contact': 'a@b.io'}}}, False),
         ({'document': {'supplier': {'name': 'Organization: A', 'contact': 'nope'}}}, False),
         ({'document': {'supplier': {'name': 'Organization: A', 'url': 'ssh://a.example'}}}, False),
-        # Unknown entities are rejected even though the outer schema ignores extra keys.
-        ({'document': {'author': {'name': 'Organization: A', 'contact': 'a@b.io'}}}, False),
         ({'document': 'Organization: A'}, False),
     ],
 )
