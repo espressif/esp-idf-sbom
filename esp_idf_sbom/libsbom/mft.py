@@ -504,6 +504,7 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
                 schema.Optional('contact'): schema.And(str, check_email),
             },
             check_document_entity,
+            ignore_extra_keys=True,
         )
     )
 
@@ -511,7 +512,8 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
         {
             schema.Optional('supplier'): document_entity_schema,
             schema.Optional('manufacturer'): document_entity_schema,
-        }
+        },
+        ignore_extra_keys=True,
     )
 
     sbom_schema = schema.Schema(

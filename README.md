@@ -105,8 +105,8 @@ output.
 
 For example `esp-idf-sbom create --format cyclonedx-json -o sbom.cdx.json build/project_description.json`.
 
-By default the SBOM also carries the excluded CVEs. The `--vex` option can leave
-them out, or write them to a separate VEX document, see
+By default the SBOM also carries the excluded CVEs. The `--vex-format` option
+can leave them out, or write them to a separate VEX document, see
 [VEX documents](#vex-documents).
 
 
@@ -132,8 +132,9 @@ If *SBOM file* is not provided, the standard input stream is used. The SBOM file
 in any format esp-idf-sbom can produce (SPDX tag/value, SPDX JSON, SPDX 3.0 JSON-LD or CycloneDX JSON);
 the format is detected automatically.
 
-If the SBOM was created with `--vex openvex` or `--vex cyclonedx-json`, the
-excluded CVEs are in a separate VEX file. Pass it with `--vex`, see
+If the SBOM was created with `--vex-format openvex` or
+`--vex-format cyclonedx-json`, the excluded CVEs are in a separate VEX file.
+Pass it with `--vex`, see
 [Using a VEX file with check](#using-a-vex-file-with-check).
 
 The default report format consists of multiple tables:
@@ -282,10 +283,10 @@ removed.
 ## VEX documents
 
 An excluded CVE is an assessment: the CVE was checked and it does not apply to
-this component. [VEX][13] is the standard format for such statements. The `--vex`
-option says where esp-idf-sbom writes them.
+this component. [VEX][13] is the standard format for such statements. The
+`--vex-format` option of `create` says where esp-idf-sbom writes them.
 
-| `--vex`                     | SBOM                     | separate file             |
+| `--vex-format`              | SBOM                     | separate file             |
 |-----------------------------|--------------------------|---------------------------|
 | `embed`                     | contains the assessments | none                      |
 | `none`                      | clean                    | none                      |
@@ -297,12 +298,12 @@ Use `none` or a VEX format when the SBOM must not contain vulnerability
 information. Some regulations require it. Some tools also ignore VEX that is
 embedded in an SBOM.
 
-    esp-idf-sbom create --vex openvex --vex-output app.openvex.json \
+    esp-idf-sbom create --vex-format openvex --vex-output app.openvex.json \
                         -o app.spdx build/project_description.json
 
-With `--vex none` the assessments are lost. `check` and other scanners then
-report CVEs that were already analyzed and found not applicable. Use a VEX format
-to keep the assessments.
+With `--vex-format none` the assessments are lost. `check` and other scanners
+then report CVEs that were already analyzed and found not applicable. Use a VEX
+format to keep the assessments.
 
 esp-idf-sbom does not update a VEX file. The assessments are kept in the VEX
 document and are maintained there. Building the project again and running
@@ -318,9 +319,10 @@ document and are maintained there. Building the project again and running
 
 ### Using a VEX file with check
 
-`check` reads the assessments from the SBOM. An SBOM written with `--vex none` or
-with a VEX format does not contain them, so `check` reports the already analyzed
-CVEs as vulnerabilities. Pass the VEX file so that `check` can use them:
+`check` reads the assessments from the SBOM. An SBOM written with
+`--vex-format none` or with a VEX format does not contain them, so `check`
+reports the already analyzed CVEs as vulnerabilities. Pass the VEX file so that
+`check` can use them:
 
     esp-idf-sbom check --vex app.openvex.json app.spdx
 
