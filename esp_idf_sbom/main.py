@@ -72,16 +72,16 @@ def no_sync_excluded_cves_option(func: Any) -> Any:
 
 def _check_vex_options(args: Dict[str, Any]) -> None:
     """Refuse option combinations that cannot do what the user asked for."""
-    vex_choice = args['vex']
+    vex_choice = args['vex_format']
     vex_output = args['vex_output']
     separate = vex_choice not in formats.VEX_IN_SBOM
 
     if separate and not vex_output:
-        log.die(f'--vex {vex_choice} writes a separate VEX document, so --vex-output is needed.')
+        log.die(f'--vex-format {vex_choice} writes a separate VEX document, so --vex-output is needed.')
 
     if not separate and vex_output:
         log.die(
-            f'--vex {vex_choice} writes no separate file, so --vex-output cannot be used. '
+            f'--vex-format {vex_choice} writes no separate file, so --vex-output cannot be used. '
             f'"embed" puts the VEX into the SBOM and "none" writes no VEX at all.'
         )
 
@@ -91,7 +91,7 @@ def _check_vex_options(args: Dict[str, Any]) -> None:
     # Both documents would be written through their own file handle, so neither
     # would survive.
     if args['output_file'] and os.path.realpath(args['output_file']) == os.path.realpath(vex_output):
-        log.die('The SBOM and the VEX cannot be written to the same file. Use --vex embed for one document.')
+        log.die('The SBOM and the VEX cannot be written to the same file. Use --vex-format embed for one document.')
 
     vexfmt = formats.VEX_FORMATS[vex_choice]
     fmt = formats.SBOM_FORMATS[args['format']]
@@ -106,14 +106,14 @@ def cmd_create(args: Dict[str, Any]) -> int:
     _check_vex_options(args)
 
     fmt = formats.SBOM_FORMATS[args['format']]
-    separate = args['vex'] not in formats.VEX_IN_SBOM
+    separate = args['vex_format'] not in formats.VEX_IN_SBOM
     model = sbom.build(args, args['input_file'])
 
     # Build the VEX model before the exclusion list is cleared below, so the VEX
     # file keeps all the exclusions.
     vexdoc = vex.build(model) if separate else None
 
-    if args['vex'] != 'embed':
+    if args['vex_format'] != 'embed':
         # All formats write their vulnerability information from this one list.
         # Clearing it is enough.
         for pkg in model.packages:
@@ -125,7 +125,7 @@ def cmd_create(args: Dict[str, Any]) -> int:
     text = fmt.backend.render(model, format=fmt.encoding, version=fmt.version, doc_id=doc_id)
 
     if vexdoc is not None:
-        vexfmt = formats.VEX_FORMATS[args['vex']]
+        vexfmt = formats.VEX_FORMATS[args['vex_format']]
         if vexfmt.linked:
             vexdoc.sbom_id = doc_id
         # The same helper as the -o file, so both create missing directories.
@@ -936,9 +936,10 @@ def main(
     help='When processing manifest files, disregard the conditions for the "if" key.',
 )
 @click.option(
-    '--vex',
+    '--vex-format',
+    'vex_format',
     type=click.Choice(list(formats.VEX_IN_SBOM) + list(formats.VEX_FORMATS)),
-    default=os.environ.get('SBOM_CREATE_VEX', 'embed'),
+    default=os.environ.get('SBOM_CREATE_VEX_FORMAT', 'embed'),
     help=(
         'What to do with the vulnerability information, meaning the excluded CVEs. '
         'embed - write it into the SBOM (default). It becomes CycloneDX '
@@ -958,8 +959,8 @@ def main(
     metavar='VEX_FILE',
     default=None,
     help=(
-        'Write the separate VEX document to VEX_FILE. Needed when --vex selects a '
-        'VEX format, and cannot be used with --vex embed or --vex none.'
+        'Write the separate VEX document to VEX_FILE. Needed when --vex-format selects '
+        'a VEX format, and cannot be used with --vex-format embed or --vex-format none.'
     ),
 )
 @no_sync_excluded_cves_option
@@ -986,7 +987,7 @@ def create(ctx: click.Context, **params: Any) -> None:
     metavar='VEX_FILE',
     multiple=True,
     help=(
-        'Read a standalone VEX document, as written by "create --vex", and use its '
+        'Read a standalone VEX document, as written by "create --vex-output", and use its '
         'not_affected statements when reporting. Can be used more than once. A '
         'CycloneDX VEX links to one SBOM and is refused for any other one. An '
         'OpenVEX document names products by PURL and CPE and works with any SBOM.'

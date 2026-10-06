@@ -37,7 +37,7 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
         args: PropertyDict,
         sbom_file: str,
         sbom_format: str,
-        vex: str,
+        vex_format: str,
         vex_output: str,
         **action_args: Any,
     ) -> None:
@@ -52,10 +52,10 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
             raise FatalError(f'unknown SBOM format "{sbom_format}"; choose from: {", ".join(SBOM_FORMATS)}')
 
         # None for embed and none, which write no separate file.
-        vexfmt = VEX_FORMATS.get(vex)
-        if vexfmt is None and vex not in VEX_IN_SBOM:
+        vexfmt = VEX_FORMATS.get(vex_format)
+        if vexfmt is None and vex_format not in VEX_IN_SBOM:
             choices = ', '.join(list(VEX_IN_SBOM) + list(VEX_FORMATS))
-            raise FatalError(f'unknown --vex value "{vex}"; choose from: {choices}')
+            raise FatalError(f'unknown --vex-format value "{vex_format}"; choose from: {choices}')
 
         proj_desc_path = get_proj_desc_path(args)
         proj_desc = get_proj_desc(proj_desc_path)
@@ -75,8 +75,8 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
             'create',
             '--format',
             sbom_format,
-            '--vex',
-            vex,
+            '--vex-format',
+            vex_format,
             '--rem-unused',
             '--rem-config',
             '--output-file',
@@ -166,7 +166,7 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
                         'default': 'spdx-tag-value',
                     },
                     {
-                        'names': ['--vex'],
+                        'names': ['--vex-format', 'vex_format'],
                         'help': (
                             'What to do with the vulnerability information, meaning the '
                             'excluded CVEs. embed - write it into the SBOM (default). '
@@ -176,14 +176,14 @@ def action_extensions(base_actions: dict, project_path: str) -> dict:
                             'needs --format cyclonedx-json.'
                         ),
                         'type': str,
-                        'default': os.environ.get('SBOM_CREATE_VEX', 'embed'),
+                        'default': os.environ.get('SBOM_CREATE_VEX_FORMAT', 'embed'),
                     },
                     {
                         'names': ['--vex-output', 'vex_output'],
                         'help': (
-                            'Output VEX file path. Used only when --vex selects a VEX format. '
+                            'Output VEX file path. Used only when --vex-format selects a VEX format. '
                             'By default the VEX is created in the project build directory, '
-                            'named after the application, with an extension matching --vex '
+                            'named after the application, with an extension matching --vex-format '
                             '(e.g. .openvex.json, .vex.cdx.json).'
                         ),
                         'type': str,

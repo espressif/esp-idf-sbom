@@ -57,7 +57,7 @@ SBOM_FORMATS: Dict[str, SbomFormat] = {
 
 
 class VexFormat(NamedTuple):
-    """One create --vex choice that writes a file. Same as SbomFormat, plus "linked".
+    """One create --vex-format choice that writes a file. Same as SbomFormat, plus "linked".
 
     A linked format points to the SBOM document. A CycloneDX VEX uses a BOM-Link
     built from the SBOM serialNumber, so it needs a CycloneDX SBOM. OpenVEX names
@@ -70,7 +70,7 @@ class VexFormat(NamedTuple):
     ext: str
 
 
-# --vex values that are not a format: the VEX goes into the SBOM, or nowhere.
+# --vex-format values that write no VEX file: the VEX goes into the SBOM, or nowhere.
 VEX_IN_SBOM = ('embed', 'none')
 
 VEX_FORMATS: Dict[str, VexFormat] = {
