@@ -10,9 +10,11 @@ import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 from esp_idf_sbom.libsbom import CPE  # noqa: E402
+from esp_idf_sbom.libsbom.vexvalues import VexJustification  # noqa: E402
 
 CVE_RE = re.compile(r'CVE-\d{4}-\d{4,7}')
 VERSION_KEYS = ('versionStartIncluding', 'versionStartExcluding', 'versionEndIncluding', 'versionEndExcluding')
+JUSTIFICATIONS = tuple(justification.value for justification in VexJustification)
 
 
 def validate_scoped(cve_id: str, value: dict) -> list:
@@ -51,6 +53,8 @@ def validate_scoped(cve_id: str, value: dict) -> list:
             errors.append(f'{cve_id}: cpes[{idx}] has both versionStartIncluding and versionStartExcluding')
         if 'versionEndIncluding' in entry and 'versionEndExcluding' in entry:
             errors.append(f'{cve_id}: cpes[{idx}] has both versionEndIncluding and versionEndExcluding')
+    if 'justification' in value and value['justification'] not in JUSTIFICATIONS:
+        errors.append(f'{cve_id}: `justification` must be one of: {", ".join(JUSTIFICATIONS)}')
     return errors
 
 

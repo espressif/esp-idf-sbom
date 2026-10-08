@@ -14,11 +14,13 @@ The cve-keywords, which have no native slot, are kept as a namespaced property.
 Both round-trip and keep check seeing every CPE.
 """
 
+import copy
 import datetime
 import json
 import re
 import uuid
 from collections import defaultdict
+from dataclasses import replace
 from typing import Any
 from typing import Dict
 from typing import List
@@ -46,6 +48,7 @@ from esp_idf_sbom.libsbom.sbom import LicenseRef
 from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
 from esp_idf_sbom.libsbom.sbom import PackageKind
+from esp_idf_sbom.libsbom.sbom import VexAssessment
 from esp_idf_sbom.libsbom.sbom import declared_first
 from esp_idf_sbom.libsbom.sbom import kind_and_name
 from esp_idf_sbom.libsbom.sbom import simplify_licenses
@@ -53,6 +56,9 @@ from esp_idf_sbom.libsbom.sbom import simplify_licenses
 # Namespaced component property for data CycloneDX has no native slot for. Extra
 # CPEs use the standard evidence.identity[] instead (see _component).
 _PROP_CVE_KEYWORD = 'esp-idf-sbom:cve-keyword'
+# Vulnerability property with the CISA justification. The CycloneDX justification
+# cannot say which of two CISA values it was, see _ANALYSIS_JUSTIFICATION.
+_PROP_JUSTIFICATION = 'esp-idf-sbom:justification'
 
 # The model's package role -> CycloneDX component type (default 'library').
 _KIND_TYPE = {
@@ -276,8 +282,8 @@ _ANALYSIS_STATE = {
 }
 
 # component_not_present and vulnerable_code_not_present both map to
-# code_not_present, so this map cannot be reversed. Parsing reads back the status
-# and the detail text, not the justification.
+# code_not_present, so this map cannot be reversed. The CISA value is also written
+# to the _PROP_JUSTIFICATION property, and parsing reads it from there.
 _ANALYSIS_JUSTIFICATION = {
     vex.VexJustification.COMPONENT_NOT_PRESENT: 'code_not_present',
     vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT: 'code_not_present',
@@ -297,14 +303,27 @@ def _vulnerability(statement: vex.VexStatement, bom_link: str = '') -> Dict[str,
     analysis: Dict[str, Any] = {'state': _ANALYSIS_STATE[statement.status]}
     if statement.justification is not None:
         analysis['justification'] = _ANALYSIS_JUSTIFICATION[statement.justification]
+    if statement.response:
+        analysis['response'] = [response.value for response in statement.response]
     analysis['detail'] = statement.impact_statement
+    if statement.first_issued:
+        analysis['firstIssued'] = statement.first_issued
+    if statement.last_updated:
+        analysis['lastUpdated'] = statement.last_updated
 
-    return {
+    vulnerability: Dict[str, Any] = {
         'bom-ref': f'vex-{statement.products[0].ref}-{statement.vulnerability}',
         'id': statement.vulnerability,
-        'analysis': analysis,
-        'affects': [{'ref': f'{bom_link}#{p.ref}' if bom_link else p.ref} for p in statement.products],
     }
+    if statement.nvd_url:
+        vulnerability['source'] = {'name': 'NVD', 'url': statement.nvd_url}
+    if statement.action_statement:
+        vulnerability['recommendation'] = statement.action_statement
+    vulnerability['analysis'] = analysis
+    vulnerability['affects'] = [{'ref': f'{bom_link}#{p.ref}' if bom_link else p.ref} for p in statement.products]
+    if statement.justification is not None:
+        vulnerability['properties'] = [{'name': _PROP_JUSTIFICATION, 'value': statement.justification.value}]
+    return vulnerability
 
 
 def new_document_id(sbom: SBOM) -> str:
@@ -374,18 +393,23 @@ def _bom_link(vexdoc: vex.Vex) -> str:
     """Return the BOM-Link for the SBOM this VEX belongs to.
 
     The schema pattern is ^urn:cdx:<uuid>/[1-9][0-9]*$, so the serialNumber is
-    used without the urn:uuid: prefix.
+    used without the urn:uuid: prefix. Raise ValueError when the SBOM id is not a
+    CycloneDX serialNumber, for example the namespace of an SPDX SBOM.
     """
     if not vexdoc.sbom_id:
         raise ValueError('a standalone CycloneDX VEX needs the serialNumber of its SBOM')
     prefix = 'urn:uuid:'
-    serial = vexdoc.sbom_id[len(prefix) :] if vexdoc.sbom_id.startswith(prefix) else vexdoc.sbom_id
-    return f'urn:cdx:{serial}/{vexdoc.sbom_version}'
+    if not vexdoc.sbom_id.startswith(prefix):
+        raise ValueError(
+            f'a standalone CycloneDX VEX needs the serialNumber of a CycloneDX SBOM, not "{vexdoc.sbom_id}"'
+        )
+    return f'urn:cdx:{vexdoc.sbom_id[len(prefix) :]}/{vexdoc.sbom_version}'
 
 
 def _render_vex_json(vexdoc: vex.Vex, version: str) -> str:
-    serial = 'urn:uuid:' + str(uuid.uuid4())
-    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    serial = vexdoc.doc_id or 'urn:uuid:' + str(uuid.uuid4())
+    # metadata.timestamp is when this version of the BOM was created.
+    timestamp = vexdoc.last_updated or datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     link = _bom_link(vexdoc)
 
     # A BOM with assessments only, no components and no dependencies. The SBOM is
@@ -395,7 +419,7 @@ def _render_vex_json(vexdoc: vex.Vex, version: str) -> str:
         'bomFormat': 'CycloneDX',
         'specVersion': version,
         'serialNumber': serial,
-        'version': 1,
+        'version': vexdoc.doc_version,
         'metadata': {
             'timestamp': timestamp,
             'tools': {'components': [_tool_component()]},
@@ -409,6 +433,9 @@ def _render_vex_json(vexdoc: vex.Vex, version: str) -> str:
         ],
         'vulnerabilities': [_vulnerability(statement, bom_link=link) for statement in vexdoc.statements],
     }
+    # The author of the statements, as in the SBOM.
+    if vexdoc.manufacturer:
+        bom['metadata']['manufacturer'] = _entity(vexdoc.manufacturer)
 
     return json.dumps(bom, indent=2)
 
@@ -430,8 +457,7 @@ def render_vex(vexdoc: vex.Vex, format: str = 'json', version: str = '1.6') -> s
 # ===========================================================================
 
 # Reverse of _ANALYSIS_STATE. CycloneDX has more states than CISA, so several
-# map to the same one. The justification is not read back at all, because
-# code_not_present has two CISA meanings and nothing downstream uses it.
+# map to the same one.
 _VEX_STATUS = {
     'not_affected': vex.VexStatus.NOT_AFFECTED,
     'false_positive': vex.VexStatus.NOT_AFFECTED,
@@ -441,12 +467,89 @@ _VEX_STATUS = {
     'in_triage': vex.VexStatus.UNDER_INVESTIGATION,
 }
 
+# Reverse of _ANALYSIS_JUSTIFICATION, for a file without the CISA value in the
+# _PROP_JUSTIFICATION property. CycloneDX describes code_not_present as "The code
+# has been removed or tree-shaked", which is vulnerable_code_not_present in CISA
+# terms. The other CycloneDX justifications have no CISA match.
+_VEX_JUSTIFICATION = {
+    'code_not_present': vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT,
+    'code_not_reachable': vex.VexJustification.VULNERABLE_CODE_NOT_IN_EXECUTE_PATH,
+    'protected_at_runtime': vex.VexJustification.VULNERABLE_CODE_CANNOT_BE_CONTROLLED_BY_ADVERSARY,
+    'protected_by_mitigating_control': vex.VexJustification.INLINE_MITIGATIONS_ALREADY_EXIST,
+}
+
+
+def _parse_justification(vulnerability: Dict[str, Any]) -> Optional[vex.VexJustification]:
+    """The CISA justification of a vulnerability entry.
+
+    The property is used only when it agrees with the CycloneDX justification,
+    because the CycloneDX field is the standard one. A person or another tool may
+    change it and leave the property as it was.
+    """
+    justification = vulnerability.get('analysis', {}).get('justification', '')
+    if not justification:
+        return None
+    props = vulnerability.get('properties', [])
+    cisa = next((p.get('value', '') for p in props if p.get('name') == _PROP_JUSTIFICATION), '')
+    for value in vex.VexJustification:
+        if value.value == cisa and _ANALYSIS_JUSTIFICATION[value] == justification:
+            return value
+    return _VEX_JUSTIFICATION.get(justification)
+
+
+def _parse_assessment(vulnerability: Dict[str, Any], issued: str) -> Optional[VexAssessment]:
+    """Read the analysis of a vulnerability entry, in an SBOM or in a standalone
+    VEX. Return None for an unknown state.
+
+    issued is the metadata.timestamp of the document. An analysis without
+    firstIssued gets it, so that its time does not change when a newer version
+    of the document gets a newer timestamp. An analysis without lastUpdated was
+    not changed since it was first issued, as CISA says the two are initially the
+    same.
+    """
+    cve = vulnerability.get('id', '')
+    analysis = vulnerability.get('analysis', {})
+    state = analysis.get('state', '')
+    if state not in _VEX_STATUS:
+        log.warn(f'Skipping CycloneDX vulnerability "{cve}" with unknown analysis state "{state}".')
+        return None
+
+    first_issued = analysis.get('firstIssued') or issued
+    response = []
+    for value in analysis.get('response', []):
+        try:
+            response.append(vex.VexResponse(value))
+        except ValueError:
+            log.warn(f'Ignoring unknown CycloneDX response "{value}" for {cve}.')
+
+    return VexAssessment(
+        vulnerability=cve,
+        status=_VEX_STATUS[state],
+        justification=_parse_justification(vulnerability),
+        response=response,
+        impact_statement=analysis.get('detail', ''),
+        action_statement=vulnerability.get('recommendation', ''),
+        first_issued=first_issued,
+        last_updated=analysis.get('lastUpdated') or first_issued,
+    )
+
+
 # A BOM-Link names a document, and with a fragment it names one element in it.
 # The document form is used by the externalReferences entry, the element form by
 # every affects[] entry.
 _BOM_LINK = r'urn:cdx:(?P<serial>[0-9a-f-]{36})/(?P<version>[1-9][0-9]*)'
 _BOM_LINK_DOCUMENT_RE = re.compile(f'^{_BOM_LINK}$')
 _BOM_LINK_ELEMENT_RE = re.compile(f'^{_BOM_LINK}' + r'#(?P<ref>.+)$')
+
+
+def parse_bom_link(value: str) -> Optional[Tuple[str, str, int]]:
+    """Split a BOM-Link to one element of a CycloneDX document into the ref of the
+    element and the serialNumber and version of the document. Return None for
+    any other value."""
+    match = _BOM_LINK_ELEMENT_RE.match(value)
+    if not match:
+        return None
+    return match.group('ref'), 'urn:uuid:' + match.group('serial'), int(match.group('version'))
 
 
 def _parse_bom_reference(bom: Dict[str, Any]) -> Tuple[str, int]:
@@ -471,14 +574,11 @@ def _parse_affects(ref: str) -> Tuple[vex.VexProduct, str, int]:
     version as well as the component ref. A VEX embedded in an SBOM uses a plain
     bom-ref, and then there is no SBOM id to read.
     """
-    match = _BOM_LINK_ELEMENT_RE.match(ref)
-    if not match:
+    link = parse_bom_link(ref)
+    if link is None:
         return vex.VexProduct(ref=ref), '', 1
-    return (
-        vex.VexProduct(ref=match.group('ref')),
-        'urn:uuid:' + match.group('serial'),
-        int(match.group('version')),
-    )
+    element, sbom_id, version = link
+    return vex.VexProduct(ref=element), sbom_id, version
 
 
 def parse_vex(text: str) -> vex.Vex:
@@ -488,13 +588,12 @@ def parse_vex(text: str) -> vex.Vex:
     # The document reference is where the pairing belongs. The links in affects[]
     # have to agree with it, and stand in for it when it is missing.
     sbom_id, sbom_version = _parse_bom_reference(bom)
+    timestamp = bom.get('metadata', {}).get('timestamp', '')
 
     statements = []
     for vulnerability in bom.get('vulnerabilities', []):
-        analysis = vulnerability.get('analysis', {})
-        state = analysis.get('state', '')
-        if state not in _VEX_STATUS:
-            log.warn(f'Skipping CycloneDX VEX entry with unknown analysis state "{state}".')
+        assessment = _parse_assessment(vulnerability, timestamp)
+        if assessment is None:
             continue
 
         products = []
@@ -510,16 +609,160 @@ def parse_vex(text: str) -> vex.Vex:
                     f'the statements name more than one SBOM, "{sbom_id}/{sbom_version}" and "{link_id}/{link_version}"'
                 )
 
-        statements.append(
-            vex.VexStatement(
-                vulnerability=vulnerability.get('id', ''),
-                status=_VEX_STATUS[state],
-                products=products,
-                impact_statement=analysis.get('detail', ''),
-            )
-        )
+        statements.append(vex.VexStatement(**vars(assessment), products=products, time=assessment.last_updated))
 
-    return vex.Vex(statements=statements, sbom_id=sbom_id, sbom_version=sbom_version)
+    return vex.Vex(
+        statements=statements,
+        doc_id=bom.get('serialNumber', ''),
+        doc_version=int(bom.get('version', 1)),
+        last_updated=timestamp,
+        sbom_id=sbom_id,
+        sbom_version=sbom_version,
+        text=text,
+    )
+
+
+# ===========================================================================
+# Update: statements -> an existing standalone CycloneDX VEX
+# ===========================================================================
+
+# The analysis fields that come from the model.
+_ANALYSIS_FIELDS = ('state', 'justification', 'response', 'detail', 'firstIssued', 'lastUpdated')
+
+
+def _says(entry: Dict[str, Any]) -> Tuple[Any, ...]:
+    """What a vulnerability entry says: the fields that come from the model, without
+    the times. A missing field and an empty one are the same."""
+    analysis = entry.get('analysis', {})
+    properties = entry.get('properties', [])
+    justification = next((p.get('value') for p in properties if p.get('name') == _PROP_JUSTIFICATION), None)
+    return (
+        analysis.get('state'),
+        analysis.get('justification'),
+        analysis.get('response') or [],
+        analysis.get('detail') or '',
+        entry.get('recommendation') or '',
+        justification,
+    )
+
+
+def _write(entry: Dict[str, Any], written: Dict[str, Any], issued: str, now: str) -> None:
+    """Write the fields that come from the model into a vulnerability entry. The
+    other fields of the entry stay. The entry keeps the time when it was first
+    issued, and an entry without it gets issued, the time of the document."""
+    analysis = entry.get('analysis', {})
+    first_issued = analysis.get('firstIssued') or issued or now
+    analysis = {key: value for key, value in analysis.items() if key not in _ANALYSIS_FIELDS}
+    entry['analysis'] = {**analysis, **written['analysis'], 'firstIssued': first_issued, 'lastUpdated': now}
+    if 'recommendation' in written:
+        entry['recommendation'] = written['recommendation']
+    else:
+        entry.pop('recommendation', None)
+    properties = [p for p in entry.get('properties', []) if p.get('name') != _PROP_JUSTIFICATION]
+    properties += written.get('properties', [])
+    if properties:
+        entry['properties'] = properties
+    else:
+        entry.pop('properties', None)
+
+
+def _affects_ref(affects: Dict[str, Any]) -> str:
+    """The ref of the package that an affects item names. A ref names one package."""
+    product, _, _ = _parse_affects(affects.get('ref', ''))
+    return product.ref
+
+
+def _entries_naming(entries: List[Dict[str, Any]], cve: str, ref: str) -> List[Dict[str, Any]]:
+    """The entries of the CVE that name the package. Usually there is one, but a
+    document can have more, and then they may say different things."""
+    return [
+        entry
+        for entry in entries
+        if entry.get('id') == cve and any(_affects_ref(affects) == ref for affects in entry.get('affects', []))
+    ]
+
+
+def _unique_bom_ref(entries: List[Dict[str, Any]], wanted: str) -> str:
+    """wanted, or wanted with a number when an entry already uses it. A bom-ref must
+    be unique in the document."""
+    taken = {entry.get('bom-ref') for entry in entries}
+    ref, number = wanted, 1
+    while ref in taken:
+        number += 1
+        ref = f'{wanted}-{number}'
+    return ref
+
+
+def _without_other_packages(entries: List[Dict[str, Any]], entry: Dict[str, Any], refs: Set[str]) -> Dict[str, Any]:
+    """An entry that names only the packages refs.
+
+    This is the entry itself when it names no other package. Otherwise the affects
+    items of the packages refs move into a copy of the entry, placed right after
+    it, and the copy is returned. The other items stay in the entry, with what it
+    says.
+    """
+    ours = [affects for affects in entry['affects'] if _affects_ref(affects) in refs]
+    others = [affects for affects in entry['affects'] if _affects_ref(affects) not in refs]
+    if not others:
+        return entry
+    entry['affects'] = others
+    split = copy.deepcopy(entry)
+    split['affects'] = ours
+    if 'bom-ref' in split:
+        split['bom-ref'] = _unique_bom_ref(entries, f'vex-{_affects_ref(ours[0])}-{entry.get("id", "")}')
+    position = next(index for index, e in enumerate(entries) if e is entry)
+    entries.insert(position + 1, split)
+    return split
+
+
+def update_vex(current: vex.Vex, statements: List[vex.VexStatement], sbom: SBOM) -> str:
+    """Write statements into the standalone CycloneDX VEX document current.
+
+    A statement is written only where it differs from what the document says, and
+    then only the fields that come from the model change: the analysis, the
+    recommendation and the justification property. Everything else stays, for
+    example the ratings of a vulnerability. Packages that the document does not
+    name yet get a new entry at the end. When nothing differs, the text of the
+    document is returned as it is.
+
+    :param current: the VEX document, as it was read
+    :param statements: the statements to write, from vex.build()
+    :param sbom: the SBOM model. CycloneDX names a package by its ref, so it is not
+        needed here, but the OpenVEX backend needs it.
+    """
+    bom = json.loads(current.text)
+    entries = bom.setdefault('vulnerabilities', [])
+    # An entry without its own times has the time of the document.
+    issued = bom.get('metadata', {}).get('timestamp', '')
+    now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    changed = False
+    for statement in statements:
+        written = _vulnerability(statement)
+        refs = {product.ref for product in statement.products}
+        new = []
+        for product in statement.products:
+            naming = _entries_naming(entries, statement.vulnerability, product.ref)
+            if not naming:
+                # The document says nothing about this package yet.
+                new.append(product)
+            # Every entry gets the statement, so that the entries agree afterwards.
+            for entry in naming:
+                if _says(entry) != _says(written):
+                    entry = _without_other_packages(entries, entry, refs)
+                    _write(entry, written, issued, now)
+                    changed = True
+        if new:
+            statement = replace(statement, products=new, first_issued=now, last_updated=now)
+            added = _vulnerability(statement, bom_link=_bom_link(current))
+            added['bom-ref'] = _unique_bom_ref(entries, added['bom-ref'])
+            entries.append(added)
+            changed = True
+
+    if not changed:
+        return current.text
+    bom['version'] = current.doc_version + 1
+    bom.setdefault('metadata', {})['timestamp'] = now
+    return json.dumps(bom, indent=2)
 
 
 # ===========================================================================
@@ -555,9 +798,7 @@ def _entity_supplier(entity: Dict[str, Any]) -> str:
     return f'{name} ({email})' if email else name
 
 
-def _package_from_component(
-    comp: Dict[str, Any], depends_on: List[str], cve_exclude_list: List[Dict[str, str]]
-) -> Package:
+def _package_from_component(comp: Dict[str, Any], depends_on: List[str], assessments: List[VexAssessment]) -> Package:
     ref = comp.get('bom-ref', '')
     kind, name = kind_and_name(ref)
 
@@ -606,7 +847,7 @@ def _package_from_component(
         purl=comp.get('purl', ''),
         cpes=cpes,
         checksum_sha256=checksum,
-        cve_exclude_list=cve_exclude_list,
+        assessments=assessments,
         cve_keywords=cve_keywords,
         depends_on=depends_on,
     )
@@ -625,19 +866,20 @@ def _parse_json(text: str) -> SBOM:
 
     depends_on = {dep.get('ref', ''): list(dep.get('dependsOn', [])) for dep in bom.get('dependencies', [])}
 
-    # VEX not_affected statements -> per-component cve-exclude-list.
-    excludes: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+    # VEX statements -> per-component assessments.
+    assessments: Dict[str, List[VexAssessment]] = defaultdict(list)
+    timestamp = bom.get('metadata', {}).get('timestamp', '')
     for vuln in bom.get('vulnerabilities', []):
-        if vuln.get('analysis', {}).get('state') != 'not_affected':
+        assessment = _parse_assessment(vuln, timestamp)
+        if assessment is None:
             continue
-        entry = {'cve': vuln.get('id', ''), 'reason': vuln.get('analysis', {}).get('detail', '')}
         for affect in vuln.get('affects', []):
             ref = affect.get('ref', '')
             if ref:
-                excludes[ref].append(entry)
+                assessments[ref].append(replace(assessment))
 
     packages = [
-        _package_from_component(c, depends_on.get(c.get('bom-ref', ''), []), excludes.get(c.get('bom-ref', ''), []))
+        _package_from_component(c, depends_on.get(c.get('bom-ref', ''), []), assessments.get(c.get('bom-ref', ''), []))
         for c in components
     ]
 
