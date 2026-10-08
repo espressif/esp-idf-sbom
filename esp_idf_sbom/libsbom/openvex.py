@@ -182,6 +182,7 @@ def _parse_statement(statement: Dict[str, Any], issued: str) -> Optional[vex.Vex
         action_statement=statement.get('action_statement', ''),
         first_issued=first_issued,
         last_updated=statement.get('last_updated') or first_issued,
+        time=first_issued,
     )
 
 

@@ -609,7 +609,7 @@ def parse_vex(text: str) -> vex.Vex:
                     f'the statements name more than one SBOM, "{sbom_id}/{sbom_version}" and "{link_id}/{link_version}"'
                 )
 
-        statements.append(vex.VexStatement(**vars(assessment), products=products))
+        statements.append(vex.VexStatement(**vars(assessment), products=products, time=assessment.last_updated))
 
     return vex.Vex(
         statements=statements,

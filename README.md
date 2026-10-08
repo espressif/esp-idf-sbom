@@ -333,7 +333,12 @@ reports the already analyzed CVEs as vulnerabilities. Pass the VEX file so that
     esp-idf-sbom check --vex app.openvex.json app.spdx
 
 The option can be used more than once. A CycloneDX VEX is refused for any SBOM
-other than the one it was created with.
+other than the one it was created with. When the VEX files have more than one
+statement about a CVE of a package, the newest statement is used. The time of an
+OpenVEX statement is its `timestamp`, as in the OpenVEX specification. The time
+of a CycloneDX statement is its `lastUpdated`, because `vex update` changes a
+CycloneDX statement in place. With the same time, the statement of the later
+file is used.
 
 A CVE is excluded when the VEX file says that it does not apply, or that it is
 already fixed. When the VEX file says that the CVE affects the package, `check`

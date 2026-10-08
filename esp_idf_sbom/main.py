@@ -167,9 +167,18 @@ def _apply_vex(model: sbom.SBOM, vexdoc: vex.Vex, path: str) -> None:
 
 
 def _apply_vex_files(model: sbom.SBOM, paths: Tuple[str, ...]) -> None:
-    """Merge standalone VEX documents into the SBOM model that was just loaded."""
+    """Merge standalone VEX documents into the SBOM model that was just loaded.
+
+    The statements of all files are applied together, so that the newest statement
+    about a CVE of a package wins, and not the one from the last file, see
+    vex.apply().
+    """
+    statements: List[vex.VexStatement] = []
     for path in paths:
-        _apply_vex(model, _load_vex(path), path)
+        vexdoc = _load_vex(path)
+        _check_sbom(model, vexdoc, path)
+        statements += vexdoc.statements
+    vex.apply(model, vex.Vex(statements=statements))
 
 
 def cmd_check(args: Dict[str, Any]) -> int:

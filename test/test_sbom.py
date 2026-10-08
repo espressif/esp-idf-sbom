@@ -1649,6 +1649,50 @@ def test_vex_document_reads_back_id_version_and_times() -> None:
     ]
 
 
+def test_openvex_newest_statement_wins() -> None:
+    """A newer OpenVEX statement about a CVE of a product overrides an older one,
+    also when it comes first in the document. go-vex, the OpenVEX library, does the
+    same."""
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    def statement(status: str, timestamp: str) -> dict:
+        return {
+            'vulnerability': {'name': 'CVE-2026-0001'},
+            'timestamp': timestamp,
+            'products': [{'@id': 'pkg:generic/freertos@10.0.0'}],
+            'status': status,
+        }
+
+    document = {
+        '@context': 'https://openvex.dev/ns/v0.2.0',
+        '@id': 'urn:uuid:11111111-2222-3333-4444-555555555555',
+        'author': 'Unknown Author',
+        'timestamp': '2026-01-01T10:00:00Z',
+        'version': 2,
+        'statements': [
+            # go-vex writes the time of a statement with nanoseconds.
+            statement('fixed', '2026-02-01T10:00:00.123456789Z'),
+            statement('under_investigation', '2026-01-01T10:00:00Z'),
+        ],
+    }
+    project = Package(ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT)
+    freertos = Package(
+        ref='COMPONENT-freertos',
+        name='freertos',
+        package_name='freertos',
+        kind=PackageKind.COMPONENT,
+        version='10.0.0',
+        purl='pkg:generic/freertos@10.0.0',
+    )
+    model = SBOM(name='app', root='PROJECT-app', packages=[project, freertos])
+    vex.apply(model, openvex.parse_vex(json.dumps(document)))
+    assert [assessment.status for assessment in freertos.assessments] == [vex.VexStatus.FIXED]
+
+
 def test_vex_build_writes_a_new_document() -> None:
     """A VEX built from an SBOM is a new document: a new id each time, version 1,
     and no statement times, so the output of create does not change."""
@@ -2404,6 +2448,60 @@ def test_check_vex_reports_cve_not_found_by_scan(tmp_path: Path) -> None:
     ]
     row = rows['CVE-2025-27810']
     assert (row['status'], row['cvss_base_score'], row['cve_desc'], row['cpe']) == ('', '', '', '')
+
+
+def test_check_vex_newest_statement_wins(tmp_path: Path) -> None:
+    """When the VEX files have more than one statement about a CVE of a package,
+    check uses the newest one, whatever the order of the files. OpenVEX uses the
+    timestamp of a statement, and CycloneDX its lastUpdated. With the same time,
+    the statement of the later file wins."""
+    import csv
+    import io
+
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+
+    sbom_file, _ = _freertos_sbom_and_vex(tmp_path)
+    serial = json.loads(sbom_file.read_text())['serialNumber']
+    product = vex.VexProduct(ref='COMPONENT-freertos', purl='pkg:generic/freertos@10.0.0')
+    # A Mbed TLS CVE, so the scan of FreeRTOS does not find it.
+    cve = 'CVE-2025-27810'
+
+    def write(name: str, backend, status: str, first_issued: str, last_updated: str) -> str:
+        statement = vex.VexStatement(
+            vulnerability=cve,
+            status=vex.VexStatus(status),
+            action_statement='Update.' if status == 'affected' else '',
+            first_issued=first_issued,
+            last_updated=last_updated,
+            products=[product],
+        )
+        path = tmp_path / name
+        path.write_text(backend.render_vex(vex.Vex(statements=[statement], sbom_id=serial)))
+        return str(path)
+
+    def vex_status(*vex_files: str) -> str:
+        p = _check_freertos(sbom_file, *[arg for path in vex_files for arg in ('--vex', path)])
+        rows = {row['cve_id']: row for row in csv.DictReader(io.StringIO(p.stdout))}
+        return str(rows[cve]['vex_status'])
+
+    march = '2026-03-01T10:00:00Z'
+    fixed = write('fixed.openvex.json', openvex, 'fixed', march, march)
+    older = write('older.vex.cdx.json', cyclonedx, 'affected', '2025-01-01T10:00:00Z', '2026-01-01T10:00:00Z')
+    assert vex_status(fixed, older) == vex_status(older, fixed) == 'fixed'
+
+    # vex update changes a CycloneDX statement in place, so it keeps the time when
+    # it was first issued. The time of the change decides.
+    changed = write('changed.vex.cdx.json', cyclonedx, 'affected', '2025-01-01T10:00:00Z', '2026-04-01T10:00:00Z')
+    assert vex_status(fixed, changed) == vex_status(changed, fixed) == 'affected'
+
+    # The last_updated of an OpenVEX statement does not count.
+    edited = write('edited.openvex.json', openvex, 'fixed', '2026-02-01T10:00:00Z', '2026-05-01T10:00:00Z')
+    assert vex_status(edited, changed) == vex_status(changed, edited) == 'affected'
+
+    same_time = write('same.vex.cdx.json', cyclonedx, 'affected', march, march)
+    assert (vex_status(fixed, same_time), vex_status(same_time, fixed)) == ('affected', 'fixed')
 
 
 def test_check_vex_excludes_reported_cve() -> None:
