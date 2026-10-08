@@ -58,8 +58,13 @@ def _product(product: vex.VexProduct) -> Optional[Dict[str, Any]]:
         )
         return None
 
-    # OpenVEX suggests using the purl as the component IRI.
-    return {'@id': identifiers.get('purl', product.ref), 'identifiers': identifiers}
+    component: Dict[str, Any] = {}
+    # @id is an optional IRI, and OpenVEX suggests the purl for it. A package without
+    # a purl has no IRI, so it gets no @id.
+    if product.purl:
+        component['@id'] = product.purl
+    component['identifiers'] = identifiers
+    return component
 
 
 def _fields(statement: vex.VexStatement) -> Dict[str, Any]:
@@ -77,7 +82,13 @@ def _fields(statement: vex.VexStatement) -> Dict[str, Any]:
 
 
 def _statement(statement: vex.VexStatement) -> Optional[Dict[str, Any]]:
-    products = [p for p in (_product(product) for product in statement.products) if p]
+    products: List[Dict[str, Any]] = []
+    for product in statement.products:
+        component = _product(product)
+        # Packages without a purl and with the same CPE give the same component.
+        # OpenVEX cannot tell them apart, so it is written once.
+        if component is not None and component not in products:
+            products.append(component)
     if not products:
         return None
 

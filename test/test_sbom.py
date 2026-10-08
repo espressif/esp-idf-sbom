@@ -3087,11 +3087,10 @@ def test_vex_update_statement_for_several_packages(tmp_path: Path) -> None:
 
     result = _vex_update(str(sbom_file), str(statements))
     assert result.returncode == 0, result.stderr
+    # The packages have no purl, so OpenVEX names both by the same CPE, once and
+    # without an @id.
     (statement,) = json.loads(result.stdout)['statements']
-    assert [(p['@id'], p['identifiers']['cpe23']) for p in statement['products']] == [
-        ('SUBMODULE-cjson', cpe),
-        ('COMPONENT-espressif__cjson', cpe),
-    ]
+    assert statement['products'] == [{'identifiers': {'cpe23': cpe}}]
     assert 'names 2 packages, SUBMODULE-cjson, COMPONENT-espressif__cjson' in result.stderr
 
 
