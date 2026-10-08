@@ -1058,6 +1058,46 @@ def test_vex_build_without_exclusions() -> None:
     assert vex.build(_sbom_with_file()).statements == []
 
 
+def test_vex_build_merges_equal_statements() -> None:
+    """Packages with the same assessment of a CVE get one statement. Another content
+    or other times give another statement."""
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    def package(name: str, *assessments) -> Package:
+        return Package(
+            ref=f'COMPONENT-{name}',
+            name=name,
+            package_name=name,
+            kind=PackageKind.COMPONENT,
+            assessments=list(assessments),
+        )
+
+    def not_affected(**values):
+        values = {'impact_statement': 'Not used.', **values}
+        return vex.VexAssessment(vulnerability='CVE-2026-0001', status=vex.VexStatus.NOT_AFFECTED, **values)
+
+    fixed = vex.VexAssessment(vulnerability='CVE-2026-0002', status=vex.VexStatus.FIXED)
+    model = SBOM(
+        name='app',
+        root='',
+        packages=[
+            package('a', not_affected()),
+            package('b', not_affected(), fixed),
+            package('c', not_affected(impact_statement='Other.')),
+            package('d', not_affected(first_issued='2020-01-01T00:00:00Z')),
+        ],
+    )
+    assert [(s.vulnerability, [p.ref for p in s.products]) for s in vex.build(model).statements] == [
+        ('CVE-2026-0001', ['COMPONENT-a', 'COMPONENT-b']),
+        ('CVE-2026-0002', ['COMPONENT-b']),
+        ('CVE-2026-0001', ['COMPONENT-c']),
+        ('CVE-2026-0001', ['COMPONENT-d']),
+    ]
+
+
 def test_vex_vocabulary_is_cisa() -> None:
     """The model vocabulary has to stay CISA's. OpenVEX and the SPDX 3.0.1 security
     profile use it verbatim, so only the CycloneDX backend maps out of it; changing

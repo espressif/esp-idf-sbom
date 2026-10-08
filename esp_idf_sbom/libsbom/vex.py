@@ -141,15 +141,22 @@ def _statement(assessment: VexAssessment, pkg: Package) -> VexStatement:
 def build(sbom: SBOM, sbom_id: str = '') -> Vex:
     """Create a VEX model from an SBOM model. This is the VEX side of sbom.build().
 
-    Each assessment becomes one statement for its own package. Statements are not
-    merged across packages, even for the same CVE with the same reason, because
-    then it would not be clear which package each reason was written for.
+    Packages with the same assessment of a CVE get one statement. Some tools, for
+    example Trivy, use only one CycloneDX statement for each CVE.
 
     :param sbom: the SBOM model to read the assessments from
     :param sbom_id: id of the document the SBOM was read from. Backends that link
         a standalone VEX to the SBOM need it. Leave it empty for embedded VEX.
     """
-    statements = [_statement(assessment, pkg) for pkg in sbom.packages for assessment in pkg.assessments]
+    statements: List[VexStatement] = []
+    for pkg in sbom.packages:
+        for assessment in pkg.assessments:
+            same = next((s for s in statements if _assessment(s) == assessment), None)
+            if same is not None:
+                # It says the same, so add the package to it.
+                same.products.append(_product(pkg))
+            else:
+                statements.append(_statement(assessment, pkg))
 
     return Vex(statements=statements, sbom_id=sbom_id, sbom_name=sbom.name, manufacturer=sbom.manufacturer)
 
