@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [build-system]
-requires = ["setuptools>=45"]
+requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "esp-idf-sbom"
-dynamic = ["version"]
+dynamic = ["version", "license"]
 description = "SPDX SBOM generator for ESP-IDF projects"
 readme = "README.md"
 requires-python = ">=3.7"
@@ -21,7 +21,6 @@ classifiers = [
     "Natural Language :: English",
     "Environment :: Console",
     "Topic :: Software Development :: Embedded Systems",
-    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
