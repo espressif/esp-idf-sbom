@@ -395,3 +395,30 @@ CVE-2026-73064:
   reason: >-
     Mbed TLS TLS 1.3 server flaw in 3.2.0 through 3.6.6 and 4.0.0 through
     4.1.0. Fixed in 3.6.7 and 4.1.1
+
+CVE-2026-81507:
+  cpes:
+    - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+      versionStartIncluding: '5.2.8'
+      versionEndExcluding: '5.3'
+    - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+      versionStartIncluding: '5.3.6'
+      versionEndExcluding: '5.4'
+    - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+      versionStartIncluding: '5.4.5'
+      versionEndExcluding: '5.5'
+    - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+      versionStartIncluding: '5.5.5'
+      versionEndExcluding: '6.0'
+    - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+      versionStartIncluding: '6.0.3'
+      versionEndExcluding: '6.1'
+    - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+      versionStartIncluding: '6.1'
+  reason: >-
+    Out-of-bounds read in the BlueDroid L2CAP configuration option parsing
+    (components/bt/host/bluedroid/stack/l2cap/l2c_main.c and l2c_utils.c).
+    Fixed in 5.2.8, 5.3.6, 5.5.5, 6.0.3 and 6.1-rc1. release/v5.4 has the fix
+    (5731c63ece12), so the next 5.4 release, 5.4.5, has it too. The
+    v6.1-beta1 pre-release also reports 6.1.0, but does not have the fix.
+    https://github.com/espressif/esp-idf/security/advisories/GHSA-v335-fxwc-rc44
