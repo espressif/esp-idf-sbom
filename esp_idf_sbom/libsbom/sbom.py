@@ -122,6 +122,10 @@ class VexAssessment:
     response: List[VexResponse] = field(default_factory=list)
     impact_statement: str = ''  # why not affected, the reason from the manifest
     action_statement: str = ''  # what to do, CISA requires it for the affected status
+    # When the statement was first issued and last updated, as the file writes the
+    # time. Empty if not known.
+    first_issued: str = ''
+    last_updated: str = ''
 
     @property
     def suppresses(self) -> bool:

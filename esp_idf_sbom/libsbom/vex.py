@@ -63,13 +63,19 @@ class VexStatement(VexAssessment):
 class Vex:
     """A VEX document: statements plus the id of the SBOM they describe.
 
-    Like the SBOM model, this model has no id of its own. The backend creates the
-    VEX document id when it renders. The SBOM id is different, it describes the
-    input file, and every backend that links back to the SBOM needs it, so it is
-    stored here.
+    The document id, version and times are read from the file, so that an update
+    can keep the id and increase the version. build() leaves them empty, and the
+    backend then writes a new document: a new id, version 1 and the current time.
     """
 
     statements: List[VexStatement] = field(default_factory=list)
+    # The id of this VEX document: the CycloneDX serialNumber or the OpenVEX @id.
+    doc_id: str = ''
+    doc_version: int = 1
+    # When the document was first issued and last updated, as the file writes the
+    # time. CycloneDX has only metadata.timestamp, which is the last update.
+    first_issued: str = ''
+    last_updated: str = ''
     sbom_id: str = ''  # the SBOM's serialNumber / document namespace
     # The SBOM document version. A CycloneDX BOM-Link points to one version of a
     # document, so the link needs it too.

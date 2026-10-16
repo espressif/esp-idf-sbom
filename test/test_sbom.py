@@ -1313,16 +1313,31 @@ def _assessments_of_all_statuses() -> list:
             justification=vex.VexJustification.COMPONENT_NOT_PRESENT,
             response=[vex.VexResponse.WILL_NOT_FIX],
             impact_statement='not used',
+            first_issued='2026-01-01T10:00:00Z',
+            last_updated='2026-01-01T10:00:00Z',
         ),
-        vex.VexAssessment(vulnerability='CVE-2020-2', status=vex.VexStatus.FIXED, impact_statement='patched'),
+        vex.VexAssessment(
+            vulnerability='CVE-2020-2',
+            status=vex.VexStatus.FIXED,
+            impact_statement='patched',
+            first_issued='2026-01-01T10:00:00Z',
+            last_updated='2026-02-01T10:00:00Z',
+        ),
         vex.VexAssessment(
             vulnerability='CVE-2020-3',
             status=vex.VexStatus.AFFECTED,
             response=[vex.VexResponse.UPDATE],
             impact_statement='The TLS server is enabled.',
             action_statement='Update to version 2.1.',
+            first_issued='2026-02-01T10:00:00Z',
+            last_updated='2026-02-01T10:00:00Z',
         ),
-        vex.VexAssessment(vulnerability='CVE-2020-4', status=vex.VexStatus.UNDER_INVESTIGATION),
+        vex.VexAssessment(
+            vulnerability='CVE-2020-4',
+            status=vex.VexStatus.UNDER_INVESTIGATION,
+            first_issued='2026-03-01T10:00:00Z',
+            last_updated='2026-03-01T10:00:00Z',
+        ),
     ]
 
 
@@ -1360,6 +1375,45 @@ def test_cyclonedx_vex_reads_back_all_fields() -> None:
     assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
     by_ref = {pkg.ref: pkg for pkg in cyclonedx.parse(text).packages}
     assert by_ref['COMPONENT-lib'].assessments == expected
+
+
+def test_vex_document_reads_back_id_version_and_times() -> None:
+    """The document id, version and times come back from both formats, so that
+    an update can keep the id. A statement without a time of its own gets the
+    time of the document, and its last update is its first issue. CycloneDX has
+    no first-issued time for the document, and its metadata.timestamp is the last
+    update."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+
+    document = _vex_with_identities()
+    document.doc_id = 'urn:uuid:22222222-3333-4444-5555-666666666666'
+    document.doc_version = 3
+    document.first_issued = '2026-01-01T10:00:00Z'
+    document.last_updated = '2026-03-01T10:00:00Z'
+    first, second = document.statements
+    first.first_issued = '2026-02-01T10:00:00Z'
+    first.last_updated = '2026-03-01T10:00:00Z'
+
+    def times(vexdoc: vex.Vex) -> list:
+        return [(s.first_issued, s.last_updated) for s in vexdoc.statements]
+
+    back = cyclonedx.parse_vex(cyclonedx.render_vex(document))
+    assert (back.doc_id, back.doc_version) == (document.doc_id, 3)
+    assert (back.first_issued, back.last_updated) == ('', '2026-03-01T10:00:00Z')
+    assert times(back) == [
+        ('2026-02-01T10:00:00Z', '2026-03-01T10:00:00Z'),
+        ('2026-03-01T10:00:00Z', '2026-03-01T10:00:00Z'),
+    ]
+
+    back = openvex.parse_vex(openvex.render_vex(document))
+    assert (back.doc_id, back.doc_version) == (document.doc_id, 3)
+    assert (back.first_issued, back.last_updated) == ('2026-01-01T10:00:00Z', '2026-03-01T10:00:00Z')
+    assert times(back) == [
+        ('2026-02-01T10:00:00Z', '2026-03-01T10:00:00Z'),
+        ('2026-01-01T10:00:00Z', '2026-01-01T10:00:00Z'),
+    ]
 
 
 def test_spdx_jsonld_reads_back_justification() -> None:
@@ -1443,10 +1497,23 @@ def test_vex_apply() -> None:
     assert model.packages[1].assessments == []
 
     vex.apply(model, document)
-    not_affected = vex.VexStatus.NOT_AFFECTED
+    # The statements have no times of their own, so they get the document time.
+    issued = document.first_issued
     assert model.packages[1].assessments == [
-        vex.VexAssessment(vulnerability='CVE-2020-1', status=not_affected, impact_statement='not used'),
-        vex.VexAssessment(vulnerability='CVE-2020-2', status=not_affected, impact_statement='not reachable'),
+        vex.VexAssessment(
+            vulnerability='CVE-2020-1',
+            status=vex.VexStatus.NOT_AFFECTED,
+            impact_statement='not used',
+            first_issued=issued,
+            last_updated=issued,
+        ),
+        vex.VexAssessment(
+            vulnerability='CVE-2020-2',
+            status=vex.VexStatus.NOT_AFFECTED,
+            impact_statement='not reachable',
+            first_issued=issued,
+            last_updated=issued,
+        ),
     ]
     assert model.packages[0].assessments == []
 
