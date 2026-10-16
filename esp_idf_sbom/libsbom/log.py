@@ -18,11 +18,19 @@ unchanged while all output is routed through esp-pylib.
 import sys
 from typing import IO
 from typing import Any
+from typing import List
 from typing import NoReturn
 from typing import Optional
+from typing import Tuple
 
 from esp_pylib.logger import EspLog
 from esp_pylib.logger import Verbosity
+from rich.markup import escape
+
+
+def _escape(args: Tuple[Any, ...]) -> List[Any]:
+    """The arguments with the Rich markup in their text escaped."""
+    return [escape(arg) if isinstance(arg, str) else arg for arg in args]
 
 
 class SbomLog(EspLog):
@@ -88,6 +96,16 @@ class SbomLog(EspLog):
 
     def print_json(self, *args: Any, **kwargs: Any) -> None:
         self.stdout.print_json(*args, **kwargs)
+
+    # esp-pylib renders the arguments of warn() and err() as Rich markup. The messages
+    # of esp-idf-sbom use no markup, but they often hold data, for example a package
+    # id or a path. Rich would take a text in brackets in them as a tag and drop it,
+    # so the text is escaped.
+    def warn(self, *args: Any, suggestion: Optional[str] = None) -> None:
+        super().warn(*_escape(args), suggestion=suggestion)
+
+    def err(self, *args: Any, suggestion: Optional[str] = None) -> None:
+        super().err(*_escape(args), suggestion=suggestion)
 
     def die(self, *args: Any, exit_code: int = 128, suggestion: Optional[str] = None) -> NoReturn:
         self.err(*args, suggestion=suggestion)
