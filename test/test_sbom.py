@@ -976,7 +976,7 @@ def test_vex_build() -> None:
     assert [s.vulnerability for s in doc.statements] == ['CVE-2020-1', 'CVE-2020-2']
 
     statement = doc.statements[0]
-    assert statement.status is vex.VexStatus.NOT_AFFECTED
+    assert statement.status == vex.VexStatus('not_affected')
     assert statement.justification is None
     assert statement.impact_statement == 'not used'
 
@@ -1016,9 +1016,9 @@ def test_vex_build_merges_equal_statements() -> None:
 
     def not_affected(**values):
         values = {'impact_statement': 'Not used.', **values}
-        return vex.VexAssessment(vulnerability='CVE-2026-0001', status=vex.VexStatus.NOT_AFFECTED, **values)
+        return vex.VexAssessment(vulnerability='CVE-2026-0001', status=vex.VexStatus('not_affected'), **values)
 
-    fixed = vex.VexAssessment(vulnerability='CVE-2026-0002', status=vex.VexStatus.FIXED)
+    fixed = vex.VexAssessment(vulnerability='CVE-2026-0002', status=vex.VexStatus('fixed'))
     model = SBOM(
         name='app',
         root='',
@@ -1035,27 +1035,6 @@ def test_vex_build_merges_equal_statements() -> None:
         ('CVE-2026-0001', ['COMPONENT-c']),
         ('CVE-2026-0001', ['COMPONENT-d']),
     ]
-
-
-def test_vex_vocabulary_is_cisa() -> None:
-    """The model vocabulary has to stay CISA's. OpenVEX and the SPDX 3.0.1 security
-    profile use it verbatim, so only the CycloneDX backend maps out of it; changing
-    these values would push that mapping into every backend."""
-    from esp_idf_sbom.libsbom import vex
-
-    assert {s.value for s in vex.VexStatus} == {
-        'not_affected',
-        'affected',
-        'fixed',
-        'under_investigation',
-    }
-    assert {j.value for j in vex.VexJustification} == {
-        'component_not_present',
-        'vulnerable_code_not_present',
-        'vulnerable_code_not_in_execute_path',
-        'vulnerable_code_cannot_be_controlled_by_adversary',
-        'inline_mitigations_already_exist',
-    }
 
 
 def test_vex_build_nvd_url() -> None:
@@ -1339,34 +1318,34 @@ def test_parse_vex_round_trip() -> None:
     assert product.purl == 'pkg:github/example/lib@2.0'
     assert product.cpes == ['cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*']
 
-    assert vex.VexStatus.NOT_AFFECTED is back.statements[0].status
+    assert vex.VexStatus('not_affected') == back.statements[0].status
 
 
-def _assessments_of_all_statuses() -> list:
-    """One assessment for each status, with every field that the status can have."""
+def _assessments_of_cisa_statuses() -> list:
+    """One assessment for each CISA status, with every field that the status can have."""
     from esp_idf_sbom.libsbom import vex
 
     return [
         vex.VexAssessment(
             vulnerability='CVE-2020-1',
-            status=vex.VexStatus.NOT_AFFECTED,
-            justification=vex.VexJustification.COMPONENT_NOT_PRESENT,
-            response=[vex.VexResponse.WILL_NOT_FIX],
+            status=vex.VexStatus('not_affected'),
+            justification=vex.VexJustification('component_not_present'),
+            response=[vex.VexResponse('will_not_fix')],
             impact_statement='not used',
             first_issued='2026-01-01T10:00:00Z',
             last_updated='2026-01-01T10:00:00Z',
         ),
         vex.VexAssessment(
             vulnerability='CVE-2020-2',
-            status=vex.VexStatus.FIXED,
+            status=vex.VexStatus('fixed'),
             impact_statement='patched',
             first_issued='2026-01-01T10:00:00Z',
             last_updated='2026-02-01T10:00:00Z',
         ),
         vex.VexAssessment(
             vulnerability='CVE-2020-3',
-            status=vex.VexStatus.AFFECTED,
-            response=[vex.VexResponse.UPDATE],
+            status=vex.VexStatus('affected'),
+            response=[vex.VexResponse('update')],
             impact_statement='The TLS server is enabled.',
             action_statement='Update to version 2.1.',
             first_issued='2026-02-01T10:00:00Z',
@@ -1374,7 +1353,7 @@ def _assessments_of_all_statuses() -> list:
         ),
         vex.VexAssessment(
             vulnerability='CVE-2020-4',
-            status=vex.VexStatus.UNDER_INVESTIGATION,
+            status=vex.VexStatus('under_investigation'),
             first_issued='2026-03-01T10:00:00Z',
             last_updated='2026-03-01T10:00:00Z',
         ),
@@ -1384,7 +1363,7 @@ def _assessments_of_all_statuses() -> list:
 def test_cyclonedx_vex_reads_back_all_fields() -> None:
     """Every field of a statement comes back from a CycloneDX VEX and from a
     CycloneDX SBOM. The action is the recommendation. CycloneDX has no
-    component_not_present, so it comes back as vulnerable_code_not_present."""
+    component_not_present, so it comes back as code_not_present."""
     import dataclasses
 
     from cyclonedx.schema import SchemaVersion
@@ -1394,7 +1373,7 @@ def test_cyclonedx_vex_reads_back_all_fields() -> None:
     from esp_idf_sbom.libsbom import vex
 
     model = _sbom_with_file()
-    model.packages[1].assessments = _assessments_of_all_statuses()
+    model.packages[1].assessments = _assessments_of_cisa_statuses()
 
     text = cyclonedx.render_vex(vex.build(model, sbom_id='urn:uuid:11111111-2222-3333-4444-555555555555'))
     assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
@@ -1408,7 +1387,7 @@ def test_cyclonedx_vex_reads_back_all_fields() -> None:
         return [vex.VexAssessment(**{name: getattr(s, name) for name in names}) for s in statements]
 
     expected = model.packages[1].assessments[:]
-    expected[0] = dataclasses.replace(expected[0], justification=vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT)
+    expected[0] = dataclasses.replace(expected[0], justification=vex.VexJustification('code_not_present'))
     assert assessments(cyclonedx.parse_vex(text).statements) == expected
 
     text = cyclonedx.render(model, version='1.6')
@@ -1500,8 +1479,56 @@ def test_openvex_newest_statement_wins() -> None:
     assert [assessment.status for assessment in freertos.assessments] == [vex.VexStatus('fixed')]
 
 
-def test_spdx_jsonld_reads_back_all_statuses() -> None:
-    """SPDX 3.0.1 has one relationship class for each status, with the CISA
+def test_vex_every_justification_rendered() -> None:
+    """Every justification is written as a value that the format has. The SPDX 2.2
+    comment gives back the value as it was given. CycloneDX gives back its
+    CycloneDX value, and OpenVEX and SPDX 3.0.1 give back its CISA value."""
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import spdx
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_file()
+    # OpenVEX names a package by its purl or CPE.
+    model.packages[1].purl = 'pkg:github/example/lib@2.0'
+    given = [vex.VexJustification(name) for name in vex.VexJustification.names()]
+    cves = {justification: f'CVE-2020-{number}' for number, justification in enumerate(given, start=1)}
+    model.packages[1].assessments = [
+        _vex_assessment(cve, 'not_affected', justification=justification) for justification, cve in cves.items()
+    ]
+    cisa = [vex.VexJustification(justification.cisa) for justification in given]
+
+    def justifications(sbom) -> list:
+        (pkg,) = [pkg for pkg in sbom.packages if pkg.ref == 'COMPONENT-lib']
+        return [assessment.justification for assessment in pkg.assessments]
+
+    text = cyclonedx.render(model, version='1.6')
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+    entries = {entry['id']: entry for entry in json.loads(text)['vulnerabilities']}
+    # A CycloneDX value is written as it is. A CISA value is mapped, and it comes
+    # back as the CycloneDX value.
+    cyclonedx_value = entries[cves[vex.VexJustification('requires_environment')]]
+    assert cyclonedx_value['analysis']['justification'] == 'requires_environment'
+    cisa_value = entries[cves[vex.VexJustification('component_not_present')]]
+    assert cisa_value['analysis']['justification'] == 'code_not_present'
+    assert justifications(cyclonedx.parse(text)) == [vex.VexJustification(j.cyclonedx) for j in given]
+
+    for fmt in ('tagvalue', 'json'):
+        assert justifications(spdx.parse(spdx.render(model, format=fmt, version='2.2'), format=fmt)) == given
+
+    document = json.loads(openvex.render_vex(vex.build(model)))
+    assert [statement['justification'] for statement in document['statements']] == [j.cisa for j in given]
+    assert [statement.justification for statement in openvex.parse_vex(json.dumps(document)).statements] == cisa
+
+    text = spdx.render(model, format='json-ld', version='3.0.1')
+    assert justifications(spdx.parse(text, format='json-ld')) == cisa
+
+
+def test_spdx_jsonld_reads_back_cisa_statuses() -> None:
+    """SPDX 3.0.1 has one relationship class for each CISA status, with the CISA
     justifications. Everything but the response comes back as it was, because
     SPDX has no response. The document must still validate."""
     import urllib.request
@@ -1512,7 +1539,7 @@ def test_spdx_jsonld_reads_back_all_statuses() -> None:
     from esp_idf_sbom.libsbom import spdx
 
     model = _sbom_with_file()
-    model.packages[1].assessments = _assessments_of_all_statuses()
+    model.packages[1].assessments = _assessments_of_cisa_statuses()
 
     text = spdx.render(model, format='json-ld', version='3.0.1')
     graph = json.loads(text)['@graph']
@@ -1611,14 +1638,14 @@ def test_vex_apply() -> None:
     assert model.packages[1].assessments == [
         vex.VexAssessment(
             vulnerability='CVE-2020-1',
-            status=vex.VexStatus.NOT_AFFECTED,
+            status=vex.VexStatus('not_affected'),
             impact_statement='not used',
             first_issued=issued,
             last_updated=issued,
         ),
         vex.VexAssessment(
             vulnerability='CVE-2020-2',
-            status=vex.VexStatus.NOT_AFFECTED,
+            status=vex.VexStatus('not_affected'),
             impact_statement='not reachable',
             first_issued=issued,
             last_updated=issued,
@@ -1655,7 +1682,7 @@ def test_vex_apply_reaches_every_package_with_the_cpe() -> None:
     model = _sbom_for_lookup()
     statement = vex.VexStatement(
         vulnerability='CVE-2020-1',
-        status=vex.VexStatus.NOT_AFFECTED,
+        status=vex.VexStatus('not_affected'),
         products=[vex.VexProduct(cpes=['cpe:2.3:a:cjson_project:cjson:1.7.19:*:*:*:*:*:*:*'])],
         impact_statement='not used',
     )
@@ -1674,13 +1701,13 @@ def test_vex_apply_replaces_existing_entry() -> None:
         statements=[
             vex.VexStatement(
                 vulnerability='CVE-2020-1',
-                status=vex.VexStatus.NOT_AFFECTED,
+                status=vex.VexStatus('not_affected'),
                 products=[vex.VexProduct(ref='COMPONENT-lib')],
                 impact_statement='re-checked, still not used',
             ),
             vex.VexStatement(
                 vulnerability='CVE-2020-7',
-                status=vex.VexStatus.NOT_AFFECTED,
+                status=vex.VexStatus('not_affected'),
                 products=[vex.VexProduct(purl='pkg:github/other/thing@1.0')],
                 impact_statement='not in this SBOM',
             ),
@@ -1692,7 +1719,7 @@ def test_vex_apply_replaces_existing_entry() -> None:
         *_assessments({'cve': 'CVE-2020-2', 'reason': 'not reachable'}),
         vex.VexAssessment(
             vulnerability='CVE-2020-1',
-            status=vex.VexStatus.NOT_AFFECTED,
+            status=vex.VexStatus('not_affected'),
             impact_statement='re-checked, still not used',
         ),
     ]
@@ -1895,6 +1922,12 @@ def test_check_vex_rejects_cyclonedx_vex_without_serial(tmp_path: Path) -> None:
     result = _check_freertos(no_serial, '--vex', str(vex_file))
     assert result.returncode != 0
     assert 'has no serialNumber to match it against' in result.stderr
+
+
+def _vex_assessment(cve: str, status: str, **values):
+    from esp_idf_sbom.libsbom import vex
+
+    return vex.VexAssessment(vulnerability=cve, status=vex.VexStatus(status), **values)
 
 
 def test_output_file_kept_on_failure(hello_world_build: Path, tmp_path: Path) -> None:
@@ -2747,15 +2780,15 @@ def test_create_vulnerable_record_vex_fields() -> None:
 
     affected = VexAssessment(
         vulnerability='CVE-2020-22283',
-        status=VexStatus.AFFECTED,
+        status=VexStatus('affected'),
         impact_statement='The product enables PPP.',
         action_statement='Update to lwIP 2.2.1.',
     )
     assert record(affected) == ('affected', '', 'The product enables PPP.', 'Update to lwIP 2.2.1.')
     not_affected = VexAssessment(
         vulnerability='CVE-2020-22283',
-        status=VexStatus.NOT_AFFECTED,
-        justification=VexJustification.VULNERABLE_CODE_NOT_PRESENT,
+        status=VexStatus('not_affected'),
+        justification=VexJustification('vulnerable_code_not_present'),
     )
     assert record(not_affected) == ('not_affected', 'vulnerable_code_not_present', '', '')
 
@@ -2764,9 +2797,9 @@ def test_create_vulnerable_record_vex_fields() -> None:
 
 
 def test_create_vulnerable_record_uses_vex_status() -> None:
-    """not_affected and fixed exclude the CVE. A fixed assessment needs no text of
-    its own, so the status is the reason. affected confirms a MAYBE match, and
-    under_investigation changes nothing."""
+    """not_affected, false_positive, fixed and resolved_with_pedigree exclude the
+    CVE. A fixed assessment needs no text of its own, so the status is the reason.
+    affected confirms a MAYBE match, and under_investigation changes nothing."""
     from esp_idf_sbom.libsbom import report
     from esp_idf_sbom.libsbom.sbom import VexAssessment
     from esp_idf_sbom.libsbom.vexvalues import VexJustification
@@ -2787,14 +2820,17 @@ def test_create_vulnerable_record_uses_vex_status() -> None:
         rec = report.create_vulnerable_record(vuln, assessments, cpe, '', 'lwip', '2.2.0', maybe=maybe)
         return rec['vulnerable'], rec['exclude_reason']
 
-    not_affected = VexStatus.NOT_AFFECTED
+    not_affected = VexStatus('not_affected')
     assert record(False, status=not_affected, impact_statement='not used') == ('EXCLUDED', 'not used')
-    justification = VexJustification.COMPONENT_NOT_PRESENT
+    justification = VexJustification('component_not_present')
     assert record(False, status=not_affected, justification=justification) == ('EXCLUDED', 'component_not_present')
-    assert record(True, status=VexStatus.FIXED) == ('EXCLUDED', 'fixed')
-    assert record(True, status=VexStatus.AFFECTED) == ('YES', '')
-    assert record(True, status=VexStatus.UNDER_INVESTIGATION) == ('MAYBE', '')
-    assert record(False, status=VexStatus.UNDER_INVESTIGATION) == ('YES', '')
+    assert record(True, status=VexStatus('fixed')) == ('EXCLUDED', 'fixed')
+    assert record(True, status=VexStatus('resolved_with_pedigree')) == ('EXCLUDED', 'resolved_with_pedigree')
+    false_positive = VexStatus('false_positive')
+    assert record(False, status=false_positive, impact_statement='not lwip') == ('EXCLUDED', 'not lwip')
+    assert record(True, status=VexStatus('affected')) == ('YES', '')
+    assert record(True, status=VexStatus('under_investigation')) == ('MAYBE', '')
+    assert record(False, status=VexStatus('under_investigation')) == ('YES', '')
 
 
 def test_evaluate_cpematch_ignores_na_target_for_versioned_criteria(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2912,10 +2948,10 @@ def test_spdx_comment_has_only_excluded_cves() -> None:
 
     model = _sbom_with_file()
     model.packages[1].assessments = [
-        VexAssessment(vulnerability='CVE-2020-1', status=VexStatus.NOT_AFFECTED, impact_statement='not used'),
-        VexAssessment(vulnerability='CVE-2020-2', status=VexStatus.FIXED),
-        VexAssessment(vulnerability='CVE-2020-3', status=VexStatus.AFFECTED),
-        VexAssessment(vulnerability='CVE-2020-4', status=VexStatus.UNDER_INVESTIGATION),
+        VexAssessment(vulnerability='CVE-2020-1', status=VexStatus('not_affected'), impact_statement='not used'),
+        VexAssessment(vulnerability='CVE-2020-2', status=VexStatus('fixed')),
+        VexAssessment(vulnerability='CVE-2020-3', status=VexStatus('affected')),
+        VexAssessment(vulnerability='CVE-2020-4', status=VexStatus('under_investigation')),
     ]
 
     text = spdx.render(model, format='tagvalue', version='2.2')
@@ -2972,9 +3008,9 @@ def test_merge_excluded_cves(tmp_path: Path) -> None:
         {'cve': 'CVE-2020-1002', 'reason': 'only package'},
     )
 
-    # An affected assessment of the package wins over the global exclusion, and a
-    # justification is only for not_affected.
-    affected = sbom.VexAssessment(vulnerability='CVE-2020-1000', status=sbom.VexStatus.AFFECTED)
+    # An affected assessment of the package wins over the global exclusion, and it
+    # takes no justification.
+    affected = sbom.VexAssessment(vulnerability='CVE-2020-1000', status=sbom.VexStatus('affected'))
     merged = sbom.merge_excluded_cves([affected], ['cpe:2.3:a:vendor:product:1.0:*:*:*:*:*:*:*'])
     assert merged['CVE-2020-1000'] == affected
 

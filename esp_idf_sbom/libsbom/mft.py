@@ -456,7 +456,7 @@ def validate(manifest: Dict[str, str], source: str, directory: str, die: bool = 
             raise schema.SchemaError(f'Expression "{expression}" is not valid: {e}')
         return True
 
-    justifications = [justification.value for justification in VexJustification]
+    justifications = VexJustification.names()
 
     def check_justification(value: str) -> bool:
         if value in justifications:

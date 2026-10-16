@@ -14,7 +14,7 @@ from esp_idf_sbom.libsbom.vexvalues import VexJustification  # noqa: E402
 
 CVE_RE = re.compile(r'CVE-\d{4}-\d{4,7}')
 VERSION_KEYS = ('versionStartIncluding', 'versionStartExcluding', 'versionEndIncluding', 'versionEndExcluding')
-JUSTIFICATIONS = tuple(justification.value for justification in VexJustification)
+JUSTIFICATIONS = tuple(VexJustification.names())
 
 
 def validate_scoped(cve_id: str, value: dict) -> list:

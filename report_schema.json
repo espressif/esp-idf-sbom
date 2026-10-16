@@ -195,11 +195,11 @@
                     },
                     "vex_status": {
                         "type": "string",
-                        "description": "VEX status of the CVE for the package: not_affected, fixed, affected or under_investigation. Empty if no VEX statement covers the CVE."
+                        "description": "VEX status of the CVE for the package: not_affected, false_positive, fixed, resolved_with_pedigree, affected or under_investigation. Empty if no VEX statement covers the CVE."
                     },
                     "vex_justification": {
                         "type": "string",
-                        "description": "Why the package is not affected, one of the CISA justifications. Empty if the VEX statement has none."
+                        "description": "Why the package is not affected, one of the CISA or CycloneDX justifications. Empty if the VEX statement has none."
                     },
                     "vex_detail": {
                         "type": "string",

@@ -74,7 +74,7 @@ def _cve_exclude_entry(assessment: VexAssessment) -> Dict[str, Any]:
     uses. It is the same form as in the manifest."""
     entry: Dict[str, Any] = {'cve': assessment.vulnerability, 'reason': assessment.impact_statement}
     if assessment.justification is not None:
-        entry['justification'] = assessment.justification.value
+        entry['justification'] = str(assessment.justification)
     return entry
 
 
@@ -85,7 +85,7 @@ def _package_comment(pkg: Package) -> str:
 
     # Released versions read every entry of this list as excluded, so it gets only
     # the assessments that say the CVE does not apply.
-    exclusions = [_cve_exclude_entry(a) for a in pkg.assessments if a.suppresses]
+    exclusions = [_cve_exclude_entry(a) for a in pkg.assessments if a.status.suppresses]
     if exclusions:
         cve_info = {'cve-exclude-list': exclusions}
         cve_info_yaml = yaml.dump(cve_info, indent=4)
@@ -439,27 +439,22 @@ def _render_json(sbom: SBOM, version: str, doc_id: str = '') -> str:
     return json.dumps(document, indent=2)
 
 
-# SPDX 3.0.1 uses the CISA justifications, written in camel case.
+# SPDX 3.0.1 writes the CISA justifications in camel case.
 _JUSTIFICATION_TYPE = {
-    vex.VexJustification.COMPONENT_NOT_PRESENT: 'componentNotPresent',
-    vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT: 'vulnerableCodeNotPresent',
-    vex.VexJustification.VULNERABLE_CODE_NOT_IN_EXECUTE_PATH: 'vulnerableCodeNotInExecutePath',
-    vex.VexJustification.VULNERABLE_CODE_CANNOT_BE_CONTROLLED_BY_ADVERSARY: (
-        'vulnerableCodeCannotBeControlledByAdversary'
-    ),
-    vex.VexJustification.INLINE_MITIGATIONS_ALREADY_EXIST: 'inlineMitigationsAlreadyExist',
+    'component_not_present': 'componentNotPresent',
+    'vulnerable_code_not_present': 'vulnerableCodeNotPresent',
+    'vulnerable_code_not_in_execute_path': 'vulnerableCodeNotInExecutePath',
+    'vulnerable_code_cannot_be_controlled_by_adversary': 'vulnerableCodeCannotBeControlledByAdversary',
+    'inline_mitigations_already_exist': 'inlineMitigationsAlreadyExist',
 }
 
-# The relationship class and type of each status. SPDX 3.0.1 has one class for
-# each CISA status, and each class has its own fields.
+# The relationship class and type of each CISA status. SPDX 3.0.1 has one class for
+# each, and each class has its own fields.
 _VEX_RELATIONSHIP = {
-    vex.VexStatus.NOT_AFFECTED: ('security_VexNotAffectedVulnAssessmentRelationship', 'doesNotAffect'),
-    vex.VexStatus.AFFECTED: ('security_VexAffectedVulnAssessmentRelationship', 'affects'),
-    vex.VexStatus.FIXED: ('security_VexFixedVulnAssessmentRelationship', 'fixedIn'),
-    vex.VexStatus.UNDER_INVESTIGATION: (
-        'security_VexUnderInvestigationVulnAssessmentRelationship',
-        'underInvestigationFor',
-    ),
+    'not_affected': ('security_VexNotAffectedVulnAssessmentRelationship', 'doesNotAffect'),
+    'affected': ('security_VexAffectedVulnAssessmentRelationship', 'affects'),
+    'fixed': ('security_VexFixedVulnAssessmentRelationship', 'fixedIn'),
+    'under_investigation': ('security_VexUnderInvestigationVulnAssessmentRelationship', 'underInvestigationFor'),
 }
 
 _SPDX_TIME_RE = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')
@@ -771,7 +766,7 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
         graph.append(vulnerability)
         element_ids.append(vid)
         xid = sid(f'Vex-{ref}-{statement.vulnerability}')
-        vex_type, relationship_type = _VEX_RELATIONSHIP[statement.status]
+        vex_type, relationship_type = _VEX_RELATIONSHIP[statement.status.cisa]
         assessment: Dict[str, Any] = {
             'type': vex_type,
             'spdxId': xid,
@@ -780,16 +775,16 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
             'relationshipType': relationship_type,
             'to': [sid(product.ref) for product in statement.products],
         }
-        if statement.status is vex.VexStatus.NOT_AFFECTED:
+        if statement.status.is_not_affected:
             assessment['security_impactStatement'] = statement.impact_statement
             if statement.justification is not None:
-                assessment['security_justificationType'] = _JUSTIFICATION_TYPE[statement.justification]
+                assessment['security_justificationType'] = _JUSTIFICATION_TYPE[statement.justification.cisa]
         else:
             # Only the not-affected class has an impact statement. The others
             # have notes about how the status was determined.
             if statement.impact_statement:
                 assessment['security_statusNotes'] = statement.impact_statement
-            if statement.status is vex.VexStatus.AFFECTED:
+            if statement.status.is_affected:
                 # SPDX requires the action statement for this class, as CISA does.
                 assessment['security_actionStatement'] = statement.action_statement
         for key, value in (
@@ -1054,8 +1049,8 @@ def _parse_json(text: str) -> SBOM:
     )
 
 
-# Reverse of _JUSTIFICATION_TYPE. SPDX 3.0.1 has the same five values as the
-# model, so nothing is lost.
+# Reverse of _JUSTIFICATION_TYPE. SPDX 3.0.1 has only the five CISA values, so a
+# CycloneDX justification comes back as its CISA value.
 _VEX_JUSTIFICATION_TYPE = {value: key for key, value in _JUSTIFICATION_TYPE.items()}
 
 # Reverse of _VEX_RELATIONSHIP: the status of each relationship class.
@@ -1115,11 +1110,12 @@ def _parse_jsonld(text: str) -> SBOM:
             # SPDX 3.0.1 has no response, so none is read. A statement without a
             # modified time was not changed since it was published.
             published = e.get('security_publishedTime', '')
+            justification = _VEX_JUSTIFICATION_TYPE.get(e.get('security_justificationType', ''))
             for to in _as_list(e.get('to')):
                 assessment = VexAssessment(
                     vulnerability=vuln_cve.get(_id(e.get('from')), ''),
-                    status=_VEX_STATUS[t],
-                    justification=_VEX_JUSTIFICATION_TYPE.get(e.get('security_justificationType', '')),
+                    status=vex.VexStatus(_VEX_STATUS[t]),
+                    justification=vex.VexJustification(justification) if justification else None,
                     impact_statement=e.get('security_impactStatement') or e.get('security_statusNotes', ''),
                     action_statement=e.get('security_actionStatement', ''),
                     first_issued=published,

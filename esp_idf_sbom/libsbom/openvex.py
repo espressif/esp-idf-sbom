@@ -3,8 +3,8 @@
 
 """OpenVEX backend for the format-neutral VEX model.
 
-OpenVEX uses the CISA vocabulary, so this backend maps nothing. It writes the
-status and justification values from the model as they are.
+OpenVEX uses the CISA vocabulary, so this backend writes the CISA value of the
+status and of the justification, see vexvalues.py.
 
 OpenVEX names products by purl and CPE. These belong to the package, not to a
 document, so one OpenVEX file works with an SBOM in any format. This includes
@@ -83,11 +83,11 @@ def _statement(statement: vex.VexStatement) -> Optional[Dict[str, Any]]:
     if statement.last_updated:
         entry['last_updated'] = statement.last_updated
     entry['products'] = products
-    entry['status'] = statement.status.value
+    entry['status'] = statement.status.cisa
     # A not_affected statement needs a justification or an impact_statement. We
     # write the impact_statement, because the manifest reason is free text.
     if statement.justification is not None:
-        entry['justification'] = statement.justification.value
+        entry['justification'] = statement.justification.cisa
     if statement.impact_statement:
         entry['impact_statement'] = statement.impact_statement
     if statement.action_statement:

@@ -17,7 +17,6 @@ from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import nvd
 from esp_idf_sbom.libsbom import utils
 from esp_idf_sbom.libsbom.sbom import VexAssessment
-from esp_idf_sbom.libsbom.vexvalues import VexStatus
 
 REPORT_VERSION = 3
 empty_record = {
@@ -481,8 +480,8 @@ def _exclude_reason(assessment: VexAssessment) -> str:
     if assessment.impact_statement:
         return assessment.impact_statement
     if assessment.justification is not None:
-        return assessment.justification.value
-    return assessment.status.value
+        return str(assessment.justification)
+    return str(assessment.status)
 
 
 def create_vulnerable_record(
@@ -531,10 +530,10 @@ def create_vulnerable_record(
     kev_name = vuln['cve'].get('cisaVulnerabilityName', '')
 
     assessment = assessments.get(cve_id)
-    if assessment is not None and assessment.suppresses:
+    if assessment is not None and assessment.status.suppresses:
         exclude_reason = _exclude_reason(assessment)
         vulnerable = 'EXCLUDED'
-    elif assessment is not None and assessment.status is VexStatus.AFFECTED:
+    elif assessment is not None and assessment.status.is_affected:
         # The VEX says that the CVE applies, so a keyword or NA-version match is
         # confirmed.
         vulnerable = 'YES'
@@ -563,8 +562,8 @@ def create_vulnerable_record(
     record['kev_added'] = kev_added
     record['kev_name'] = kev_name
     if assessment is not None:
-        record['vex_status'] = assessment.status.value
-        record['vex_justification'] = assessment.justification.value if assessment.justification else ''
+        record['vex_status'] = str(assessment.status)
+        record['vex_justification'] = str(assessment.justification) if assessment.justification else ''
         record['vex_detail'] = assessment.impact_statement
         record['vex_action'] = assessment.action_statement
 

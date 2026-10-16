@@ -127,16 +127,6 @@ class VexAssessment:
     first_issued: str = ''
     last_updated: str = ''
 
-    @property
-    def suppresses(self) -> bool:
-        """Whether the status says that the CVE does not apply to the product.
-
-        not_affected means it was never affected, fixed means the product carries
-        the fix. grype and trivy both filter on these two. The other two say the CVE
-        does apply, or that nobody knows yet, so they must not hide anything.
-        """
-        return self.status in (VexStatus.NOT_AFFECTED, VexStatus.FIXED)
-
 
 @dataclass
 class Package:
@@ -275,10 +265,10 @@ def assessment_from_exclusion(entry: Dict[str, Any]) -> VexAssessment:
     manifest, from excluded_cves.yaml or from an SPDX 2.2 package comment."""
     return VexAssessment(
         vulnerability=entry['cve'],
-        status=VexStatus.NOT_AFFECTED,
+        status=VexStatus('not_affected'),
         justification=_justification(entry),
         # The CVE does not affect this version, so no fix is planned.
-        response=[VexResponse.WILL_NOT_FIX],
+        response=[VexResponse('will_not_fix')],
         impact_statement=entry.get('reason', ''),
     )
 
@@ -288,8 +278,8 @@ def merge_excluded_cves(assessments: List[VexAssessment], cpes: List[str]) -> Di
     excluded_cves.yaml that match one of its CPEs.
 
     The assessment of the package is more specific, so it wins, whatever its
-    status. A not_affected assessment without a justification takes the one of
-    the global entry.
+    status. A not_affected or false_positive assessment without a justification
+    takes the one of the global entry.
 
     :param assessments: the assessments of the package, from its manifest or SBOM
     :param cpes: the CPEs to look up in excluded_cves.yaml
@@ -301,7 +291,7 @@ def merge_excluded_cves(assessments: List[VexAssessment], cpes: List[str]) -> Di
             merged.setdefault(cve_id, assessment_from_exclusion(entry))
     for assessment in assessments:
         known = merged.get(assessment.vulnerability)
-        if known is not None and assessment.status is VexStatus.NOT_AFFECTED and assessment.justification is None:
+        if known is not None and assessment.status.allows_justification and assessment.justification is None:
             assessment = replace(assessment, justification=known.justification)
         merged[assessment.vulnerability] = assessment
     return merged

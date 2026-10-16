@@ -268,26 +268,6 @@ def _file_component(pkg: Package, file: File, index: int) -> Dict[str, Any]:
     return fcomp
 
 
-# The CISA values used by the model, mapped to the larger CycloneDX ones. Only
-# this backend needs a map. OpenVEX and SPDX 3.0.1 use the CISA values.
-_ANALYSIS_STATE = {
-    vex.VexStatus.NOT_AFFECTED: 'not_affected',
-    vex.VexStatus.AFFECTED: 'exploitable',
-    vex.VexStatus.FIXED: 'resolved',
-    vex.VexStatus.UNDER_INVESTIGATION: 'in_triage',
-}
-
-# component_not_present and vulnerable_code_not_present both map to
-# code_not_present, so this map cannot be reversed, see _VEX_JUSTIFICATION.
-_ANALYSIS_JUSTIFICATION = {
-    vex.VexJustification.COMPONENT_NOT_PRESENT: 'code_not_present',
-    vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT: 'code_not_present',
-    vex.VexJustification.VULNERABLE_CODE_NOT_IN_EXECUTE_PATH: 'code_not_reachable',
-    vex.VexJustification.VULNERABLE_CODE_CANNOT_BE_CONTROLLED_BY_ADVERSARY: 'protected_at_runtime',
-    vex.VexJustification.INLINE_MITIGATIONS_ALREADY_EXIST: 'protected_by_mitigating_control',
-}
-
-
 def _vulnerability(statement: vex.VexStatement, bom_link: str = '') -> Dict[str, Any]:
     """Convert a VEX statement to a CycloneDX vulnerability entry.
 
@@ -295,11 +275,11 @@ def _vulnerability(statement: vex.VexStatement, bom_link: str = '') -> Dict[str,
     VEX has no components, so bom_link holds the 'urn:cdx:<serial>/<version>' of
     the SBOM and the refs become BOM-Links into it.
     """
-    analysis: Dict[str, Any] = {'state': _ANALYSIS_STATE[statement.status]}
+    analysis: Dict[str, Any] = {'state': statement.status.cyclonedx}
     if statement.justification is not None:
-        analysis['justification'] = _ANALYSIS_JUSTIFICATION[statement.justification]
+        analysis['justification'] = statement.justification.cyclonedx
     if statement.response:
-        analysis['response'] = [response.value for response in statement.response]
+        analysis['response'] = [response.cyclonedx for response in statement.response]
     if statement.impact_statement:
         analysis['detail'] = statement.impact_statement
     if statement.first_issued:
@@ -446,27 +426,6 @@ def render_vex(vexdoc: vex.Vex, format: str = 'json', version: str = '1.6') -> s
 # Parse: standalone CycloneDX VEX -> VEX model
 # ===========================================================================
 
-# Reverse of _ANALYSIS_STATE. CycloneDX has more states than CISA, so several
-# map to the same one.
-_VEX_STATUS = {
-    'not_affected': vex.VexStatus.NOT_AFFECTED,
-    'false_positive': vex.VexStatus.NOT_AFFECTED,
-    'exploitable': vex.VexStatus.AFFECTED,
-    'resolved': vex.VexStatus.FIXED,
-    'resolved_with_pedigree': vex.VexStatus.FIXED,
-    'in_triage': vex.VexStatus.UNDER_INVESTIGATION,
-}
-
-# Reverse of _ANALYSIS_JUSTIFICATION. CycloneDX describes code_not_present as "The
-# code has been removed or tree-shaked", which is vulnerable_code_not_present in
-# CISA terms. The other CycloneDX justifications have no CISA match.
-_VEX_JUSTIFICATION = {
-    'code_not_present': vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT,
-    'code_not_reachable': vex.VexJustification.VULNERABLE_CODE_NOT_IN_EXECUTE_PATH,
-    'protected_at_runtime': vex.VexJustification.VULNERABLE_CODE_CANNOT_BE_CONTROLLED_BY_ADVERSARY,
-    'protected_by_mitigating_control': vex.VexJustification.INLINE_MITIGATIONS_ALREADY_EXIST,
-}
-
 
 def _parse_assessment(vulnerability: Dict[str, Any], issued: str) -> Optional[VexAssessment]:
     """Read the analysis of a vulnerability entry, in an SBOM or in a standalone
@@ -481,11 +440,19 @@ def _parse_assessment(vulnerability: Dict[str, Any], issued: str) -> Optional[Ve
     cve = vulnerability.get('id', '')
     analysis = vulnerability.get('analysis', {})
     state = analysis.get('state', '')
-    if state not in _VEX_STATUS:
+    try:
+        status = vex.VexStatus(state)
+    except ValueError:
         log.warn(f'Skipping CycloneDX vulnerability "{cve}" with unknown analysis state "{state}".')
         return None
 
     first_issued = analysis.get('firstIssued') or issued
+    justification = None
+    if analysis.get('justification'):
+        try:
+            justification = vex.VexJustification(analysis['justification'])
+        except ValueError:
+            log.warn(f'Ignoring unknown CycloneDX justification "{analysis["justification"]}" for {cve}.')
     response = []
     for value in analysis.get('response', []):
         try:
@@ -495,8 +462,8 @@ def _parse_assessment(vulnerability: Dict[str, Any], issued: str) -> Optional[Ve
 
     return VexAssessment(
         vulnerability=cve,
-        status=_VEX_STATUS[state],
-        justification=_VEX_JUSTIFICATION.get(analysis.get('justification', '')),
+        status=status,
+        justification=justification,
         response=response,
         impact_statement=analysis.get('detail', ''),
         action_statement=vulnerability.get('recommendation', ''),

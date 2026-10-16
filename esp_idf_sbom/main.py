@@ -988,8 +988,8 @@ def create(ctx: click.Context, **params: Any) -> None:
     multiple=True,
     help=(
         'Read a standalone VEX document, as written by "create --vex-output", and use its '
-        'statements when reporting. A CVE with the status not_affected or fixed is '
-        'excluded, and a CVE with the status affected is reported. The CVE of a statement '
+        'statements when reporting. A CVE is excluded when a statement says that it does not apply or '
+        'that it is fixed, and reported when a statement says that it affects the package. The CVE of a statement '
         'from the VEX file is reported also when the scan does not find it. Can be used '
         'more than once. A CycloneDX VEX links to one SBOM and is refused for any other one. '
         'An OpenVEX document names products by PURL and CPE and works with any SBOM.'

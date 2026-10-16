@@ -403,13 +403,12 @@ vulnerability.
 
 OpenVEX and SPDX 3.0.1 use the values that CISA, the US Cybersecurity and
 Infrastructure Security Agency, defined for VEX. CycloneDX uses its own values.
-esp-idf-sbom uses the CISA values, and the manifests and `excluded_cves.yaml`
-take the CISA justifications.
+The manifests and `excluded_cves.yaml` take the justifications of both.
 
-CycloneDX does not have the CISA values, so it writes the closest value that it
-has. When esp-idf-sbom reads a CycloneDX file, for example in `check`, it turns
-the CycloneDX value back into a CISA value. This is not always the original
-value, see [Justifications](#justifications).
+Use the values of the format that you deliver. A format that does not have a
+value writes the closest value that it has. When esp-idf-sbom reads such a file
+back, for example in `check`, it gets the value that the format wrote, not the
+original one.
 
 #### Statuses
 
@@ -419,18 +418,26 @@ value, see [Justifications](#justifications).
 | `affected`            | `exploitable`            | The CVE affects the package. `action` says what to do.   |
 | `fixed`               | `resolved`               | The package has the fix.                                 |
 | `under_investigation` | `in_triage`              | It is not known yet whether the CVE affects the package. |
+| `not_affected`        | `false_positive`         | The CVE was matched to the package by mistake.           |
+| `fixed`               | `resolved_with_pedigree` | The package has the fix, and the SBOM shows the change.  |
 
-Both names mean the same. CycloneDX also has the states `false_positive` and
-`resolved_with_pedigree`, which CISA does not have. esp-idf-sbom reads them as
-`not_affected` and `fixed`.
+In the first four rows, both names mean the same. The last two rows are
+CycloneDX states that CISA does not have, so OpenVEX and SPDX 3.0.1 write them
+as `not_affected` and `fixed`.
+
+`resolved_with_pedigree` says that the pedigree of the package in the SBOM shows
+the change, for example with its commits. esp-idf-sbom does not write a
+pedigree, so use this state only when the package in your SBOM has a pedigree
+that shows the fix.
 
 The `check` report shows the CISA name of a status, for example `affected` for
-`exploitable`.
+`exploitable`. It shows `false_positive` and `resolved_with_pedigree` as they
+are.
 
 #### Justifications
 
 A justification says why the CVE does not affect the package. Only
-`not_affected` can have one.
+`not_affected` and `false_positive` can have one.
 
 The CISA justifications, and the value that CycloneDX writes for them:
 
@@ -442,14 +449,24 @@ The CISA justifications, and the value that CycloneDX writes for them:
 | `vulnerable_code_cannot_be_controlled_by_adversary` | An attacker cannot control the vulnerable code to exploit the CVE.    | `protected_at_runtime`            |
 | `inline_mitigations_already_exist`                  | Built-in protections that users cannot turn off prevent the exploit.  | `protected_by_mitigating_control` |
 
-When esp-idf-sbom reads a CycloneDX file, it turns each value of the right
-column back into the CISA value of its row. `code_not_present` becomes
-`vulnerable_code_not_present`. The other CycloneDX justifications have no CISA
-value, so esp-idf-sbom drops them.
+The CycloneDX justifications, and the value that OpenVEX and SPDX 3.0.1 write
+for them:
+
+| CycloneDX                         | Meaning                                                            | OpenVEX and SPDX 3.0.1 write                        |
+|-----------------------------------|--------------------------------------------------------------------|-----------------------------------------------------|
+| `code_not_present`                | The vulnerable code was removed, for example by the build.         | `vulnerable_code_not_present`                       |
+| `code_not_reachable`              | The product never runs the vulnerable code.                        | `vulnerable_code_not_in_execute_path`               |
+| `requires_configuration`          | The exploit needs a configuration that the product does not have.  | `vulnerable_code_cannot_be_controlled_by_adversary` |
+| `requires_dependency`             | The exploit needs a dependency that is not present.                | `vulnerable_code_cannot_be_controlled_by_adversary` |
+| `requires_environment`            | The exploit needs an environment that is not present.              | `vulnerable_code_cannot_be_controlled_by_adversary` |
+| `protected_by_compiler`           | The compiler flags of the build prevent the exploit.               | `inline_mitigations_already_exist`                  |
+| `protected_at_runtime`            | Something prevents the exploit while the product runs.             | `vulnerable_code_cannot_be_controlled_by_adversary` |
+| `protected_at_perimeter`          | Attacks are blocked at the physical, logical or network perimeter. | `vulnerable_code_cannot_be_controlled_by_adversary` |
+| `protected_by_mitigating_control` | Other measures reduce the chance or the impact of an exploit.      | `inline_mitigations_already_exist`                  |
 
 For example, when a `cve-exclude-list` entry has `component_not_present` and the
 SBOM is in the CycloneDX format, `create` writes `code_not_present` into the
-SBOM, and `check` reads it back as `vulnerable_code_not_present`.
+SBOM.
 
 
 ## Usage example
@@ -719,7 +736,7 @@ custom-licenses:
 
     * cve: CVE-ID
     * reason: why this package is not affected
-    * justification (optional): a CISA value, see
+    * justification (optional): a CISA or a CycloneDX value, see
       [Statuses and justifications](#statuses-and-justifications).
 ```
       version: 0.1.0
