@@ -704,7 +704,7 @@ def test_spdx_jsonld_parses_bare_refs() -> None:
     assert set(by_ref) == {'PROJECT-app', 'COMPONENT-lib'}
     assert by_ref['PROJECT-app'].depends_on == ['COMPONENT-lib']
     # The graph is still keyed on full ids, so this breaks if the two ever drift.
-    assert by_ref['COMPONENT-lib'].assessments == _assessments({'cve': 'CVE-2020-1', 'reason': 'not used'})
+    assert [a.vulnerability for a in by_ref['COMPONENT-lib'].assessments] == ['CVE-2020-1']
 
     graph = json.loads(spdx.render(back, format='json-ld', version='3.0.1'))['@graph']
     assert all(e.get('spdxId', '').count('#') <= 1 for e in graph)
@@ -1416,20 +1416,45 @@ def test_vex_document_reads_back_id_version_and_times() -> None:
     ]
 
 
-def test_spdx_jsonld_reads_back_justification() -> None:
-    """SPDX 3.0.1 has the CISA justifications, so they come back as they were."""
+def test_spdx_jsonld_reads_back_all_statuses() -> None:
+    """SPDX 3.0.1 has one relationship class for each status, with the CISA
+    justifications. Everything but the response comes back as it was, because
+    SPDX has no response. The document must still validate."""
+    import urllib.request
+    from dataclasses import replace
+
+    import jsonschema
+
     from esp_idf_sbom.libsbom import spdx
 
     model = _sbom_with_file()
-    model.packages[1].assessments = _assessments(
-        {'cve': 'CVE-2020-1', 'reason': 'not used', 'justification': 'component_not_present'},
-        {'cve': 'CVE-2020-2', 'reason': 'not reachable', 'justification': 'vulnerable_code_not_in_execute_path'},
-        {'cve': 'CVE-2020-3', 'reason': 'no justification'},
-    )
+    model.packages[1].assessments = _assessments_of_all_statuses()
 
-    back = spdx.parse(spdx.render(model, format='json-ld', version='3.0.1'), format='json-ld')
+    text = spdx.render(model, format='json-ld', version='3.0.1')
+    graph = json.loads(text)['@graph']
+    relationships = [e for e in graph if e['type'].startswith('security_Vex')]
+    assert [(e['type'], e['relationshipType']) for e in relationships] == [
+        ('security_VexNotAffectedVulnAssessmentRelationship', 'doesNotAffect'),
+        ('security_VexFixedVulnAssessmentRelationship', 'fixedIn'),
+        ('security_VexAffectedVulnAssessmentRelationship', 'affects'),
+        ('security_VexUnderInvestigationVulnAssessmentRelationship', 'underInvestigationFor'),
+    ]
+    affected = relationships[2]
+    assert affected['security_actionStatement'] == 'Update to version 2.1.'
+    assert affected['security_statusNotes'] == 'The TLS server is enabled.'
+    assert relationships[1]['security_modifiedTime'] == '2026-02-01T10:00:00Z'
+
+    back = spdx.parse(text, format='json-ld')
     by_ref = {pkg.ref: pkg for pkg in back.packages}
-    assert by_ref['COMPONENT-lib'].assessments == model.packages[1].assessments
+    assert by_ref['COMPONENT-lib'].assessments == [replace(a, response=[]) for a in model.packages[1].assessments]
+
+    try:
+        with urllib.request.urlopen('https://spdx.org/schema/3.0.1/spdx-json-schema.json', timeout=30) as resp:
+            schema = json.loads(resp.read())
+    except Exception as e:
+        pytest.skip(f'cannot fetch the SPDX 3.0.1 schema: {e}')
+    errors = list(jsonschema.Draft202012Validator(schema).iter_errors(json.loads(text)))
+    assert not errors, f'SPDX 3.0 file validation failed: {errors[:2]}'
 
 
 def test_parse_vex_detects_format(tmp_path: Path) -> None:

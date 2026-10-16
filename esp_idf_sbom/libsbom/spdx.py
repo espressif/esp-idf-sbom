@@ -450,6 +450,35 @@ _JUSTIFICATION_TYPE = {
     vex.VexJustification.INLINE_MITIGATIONS_ALREADY_EXIST: 'inlineMitigationsAlreadyExist',
 }
 
+# The relationship class and type of each status. SPDX 3.0.1 has one class for
+# each CISA status, and each class has its own fields.
+_VEX_RELATIONSHIP = {
+    vex.VexStatus.NOT_AFFECTED: ('security_VexNotAffectedVulnAssessmentRelationship', 'doesNotAffect'),
+    vex.VexStatus.AFFECTED: ('security_VexAffectedVulnAssessmentRelationship', 'affects'),
+    vex.VexStatus.FIXED: ('security_VexFixedVulnAssessmentRelationship', 'fixedIn'),
+    vex.VexStatus.UNDER_INVESTIGATION: (
+        'security_VexUnderInvestigationVulnAssessmentRelationship',
+        'underInvestigationFor',
+    ),
+}
+
+_SPDX_TIME_RE = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')
+
+
+def _spdx_time(value: str) -> str:
+    """A time in the form SPDX 3.0.1 requires: UTC, whole seconds and a Z.
+
+    A time read from another file can have a fraction of a second or another time
+    zone. A time that cannot be read is skipped with a warning.
+    """
+    if _SPDX_TIME_RE.fullmatch(value):
+        return value
+    time = vex.parse_time(value)
+    if time is None:
+        log.warn(f'Ignoring the time "{value}", it is not an ISO 8601 time.')
+        return ''
+    return time.astimezone(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
 
 def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
     """Render the model as SPDX 3.0 JSON-LD.
@@ -717,8 +746,7 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
 
     # SPDX 3.0 has a separate relationship class for each VEX status, and each
     # class has different fields. This is not a value map like in CycloneDX.
-    # build() creates only not-affected statements, so only that class is written.
-    statements = [s for s in vex.build(sbom).statements if s.status is vex.VexStatus.NOT_AFFECTED]
+    statements = vex.build(sbom).statements
     has_security = bool(statements)
     for statement in statements:
         ref = statement.products[0].ref
@@ -743,17 +771,34 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
         graph.append(vulnerability)
         element_ids.append(vid)
         xid = sid(f'Vex-{ref}-{statement.vulnerability}')
+        vex_type, relationship_type = _VEX_RELATIONSHIP[statement.status]
         assessment: Dict[str, Any] = {
-            'type': 'security_VexNotAffectedVulnAssessmentRelationship',
+            'type': vex_type,
             'spdxId': xid,
             'creationInfo': ci,
             'from': vid,
-            'relationshipType': 'doesNotAffect',
+            'relationshipType': relationship_type,
             'to': [sid(product.ref) for product in statement.products],
-            'security_impactStatement': statement.impact_statement,
         }
-        if statement.justification is not None:
-            assessment['security_justificationType'] = _JUSTIFICATION_TYPE[statement.justification]
+        if statement.status is vex.VexStatus.NOT_AFFECTED:
+            assessment['security_impactStatement'] = statement.impact_statement
+            if statement.justification is not None:
+                assessment['security_justificationType'] = _JUSTIFICATION_TYPE[statement.justification]
+        else:
+            # Only the not-affected class has an impact statement. The others
+            # have notes about how the status was determined.
+            if statement.impact_statement:
+                assessment['security_statusNotes'] = statement.impact_statement
+            if statement.status is vex.VexStatus.AFFECTED:
+                # SPDX requires the action statement for this class, as CISA does.
+                assessment['security_actionStatement'] = statement.action_statement
+        for key, value in (
+            ('security_publishedTime', statement.first_issued),
+            ('security_modifiedTime', statement.last_updated),
+        ):
+            time = _spdx_time(value) if value else ''
+            if time:
+                assessment[key] = time
         graph.append(assessment)
         element_ids.append(xid)
 
@@ -1013,6 +1058,9 @@ def _parse_json(text: str) -> SBOM:
 # model, so nothing is lost.
 _VEX_JUSTIFICATION_TYPE = {value: key for key, value in _JUSTIFICATION_TYPE.items()}
 
+# Reverse of _VEX_RELATIONSHIP: the status of each relationship class.
+_VEX_STATUS = {vex_type: status for status, (vex_type, _) in _VEX_RELATIONSHIP.items()}
+
 
 def _parse_jsonld(text: str) -> SBOM:
     """Recover the scan-relevant parts of an SPDX 3.0 JSON-LD document: the
@@ -1054,7 +1102,7 @@ def _parse_jsonld(text: str) -> SBOM:
             vuln_cve[_id(e.get('spdxId'))] = next(iter(ids_of(e, 'cve')), '')
 
     depends: Dict[str, List[str]] = {}
-    excludes: Dict[str, List[VexAssessment]] = {}
+    assessments: Dict[str, List[VexAssessment]] = {}
     doc_name = ''
     creator = ''
     root = ''
@@ -1063,13 +1111,21 @@ def _parse_jsonld(text: str) -> SBOM:
         t = e.get('type')
         if t == 'Relationship' and e.get('relationshipType') == 'dependsOn':
             depends.setdefault(_id(e.get('from')), []).extend(_id(d) for d in _as_list(e.get('to')))
-        elif t == 'security_VexNotAffectedVulnAssessmentRelationship':
-            entry = {'cve': vuln_cve.get(_id(e.get('from')), ''), 'reason': e.get('security_impactStatement', '')}
-            justification = _VEX_JUSTIFICATION_TYPE.get(e.get('security_justificationType', ''))
-            if justification is not None:
-                entry['justification'] = justification.value
+        elif t in _VEX_STATUS:
+            # SPDX 3.0.1 has no response, so none is read. A statement without a
+            # modified time was not changed since it was published.
+            published = e.get('security_publishedTime', '')
             for to in _as_list(e.get('to')):
-                excludes.setdefault(_id(to), []).append(assessment_from_exclusion(entry))
+                assessment = VexAssessment(
+                    vulnerability=vuln_cve.get(_id(e.get('from')), ''),
+                    status=_VEX_STATUS[t],
+                    justification=_VEX_JUSTIFICATION_TYPE.get(e.get('security_justificationType', '')),
+                    impact_statement=e.get('security_impactStatement') or e.get('security_statusNotes', ''),
+                    action_statement=e.get('security_actionStatement', ''),
+                    first_issued=published,
+                    last_updated=e.get('security_modifiedTime') or published,
+                )
+                assessments.setdefault(_id(to), []).append(assessment)
         elif t == 'SpdxDocument':
             doc_name = e.get('name', '')
             # Our namespace. render writes it as '<docns>#SPDXRef-DOCUMENT'.
@@ -1114,7 +1170,7 @@ def _parse_jsonld(text: str) -> SBOM:
                 version=e.get('software_packageVersion', ''),
                 purl=e.get('software_packageUrl', ''),
                 cpes=cpes,
-                assessments=excludes.get(spdxid, []),
+                assessments=assessments.get(spdxid, []),
                 cve_keywords=cve_keywords,
                 depends_on=[_unref_jsonld(d, docns) for d in depends.get(spdxid, [])],
             )
