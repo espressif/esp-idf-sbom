@@ -1176,6 +1176,19 @@ def test_render_vex_openvex_skips_unidentifiable_products() -> None:
     assert document['statements'] == []
 
 
+def test_render_vex_openvex_product_without_purl() -> None:
+    """The @id of an OpenVEX product is an IRI, and a package ref is not one. A
+    package without a purl gets only its identifiers."""
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+
+    cpe = 'cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*'
+    model = _sbom_with_exclusions()
+    model.packages[1].cpes = [cpe]
+    document = json.loads(openvex.render_vex(vex.build(model)))
+    assert [statement['products'] for statement in document['statements']] == [[{'identifiers': {'cpe23': cpe}}]] * 2
+
+
 def test_create_vex_none(hello_world_build: Path) -> None:
     """--vex-format none drops the vulnerability information from every format, and only
     that: the SPDX 2.2 comment keeps its cve-keywords block, which is used to
