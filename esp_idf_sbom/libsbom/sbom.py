@@ -117,7 +117,10 @@ class VexAssessment:
     """
 
     vulnerability: str  # CVE id
-    status: VexStatus
+    # None only in vex update: a statements file can leave out the status, and a new
+    # statement then has none until a later file sets it. The code that needs the
+    # status calls known_status(), so such a statement is never written.
+    status: Optional[VexStatus] = None
     justification: Optional[VexJustification] = None
     response: List[VexResponse] = field(default_factory=list)
     impact_statement: str = ''  # why not affected, the reason from the manifest
@@ -126,6 +129,16 @@ class VexAssessment:
     # time. Empty if not known.
     first_issued: str = ''
     last_updated: str = ''
+
+    def known_status(self) -> VexStatus:
+        """The status. Raise ValueError when the statement has none, see status."""
+        if self.status is None:
+            raise ValueError(f'{self.where()}: the statement needs a status.')
+        return self.status
+
+    def where(self) -> str:
+        """How an error message names the statement."""
+        return self.vulnerability
 
 
 @dataclass
@@ -291,7 +304,7 @@ def merge_excluded_cves(assessments: List[VexAssessment], cpes: List[str]) -> Di
             merged.setdefault(cve_id, assessment_from_exclusion(entry))
     for assessment in assessments:
         known = merged.get(assessment.vulnerability)
-        if known is not None and assessment.status.allows_justification and assessment.justification is None:
+        if known is not None and assessment.known_status().allows_justification and assessment.justification is None:
             assessment = replace(assessment, justification=known.justification)
         merged[assessment.vulnerability] = assessment
     return merged

@@ -11,7 +11,8 @@ here, so the two cannot differ.
 The status, justification and response values are in vexvalues.py.
 
 A statement has a status, it is not just an excluded CVE. create writes only
-not_affected, for the excluded CVEs. check uses the status of each statement.
+not_affected, for the excluded CVEs. vex update writes the status that the user
+decided.
 """
 
 import datetime
@@ -64,16 +65,19 @@ class VexStatement(VexAssessment):
     # The time that decides which of two statements about a CVE of a package is
     # newer, see apply(). The parser of each format sets it. OpenVEX uses the
     # timestamp of a statement, as the OpenVEX spec and go-vex do. CycloneDX uses
-    # lastUpdated, the time of the last change of an analysis, because a tool can
-    # change an analysis in place and keep its firstIssued. It is empty for a
-    # statement that was not parsed. It comes from the other times, so == does not
-    # compare it.
+    # lastUpdated, because vex update changes an analysis in place and keeps its
+    # firstIssued. It is empty for a statement that was not parsed. It comes from
+    # the other times, so == does not compare it.
     time: str = field(default='', compare=False)
     # The fields that a statements file sets, as VexAssessment names them. apply()
     # changes only these fields of the statement that the package already has, see
     # vexyaml.parse_vex(). None for the other formats: their statement is complete
     # and replaces the old one as a whole.
     keys: Optional[FrozenSet[str]] = field(default=None, compare=False)
+
+    def where(self) -> str:
+        """How an error message names the statement: the CVE and its packages."""
+        return f'{self.vulnerability} for {", ".join(product.ref for product in self.products)}'
 
 
 @dataclass
@@ -105,6 +109,11 @@ class Vex:
     # The author of the statements: the manufacturer from the document key of the
     # project manifest, as SBOM.manufacturer. Empty if the manifest does not say.
     manufacturer: Organization = field(default_factory=Organization)
+    # The format, as a key of formats.VEX_FORMATS, and the text of the file that the
+    # document was read from. vex update writes into this text. Both are empty for a
+    # document made by build().
+    format_name: str = ''
+    text: str = field(default='', repr=False, compare=False)
 
 
 _FRACTION_RE = re.compile(r'\.(\d+)')
@@ -225,6 +234,11 @@ def find_packages(sbom: SBOM, product: VexProduct) -> List[Package]:
     return []
 
 
+def _product_name(product: VexProduct) -> str:
+    """How a message names a VEX product."""
+    return product.ref or product.purl or next(iter(product.cpes), '') or product.name
+
+
 def _replace_assessment(pkg: Package, assessment: VexAssessment, keys: Optional[FrozenSet[str]] = None) -> None:
     """Replace the assessment of the same CVE at its position, so that the order
     does not change. With keys, change only these fields of the old assessment. A
@@ -236,6 +250,17 @@ def _replace_assessment(pkg: Package, assessment: VexAssessment, keys: Optional[
             pkg.assessments[index] = assessment
             return
     pkg.assessments.append(assessment)
+
+
+def check_sbom(sbom: SBOM, vexdoc: Vex) -> None:
+    """Raise ValueError when the VEX document names another SBOM.
+
+    A VEX document that names its SBOM, for example a CycloneDX VEX with a
+    BOM-Link, is used only with that SBOM.
+    """
+    if vexdoc.sbom_id and vexdoc.sbom_id != sbom.doc_id:
+        this_sbom = f'this SBOM is "{sbom.doc_id}"' if sbom.doc_id else 'this SBOM has no id'
+        raise ValueError(f'VEX belongs to another SBOM. It links to "{vexdoc.sbom_id}", but {this_sbom}.')
 
 
 def _time(statement: VexStatement) -> datetime.datetime:
@@ -261,20 +286,32 @@ def apply(sbom: SBOM, vexdoc: Vex) -> None:
     statements are used in the order of their time, see VexStatement.time. Of
     statements with the same time, the later one wins. A statement with keys
     changes only these fields, see VexStatement.keys.
+
+    A statement that names no package of the SBOM is skipped with a warning. This
+    is not an error, because a VEX file may cover a whole product line, but it can
+    also be a typo in a statements file. A statement that names more than one
+    package, for example two copies of a library with the same CPE, applies to all
+    of them, also with a warning.
+
+    Raise ValueError when the VEX document belongs to another SBOM, see
+    check_sbom().
     """
-    unmatched = 0
+    check_sbom(sbom, vexdoc)
+
     # sorted() keeps the order of statements with the same time.
     for statement in sorted(vexdoc.statements, key=_time):
         for product in statement.products:
             packages = find_packages(sbom, product)
+            name = _product_name(product)
             if not packages:
-                unmatched += 1
+                log.warn(f'{statement.vulnerability}: "{name}" names no package of the SBOM.')
+            elif len(packages) > 1:
+                refs = ', '.join(pkg.ref for pkg in packages)
+                log.warn(
+                    f'{statement.vulnerability}: "{name}" names {len(packages)} packages, {refs}. '
+                    'The statement applies to all of them.'
+                )
             for pkg in packages:
                 # The VEX file is the newer document, so it wins over an
                 # assessment of the same CVE already in the SBOM.
                 _replace_assessment(pkg, _assessment(statement), statement.keys)
-
-    if unmatched:
-        # Not an error. A VEX file may cover a whole product line, so it can name
-        # components that this SBOM does not contain.
-        log.warn(f'{unmatched} VEX statement(s) name a component that is not in the SBOM; they were ignored.')

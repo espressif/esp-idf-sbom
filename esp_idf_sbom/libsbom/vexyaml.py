@@ -14,12 +14,12 @@ The file keeps the statements about the CVEs of one SBOM, grouped by package:
             detail: The product calls the affected function from the TCP task.
             action: Update to ESP-IDF v5.5.2 in firmware 1.3.
 
-A statement changes only the fields that the file sets, see VexStatement.keys. A
-key with an empty value removes the field. The package can be named by any id
-that the SBOM or a VEX file shows for it, see _product(). vex.find_packages()
-then finds it in the SBOM. Unknown keys are ignored, so that a newer version of
-the tool can add keys. A change that an older version must not ignore needs a
-new FORMAT_VERSION.
+A statement changes only the fields that the file sets, see VexStatement.keys. It
+can also leave out the status, see VexAssessment.status. A key with an empty
+value removes the field. The package can be named by any id that the SBOM or a
+VEX file shows for it, see _product(). vex.find_packages() then finds it in the
+SBOM. Unknown keys are ignored, so that a newer version of the tool can add keys.
+A change that an older version must not ignore needs a new FORMAT_VERSION.
 """
 
 from typing import Any
@@ -86,7 +86,7 @@ _PACKAGE = schema.Schema(
 _VULNERABILITY = schema.Schema(
     {
         'cve': schema.And(str, _not_empty),
-        'status': schema.And(str, _one_of(_STATUSES, 'Status')),
+        schema.Optional('status'): schema.And(str, _one_of(_STATUSES, 'Status')),
         schema.Optional('justification'): schema.And(str, _check_justification),
         schema.Optional('detail'): str,
         schema.Optional('action'): str,
@@ -99,7 +99,9 @@ _VULNERABILITY = schema.Schema(
 def _fields(entry: Dict[str, Any]) -> Dict[str, Any]:
     """The fields that a statement sets, as VexAssessment names them. An empty value
     removes the field."""
-    values: Dict[str, Any] = {'status': vex.VexStatus(entry['status'])}
+    values: Dict[str, Any] = {}
+    if 'status' in entry:
+        values['status'] = vex.VexStatus(entry['status'])
     if 'justification' in entry:
         values['justification'] = vex.VexJustification(entry['justification']) if entry['justification'] else None
     if 'detail' in entry:
@@ -143,11 +145,12 @@ def parse_vex(text: str) -> vex.Vex:
     """Parse the YAML file into the VEX model.
 
     Each CVE of a package becomes one statement for that package. Its keys are the
-    fields that the file sets, and the other fields have their default values. The
-    statements have no times. The SBOM id is set when a package id names the SBOM,
-    which a BOM-Link and an SPDX 3.0.1 element id do. Raise ValueError when the file
-    is not valid, also when its format-version is not FORMAT_VERSION. A file without
-    format-version has version 1.
+    fields that the file sets, and the other fields have their default values. A
+    statement without a status has None. The statements have no times. The SBOM id
+    is set when a package id names the SBOM, which a BOM-Link and an SPDX 3.0.1
+    element id do. Raise ValueError when the file is not valid, also when its
+    format-version is not FORMAT_VERSION. A file without format-version has
+    version 1.
     """
     try:
         document = yaml.safe_load(text)

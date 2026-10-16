@@ -530,10 +530,10 @@ def create_vulnerable_record(
     kev_name = vuln['cve'].get('cisaVulnerabilityName', '')
 
     assessment = assessments.get(cve_id)
-    if assessment is not None and assessment.status.suppresses:
+    if assessment is not None and assessment.known_status().suppresses:
         exclude_reason = _exclude_reason(assessment)
         vulnerable = 'EXCLUDED'
-    elif assessment is not None and assessment.status.is_affected:
+    elif assessment is not None and assessment.known_status().is_affected:
         # The VEX says that the CVE applies, so a keyword or NA-version match is
         # confirmed.
         vulnerable = 'YES'

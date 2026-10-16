@@ -13,6 +13,7 @@ from typing import IO
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 import rich_click as click
@@ -29,6 +30,7 @@ from esp_idf_sbom.libsbom import report
 from esp_idf_sbom.libsbom import sbom
 from esp_idf_sbom.libsbom import utils
 from esp_idf_sbom.libsbom import vex
+from esp_idf_sbom.libsbom import vexyaml
 
 EXTENDED_SCAN_HELP = (
     'If available, use the product part of the CPE and the keywords found '
@@ -129,7 +131,10 @@ def cmd_create(args: Dict[str, Any]) -> int:
         if vexfmt.linked:
             vexdoc.sbom_id = doc_id
         # The same helper as the -o file, so both create missing directories.
-        vex_text = vexfmt.backend.render_vex(vexdoc, format=vexfmt.encoding, version=vexfmt.version)
+        try:
+            vex_text = vexfmt.backend.render_vex(vexdoc, format=vexfmt.encoding, version=vexfmt.version)
+        except ValueError as e:
+            log.die(f'cannot write the VEX document: {e}')
         _write_output_file(args['vex_output'], vex_text)
 
     # markup=False: the SBOM is data, not a rich-markup message; without it rich
@@ -138,12 +143,34 @@ def cmd_create(args: Dict[str, Any]) -> int:
     return 0
 
 
+def _load_vex(path: str) -> vex.Vex:
+    """Read a standalone VEX document. The model keeps its format and its text."""
+    try:
+        vexdoc = formats.load_vex(path)
+    except (OSError, ValueError) as e:
+        log.die(f'cannot read VEX file "{path}": {e}')
+    return vexdoc
+
+
+def _check_sbom(model: sbom.SBOM, vexdoc: vex.Vex, path: str) -> None:
+    """Stop when the VEX document read from path belongs to another SBOM."""
+    try:
+        vex.check_sbom(model, vexdoc)
+    except ValueError as e:
+        log.die(f'cannot use "{path}": {e}')
+
+
+def _apply_vex(model: sbom.SBOM, vexdoc: vex.Vex, path: str) -> None:
+    """Merge the VEX document read from path into the SBOM model. Stop when it
+    belongs to another SBOM."""
+    try:
+        vex.apply(model, vexdoc)
+    except ValueError as e:
+        log.die(f'cannot use "{path}": {e}')
+
+
 def _apply_vex_files(model: sbom.SBOM, paths: Tuple[str, ...]) -> None:
     """Merge standalone VEX documents into the SBOM model that was just loaded.
-
-    A VEX that names the SBOM it belongs to, which for CycloneDX is the
-    serialNumber in the BOM-Link, is used only with that SBOM. OpenVEX names
-    products by PURL and CPE and has no such link, so it is used with any SBOM.
 
     The statements of all files are applied together, so that the newest statement
     about a CVE of a package wins, and not the one from the last file, see
@@ -151,31 +178,8 @@ def _apply_vex_files(model: sbom.SBOM, paths: Tuple[str, ...]) -> None:
     """
     statements: List[vex.VexStatement] = []
     for path in paths:
-        try:
-            vexdoc = formats.load_vex(path)
-        except (OSError, ValueError) as e:
-            log.die(f'cannot read VEX file "{path}": {e}')
-
-        if vexdoc.sbom_id and vexdoc.sbom_id != model.doc_id:
-            if not model.doc_id:
-                # serialNumber is optional in CycloneDX, and an SPDX document may
-                # carry no namespace either.
-                log.die(
-                    f'The VEX file "{path}" links to a CycloneDX SBOM with a BOM-Link, but '
-                    f'the SBOM being checked has no serialNumber to match it against.'
-                )
-            if not model.doc_id.startswith('urn:uuid:'):
-                # A CycloneDX serialNumber is a urn:uuid, an SPDX document
-                # namespace is a URL, so the two can be told apart.
-                log.die(
-                    f'The VEX file "{path}" links to a CycloneDX SBOM with a BOM-Link, and '
-                    f'the SBOM being checked is not a CycloneDX document.'
-                )
-            log.die(
-                f'The VEX file "{path}" belongs to another SBOM. It links to '
-                f'"{vexdoc.sbom_id}", but this SBOM is "{model.doc_id}".'
-            )
-
+        vexdoc = _load_vex(path)
+        _check_sbom(model, vexdoc, path)
         statements += vexdoc.statements
     vex.apply(model, vex.Vex(statements=statements))
 
@@ -342,6 +346,61 @@ def cmd_check(args: Dict[str, Any]) -> int:
     report.show(record_list, args, proj_name, proj_ver)
 
     return exit_code
+
+
+def cmd_vex_update(args: Dict[str, Any]) -> int:
+    vex_file = args['vex_file']
+    if vex_file and args['format']:
+        log.die('--format cannot be used with --vex. The updated VEX document keeps the format of the VEX file.')
+
+    try:
+        model = formats.load_sbom(args['input_file'])
+    except (OSError, ValueError) as e:
+        log.die(f'cannot read SBOM file: {e}')
+
+    # Only the statements of the VEX file and of the statements files go into the
+    # model. The statements embedded in the SBOM stay there and are not written to
+    # the VEX document, and check reads both.
+    for pkg in model.packages:
+        pkg.assessments = []
+
+    current: Optional[vex.Vex] = None
+    if vex_file:
+        current = _load_vex(vex_file)
+        # The statements files change the statements of the VEX file. A statement for
+        # a package that is not in the SBOM is not changed. It stays in the VEX file.
+        _apply_vex(model, current, vex_file)
+
+    # A statement of a statements file changes only the keys that it has. The files
+    # are applied from left to right on the command line, so a file further right
+    # wins. The writer checks the final statements, so the keys that it needs can
+    # come from different files, for example the status from one file and the
+    # detail from another.
+    for statements_file in args['statements_files']:
+        try:
+            with open(statements_file) as f:
+                statements = vexyaml.parse_vex(f.read())
+        except (OSError, ValueError) as e:
+            log.die(f'cannot read statements file "{statements_file}": {e}')
+        _apply_vex(model, statements, statements_file)
+
+    try:
+        if current is not None:
+            # Write the statements where they differ from the VEX file, and keep the rest of it.
+            backend = formats.VEX_FORMATS[current.format_name].backend
+            text = backend.update_vex(current, vex.build(model).statements, model)
+        else:
+            vexfmt = formats.VEX_FORMATS[args['format'] or 'openvex']
+            vexdoc = vex.build(model, sbom_id=model.doc_id if vexfmt.linked else '')
+            text = vexfmt.backend.render_vex(vexdoc, format=vexfmt.encoding, version=vexfmt.version)
+    except ValueError as e:
+        log.die(f'cannot write the VEX document: {e}')
+
+    # Without emoji=False, rich would replace a text like :warning: with an emoji.
+    # A VEX file that did not change is printed as it is, without an added new line.
+    unchanged = current is not None and text == current.text
+    log.print(text, markup=False, emoji=False, end='' if unchanged else '\n')
+    return 0
 
 
 def cmd_license(args: Dict[str, Any]) -> int:
@@ -987,7 +1046,7 @@ def create(ctx: click.Context, **params: Any) -> None:
     metavar='VEX_FILE',
     multiple=True,
     help=(
-        'Read a standalone VEX document, as written by "create --vex-output", and use its '
+        'Read a standalone VEX document, as written by "create --vex-output" or "vex update", and use its '
         'statements when reporting. A CVE is excluded when a statement says that it does not apply or '
         'that it is fixed, and reported when a statement says that it affects the package. The CVE of a statement '
         'from the VEX file is reported also when the scan does not find it. Can be used '
@@ -1195,6 +1254,64 @@ def manifest_license(ctx: click.Context, **params: Any) -> None:
 def manifest_aggregate(ctx: click.Context, **params: Any) -> None:
     """Combine all manifest files in AGGREGATE_PATH into a single SBOM manifest using the referenced manifests."""
     _dispatch(ctx, cmd_manifest_aggregate, **params)
+
+
+@main.group('vex', invoke_without_command=True)
+@click.pass_context
+def vex_group(ctx: click.Context) -> None:
+    """Commands operating on VEX documents."""
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help(), err=True)
+        ctx.exit(1)
+
+
+@vex_group.command('update')
+@click.argument('input_file', metavar='SBOM_FILE')
+@click.argument('statements_files', metavar='STATEMENTS_FILE...', nargs=-1, required=True)
+@click.option(
+    '-o',
+    '--output',
+    '--output-file',
+    'output_file',
+    metavar='OUTPUT_FILE',
+    default=None,
+    help='Print output to the specified file instead of stdout.',
+)
+@click.option(
+    '--vex',
+    'vex_file',
+    metavar='VEX_FILE',
+    default=None,
+    help=(
+        'The current VEX document of SBOM_FILE. The updated document keeps its format and '
+        'id, and gets a higher version when something changed. Only the new and changed '
+        'statements are written into it, and the rest of the document stays as it is. '
+        'Without --vex, a new VEX document is written with the statements in STATEMENTS_FILE.'
+    ),
+)
+@click.option(
+    '--format',
+    type=click.Choice(list(formats.VEX_FORMATS)),
+    default=None,
+    help=(
+        'The format of a new VEX document. It cannot be used with --vex. '
+        'openvex - OpenVEX 0.2.0. It works with any SBOM format. This is default. '
+        'cyclonedx-json - CycloneDX 1.6. It needs a CycloneDX SBOM.'
+    ),
+)
+@click.pass_context
+def vex_update(ctx: click.Context, **params: Any) -> None:
+    """Update a VEX document with the statements in STATEMENTS_FILE.
+
+    STATEMENTS_FILE is a YAML file with the status of CVEs in the packages of
+    SBOM_FILE. A statement in it changes the statement of the same CVE for the
+    same package. It changes only the keys that it has. More than one file can be
+    given. They are applied from left to right, so the file further right wins,
+    for example a file shared by several products first and the file of one
+    product last. The statements embedded in SBOM_FILE are not written to the VEX
+    document.
+    """
+    _dispatch(ctx, cmd_vex_update, **params)
 
 
 if __name__ == '__main__':

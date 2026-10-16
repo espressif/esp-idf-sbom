@@ -87,7 +87,7 @@ def _package_comment(pkg: Package) -> str:
 
     # Released versions read every entry of this list as excluded, so it gets only
     # the assessments that say the CVE does not apply.
-    exclusions = [_cve_exclude_entry(a) for a in pkg.assessments if a.status.suppresses]
+    exclusions = [_cve_exclude_entry(a) for a in pkg.assessments if a.known_status().suppresses]
     if exclusions:
         cve_info = {'cve-exclude-list': exclusions}
         cve_info_yaml = yaml.dump(cve_info, indent=4)
@@ -768,7 +768,8 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
         graph.append(vulnerability)
         element_ids.append(vid)
         xid = sid(f'Vex-{ref}-{statement.vulnerability}')
-        vex_type, relationship_type = _VEX_RELATIONSHIP[statement.status.cisa]
+        status = statement.known_status()
+        vex_type, relationship_type = _VEX_RELATIONSHIP[status.cisa]
         assessment: Dict[str, Any] = {
             'type': vex_type,
             'spdxId': xid,
@@ -777,7 +778,7 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
             'relationshipType': relationship_type,
             'to': [sid(product.ref) for product in statement.products],
         }
-        if statement.status.is_not_affected:
+        if status.is_not_affected:
             assessment['security_impactStatement'] = statement.impact_statement
             if statement.justification is not None:
                 assessment['security_justificationType'] = _JUSTIFICATION_TYPE[statement.justification.cisa]
@@ -786,7 +787,7 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
             # have notes about how the status was determined.
             if statement.impact_statement:
                 assessment['security_statusNotes'] = statement.impact_statement
-            if statement.status.is_affected:
+            if status.is_affected:
                 # SPDX requires the action statement for this class, as CISA does.
                 assessment['security_actionStatement'] = statement.action_statement
         for key, value in (
