@@ -20,6 +20,7 @@ import json
 import uuid
 from typing import Any
 from typing import Dict
+from typing import List
 from typing import Optional
 
 from esp_idf_sbom.libsbom import log
@@ -63,7 +64,13 @@ def _product(product: vex.VexProduct) -> Optional[Dict[str, Any]]:
 
 
 def _statement(statement: vex.VexStatement) -> Optional[Dict[str, Any]]:
-    products = [p for p in (_product(product) for product in statement.products) if p]
+    products: List[Dict[str, Any]] = []
+    for product in statement.products:
+        component = _product(product)
+        # Packages without a purl and with the same CPE give the same component.
+        # OpenVEX cannot tell them apart, so it is written once.
+        if component is not None and component not in products:
+            products.append(component)
     if not products:
         return None
 
