@@ -19,6 +19,8 @@ import re
 from dataclasses import dataclass
 from dataclasses import field
 from dataclasses import fields
+from dataclasses import replace
+from typing import FrozenSet
 from typing import List
 from typing import Optional
 from typing import Tuple
@@ -67,6 +69,11 @@ class VexStatement(VexAssessment):
     # statement that was not parsed. It comes from the other times, so == does not
     # compare it.
     time: str = field(default='', compare=False)
+    # The fields that a statements file sets, as VexAssessment names them. apply()
+    # changes only these fields of the statement that the package already has, see
+    # vexyaml.parse_vex(). None for the other formats: their statement is complete
+    # and replaces the old one as a whole.
+    keys: Optional[FrozenSet[str]] = field(default=None, compare=False)
 
 
 @dataclass
@@ -218,6 +225,19 @@ def find_packages(sbom: SBOM, product: VexProduct) -> List[Package]:
     return []
 
 
+def _replace_assessment(pkg: Package, assessment: VexAssessment, keys: Optional[FrozenSet[str]] = None) -> None:
+    """Replace the assessment of the same CVE at its position, so that the order
+    does not change. With keys, change only these fields of the old assessment. A
+    new CVE goes at the end."""
+    for index, old in enumerate(pkg.assessments):
+        if old.vulnerability == assessment.vulnerability:
+            if keys is not None:
+                assessment = replace(old, **{key: getattr(assessment, key) for key in keys})
+            pkg.assessments[index] = assessment
+            return
+    pkg.assessments.append(assessment)
+
+
 def _time(statement: VexStatement) -> datetime.datetime:
     """The time of the statement, see VexStatement.time. A statement whose time
     cannot be read counts as the oldest."""
@@ -239,7 +259,8 @@ def apply(sbom: SBOM, vexdoc: Vex) -> None:
 
     A newer statement about a CVE of a package overrides an older one. So the
     statements are used in the order of their time, see VexStatement.time. Of
-    statements with the same time, the later one wins.
+    statements with the same time, the later one wins. A statement with keys
+    changes only these fields, see VexStatement.keys.
     """
     unmatched = 0
     # sorted() keeps the order of statements with the same time.
@@ -251,9 +272,7 @@ def apply(sbom: SBOM, vexdoc: Vex) -> None:
             for pkg in packages:
                 # The VEX file is the newer document, so it wins over an
                 # assessment of the same CVE already in the SBOM.
-                assessments = [a for a in pkg.assessments if a.vulnerability != statement.vulnerability]
-                assessments.append(_assessment(statement))
-                pkg.assessments = assessments
+                _replace_assessment(pkg, _assessment(statement), statement.keys)
 
     if unmatched:
         # Not an error. A VEX file may cover a whole product line, so it can name

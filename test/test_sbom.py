@@ -1691,9 +1691,84 @@ def test_vex_apply_reaches_every_package_with_the_cpe() -> None:
     assert with_statement == ['SUBMODULE-json-cJSON', 'COMPONENT-espressif-cjson']
 
 
+def test_vexyaml_parses_statements() -> None:
+    """Each CVE of a package becomes a statement for that package. Its keys are the
+    fields that the file sets. The form of the package id says which id of the
+    package it is, and find_packages() then finds the package. Unknown keys are
+    ignored, so that a newer version can add keys."""
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom import vexyaml
+
+    cjson_cpe = 'cpe:2.3:a:cjson_project:cjson:1.7.19:*:*:*:*:*:*:*'
+    text = dedent(
+        f"""\
+        future: ignored
+        packages:
+          - package: {cjson_cpe}
+            future: ignored
+            vulnerabilities:
+              - cve: CVE-2026-1
+                status: not_affected
+                justification: vulnerable_code_not_in_execute_path
+                detail: Not used.
+                future: ignored
+              - cve: CVE-2026-6
+                status: fixed
+          - package: pkg:github/example/lib@2.0
+            vulnerabilities:
+              - cve: CVE-2026-2
+                status: affected
+                detail: The server is enabled.
+                action: Update to 2.1.
+          - package: urn:cdx:11111111-2222-3333-4444-555555555555/1#COMPONENT-lib
+            vulnerabilities:
+              - cve: CVE-2026-3
+                status: fixed
+          - package: SPDXRef-COMPONENT-lib
+            vulnerabilities:
+              - cve: CVE-2026-4
+                status: under_investigation
+          - package: cJSON
+            vulnerabilities:
+              - cve: CVE-2026-5
+                status: under_investigation
+        """
+    )
+    document = vexyaml.parse_vex(text)
+
+    statements = document.statements
+    assert [s.vulnerability for s in statements] == [f'CVE-2026-{n}' for n in (1, 6, 2, 3, 4, 5)]
+    assert statements[0].status == vex.VexStatus('not_affected')
+    assert statements[0].justification == vex.VexJustification('vulnerable_code_not_in_execute_path')
+    assert statements[0].impact_statement == 'Not used.'
+    assert statements[0].keys == {'status', 'justification', 'impact_statement'}
+    assert statements[1].keys == {'status'}
+    affected = statements[2]
+    assert affected.status == vex.VexStatus('affected')
+    assert (affected.impact_statement, affected.action_statement) == ('The server is enabled.', 'Update to 2.1.')
+    assert affected.keys == {'status', 'impact_statement', 'action_statement'}
+    assert [s.products for s in statements] == [
+        [vex.VexProduct(cpes=[cjson_cpe])],
+        [vex.VexProduct(cpes=[cjson_cpe])],
+        [vex.VexProduct(purl='pkg:github/example/lib@2.0')],
+        [vex.VexProduct(ref='COMPONENT-lib')],
+        [vex.VexProduct(ref='COMPONENT-lib')],
+        [vex.VexProduct(ref='cJSON', name='cJSON')],
+    ]
+    # The BOM-Link names the SBOM it was copied from.
+    assert (document.sbom_id, document.sbom_version) == ('urn:uuid:11111111-2222-3333-4444-555555555555', 1)
+
+    model = _sbom_for_lookup()
+    cjson = ['SUBMODULE-json-cJSON', 'COMPONENT-espressif-cjson']
+    lib = ['COMPONENT-lib']
+    found = [[pkg.ref for pkg in vex.find_packages(model, s.products[0])] for s in statements]
+    assert found == [cjson, cjson, lib, lib, lib, cjson]
+
+
 def test_vex_apply_replaces_existing_entry() -> None:
-    """The VEX file is the newer document, so it wins over the same CVE already in
-    the SBOM. A statement that matches no package is ignored, not an error."""
+    """The VEX file is the newer document, so its statement replaces the same CVE
+    in the SBOM, at the same position. A statement that matches no package is
+    ignored, not an error."""
     from esp_idf_sbom.libsbom import vex
 
     model = _sbom_with_exclusions()
@@ -1716,12 +1791,12 @@ def test_vex_apply_replaces_existing_entry() -> None:
 
     vex.apply(model, document)
     assert model.packages[1].assessments == [
-        *_assessments({'cve': 'CVE-2020-2', 'reason': 'not reachable'}),
         vex.VexAssessment(
             vulnerability='CVE-2020-1',
             status=vex.VexStatus('not_affected'),
             impact_statement='re-checked, still not used',
         ),
+        *_assessments({'cve': 'CVE-2020-2', 'reason': 'not reachable'}),
     ]
 
 
