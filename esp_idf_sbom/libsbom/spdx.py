@@ -18,6 +18,8 @@ import uuid
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
+from typing import Tuple
 
 import yaml
 
@@ -28,7 +30,6 @@ from esp_idf_sbom.libsbom import vex
 from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import TOOL_NAME
 from esp_idf_sbom.libsbom.sbom import TOOL_PURL
-from esp_idf_sbom.libsbom.sbom import TOOL_SUPPLIER
 from esp_idf_sbom.libsbom.sbom import TOOL_URL
 from esp_idf_sbom.libsbom.sbom import TOOL_VERSION
 from esp_idf_sbom.libsbom.sbom import File
@@ -36,6 +37,8 @@ from esp_idf_sbom.libsbom.sbom import LicenseRef
 from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
 from esp_idf_sbom.libsbom.sbom import PackageKind
+from esp_idf_sbom.libsbom.sbom import VexAssessment
+from esp_idf_sbom.libsbom.sbom import assessment_from_exclusion
 from esp_idf_sbom.libsbom.sbom import declared_first
 from esp_idf_sbom.libsbom.sbom import kind_and_name
 from esp_idf_sbom.libsbom.sbom import simplify_licenses
@@ -68,13 +71,25 @@ def _verification_code(sha1s: List[str]) -> str:
     return hashlib.sha1(''.join(sorted(sha1s)).encode()).hexdigest()
 
 
+def _cve_exclude_entry(assessment: VexAssessment) -> Dict[str, Any]:
+    """An assessment as a cve-exclude-list entry, the form that the package comment
+    uses. It is the same form as in the manifest."""
+    entry: Dict[str, Any] = {'cve': assessment.vulnerability, 'reason': assessment.impact_statement}
+    if assessment.justification is not None:
+        entry['justification'] = assessment.justification.value
+    return entry
+
+
 def _package_comment(pkg: Package) -> str:
     """Reconstruct the PackageComment body (without the <text> wrapper) from the
     structured cve-exclude-list / cve-keywords carried on the model."""
     comment = ''
 
-    if pkg.cve_exclude_list:
-        cve_info = {'cve-exclude-list': pkg.cve_exclude_list}
+    # Released versions read every entry of this list as excluded, so it gets only
+    # the assessments that say the CVE does not apply.
+    exclusions = [_cve_exclude_entry(a) for a in pkg.assessments if a.suppresses]
+    if exclusions:
+        cve_info = {'cve-exclude-list': exclusions}
         cve_info_yaml = yaml.dump(cve_info, indent=4)
         cve_info_desc = (
             '# The cve-exclude-list list contains CVEs, which were already evaluated and the package is not vulnerable.'
@@ -224,7 +239,8 @@ def _document_creator(org: Organization) -> str:
 
     Only the manufacturer maps here; SPDX has no document-level slot for the
     supplier. Returns an empty string if there is no manufacturer, and the
-    caller then omits the Creator.
+    caller then omits the Creator. Espressif made the tool, not the document, so
+    it is not a Creator; the "Creator: Tool:" value names the tool.
     """
     if not org.name:
         return ''
@@ -260,7 +276,6 @@ def _render_tagvalue(sbom: SBOM, version: str, doc_id: str = '') -> str:
     # The tool in the spec's toolidentifier-version form plus the organization
     # behind it; SPDX 2.x has no slot for a tool's own purl or license.
     out += f'Creator: Tool: {TOOL_NAME}-{TOOL_VERSION}\n'
-    out += f'Creator: {TOOL_SUPPLIER}\n'
     creator = _document_creator(sbom.manufacturer)
     if creator:
         out += f'Creator: {creator}\n'
@@ -399,7 +414,7 @@ def _render_json(sbom: SBOM, version: str, doc_id: str = '') -> str:
         for file in pkg.files:
             files.append(_file_json(pkg, file))
 
-    creators = [f'Tool: {TOOL_NAME}-{TOOL_VERSION}', TOOL_SUPPLIER]
+    creators = [f'Tool: {TOOL_NAME}-{TOOL_VERSION}']
     creator = _document_creator(sbom.manufacturer)
     if creator:
         creators.append(creator)
@@ -424,6 +439,47 @@ def _render_json(sbom: SBOM, version: str, doc_id: str = '') -> str:
         document['hasExtractedLicensingInfos'] = [_license_ref_json(ref) for ref in sbom.license_refs]
 
     return json.dumps(document, indent=2)
+
+
+# SPDX 3.0.1 uses the CISA justifications, written in camel case.
+_JUSTIFICATION_TYPE = {
+    vex.VexJustification.COMPONENT_NOT_PRESENT: 'componentNotPresent',
+    vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT: 'vulnerableCodeNotPresent',
+    vex.VexJustification.VULNERABLE_CODE_NOT_IN_EXECUTE_PATH: 'vulnerableCodeNotInExecutePath',
+    vex.VexJustification.VULNERABLE_CODE_CANNOT_BE_CONTROLLED_BY_ADVERSARY: (
+        'vulnerableCodeCannotBeControlledByAdversary'
+    ),
+    vex.VexJustification.INLINE_MITIGATIONS_ALREADY_EXIST: 'inlineMitigationsAlreadyExist',
+}
+
+# The relationship class and type of each status. SPDX 3.0.1 has one class for
+# each CISA status, and each class has its own fields.
+_VEX_RELATIONSHIP = {
+    vex.VexStatus.NOT_AFFECTED: ('security_VexNotAffectedVulnAssessmentRelationship', 'doesNotAffect'),
+    vex.VexStatus.AFFECTED: ('security_VexAffectedVulnAssessmentRelationship', 'affects'),
+    vex.VexStatus.FIXED: ('security_VexFixedVulnAssessmentRelationship', 'fixedIn'),
+    vex.VexStatus.UNDER_INVESTIGATION: (
+        'security_VexUnderInvestigationVulnAssessmentRelationship',
+        'underInvestigationFor',
+    ),
+}
+
+_SPDX_TIME_RE = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z')
+
+
+def _spdx_time(value: str) -> str:
+    """A time in the form SPDX 3.0.1 requires: UTC, whole seconds and a Z.
+
+    A time read from another file can have a fraction of a second or another time
+    zone. A time that cannot be read is skipped with a warning.
+    """
+    if _SPDX_TIME_RE.fullmatch(value):
+        return value
+    time = vex.parse_time(value)
+    if time is None:
+        log.warn(f'Ignoring the time "{value}", it is not an ISO 8601 time.')
+        return ''
+    return time.astimezone(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
 def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
@@ -496,26 +552,23 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
         }
     )
     element_ids.append(tool)
+    # The organization that produced this document. BSI TR-03183-2 reads the SBOM
+    # creator from here. createdBy is required, so without a manufacturer it
+    # names the tool, as a SoftwareAgent.
+    creator = agent_id(sbom.manufacturer.name, url=sbom.manufacturer.url, email=sbom.manufacturer.contact_email)
+    if not creator:
+        creator = sid('SoftwareAgent-' + _sanitize_spdxid(TOOL_NAME))
+        graph.append(
+            {'type': 'SoftwareAgent', 'spdxId': creator, 'creationInfo': ci, 'name': f'{TOOL_NAME}-{TOOL_VERSION}'}
+        )
+        element_ids.append(creator)
     graph.append(
         {
             'type': 'CreationInfo',
             '@id': ci,
             'specVersion': version,
             'created': created,
-            # The organization that produced this document, before the tool's
-            # own vendor. BSI TR-03183-2 reads the SBOM creator from here.
-            'createdBy': [
-                a
-                for a in (
-                    agent_id(
-                        sbom.manufacturer.name,
-                        url=sbom.manufacturer.url,
-                        email=sbom.manufacturer.contact_email,
-                    ),
-                    agent_id(TOOL_SUPPLIER),
-                )
-                if a
-            ],
+            'createdBy': [creator],
             'createdUsing': [tool],
         }
     )
@@ -695,39 +748,60 @@ def _render_jsonld(sbom: SBOM, version: str, doc_id: str = '') -> str:
 
     # SPDX 3.0 has a separate relationship class for each VEX status, and each
     # class has different fields. This is not a value map like in CycloneDX.
-    # build() creates only not-affected statements, so only that class is written.
-    statements = [s for s in vex.build(sbom).statements if s.status is vex.VexStatus.NOT_AFFECTED]
+    statements = vex.build(sbom).statements
     has_security = bool(statements)
     for statement in statements:
         ref = statement.products[0].ref
         vid = sid(f'Vuln-{ref}-{statement.vulnerability}')
-        graph.append(
-            {
-                'type': 'security_Vulnerability',
-                'spdxId': vid,
-                'creationInfo': ci,
-                'externalIdentifier': [
-                    {
-                        'type': 'ExternalIdentifier',
-                        'externalIdentifierType': 'cve',
-                        'identifier': statement.vulnerability,
-                    }
-                ],
-            }
-        )
+        vulnerability: Dict[str, Any] = {
+            'type': 'security_Vulnerability',
+            'spdxId': vid,
+            'creationInfo': ci,
+            'externalIdentifier': [
+                {
+                    'type': 'ExternalIdentifier',
+                    'externalIdentifierType': 'cve',
+                    'identifier': statement.vulnerability,
+                }
+            ],
+        }
+        # SPDX 3.0.1 defines securityAdvisory as "vendor advisories or specific NVD entries".
+        if statement.nvd_url:
+            vulnerability['externalRef'] = [
+                {'type': 'ExternalRef', 'externalRefType': 'securityAdvisory', 'locator': [statement.nvd_url]}
+            ]
+        graph.append(vulnerability)
         element_ids.append(vid)
         xid = sid(f'Vex-{ref}-{statement.vulnerability}')
-        graph.append(
-            {
-                'type': 'security_VexNotAffectedVulnAssessmentRelationship',
-                'spdxId': xid,
-                'creationInfo': ci,
-                'from': vid,
-                'relationshipType': 'doesNotAffect',
-                'to': [sid(product.ref) for product in statement.products],
-                'security_impactStatement': statement.impact_statement,
-            }
-        )
+        vex_type, relationship_type = _VEX_RELATIONSHIP[statement.status]
+        assessment: Dict[str, Any] = {
+            'type': vex_type,
+            'spdxId': xid,
+            'creationInfo': ci,
+            'from': vid,
+            'relationshipType': relationship_type,
+            'to': [sid(product.ref) for product in statement.products],
+        }
+        if statement.status is vex.VexStatus.NOT_AFFECTED:
+            assessment['security_impactStatement'] = statement.impact_statement
+            if statement.justification is not None:
+                assessment['security_justificationType'] = _JUSTIFICATION_TYPE[statement.justification]
+        else:
+            # Only the not-affected class has an impact statement. The others
+            # have notes about how the status was determined.
+            if statement.impact_statement:
+                assessment['security_statusNotes'] = statement.impact_statement
+            if statement.status is vex.VexStatus.AFFECTED:
+                # SPDX requires the action statement for this class, as CISA does.
+                assessment['security_actionStatement'] = statement.action_statement
+        for key, value in (
+            ('security_publishedTime', statement.first_issued),
+            ('security_modifiedTime', statement.last_updated),
+        ):
+            time = _spdx_time(value) if value else ''
+            if time:
+                assessment[key] = time
+        graph.append(assessment)
         element_ids.append(xid)
 
     profiles = ['core', 'software']
@@ -780,10 +854,19 @@ def render(sbom: SBOM, format: str = 'tagvalue', version: str = '2.2', doc_id: s
 # ===========================================================================
 
 
-def _unref(spdxid: str) -> str:
+def unref(spdxid: str) -> str:
     """Strip the SPDXRef- prefix from an SPDXID, leaving the model ref."""
     prefix = 'SPDXRef-'
     return spdxid[len(prefix) :] if spdxid.startswith(prefix) else spdxid
+
+
+def split_element_id(value: str) -> Optional[Tuple[str, str]]:
+    """Split an SPDX 3.0 element id, an IRI of the form '<namespace>#<ref>', into
+    the namespace of its document and the ref. Return None for any other value."""
+    namespace, sep, ref = value.rpartition('#')
+    if not sep or ':' not in namespace or not ref:
+        return None
+    return namespace, ref
 
 
 def _unref_jsonld(spdxid: str, docns: str) -> str:
@@ -795,7 +878,7 @@ def _unref_jsonld(spdxid: str, docns: str) -> str:
 
 
 def _package_from_tags(spdxid: str, tags: Dict[str, List[str]]) -> Package:
-    ref = _unref(spdxid)
+    ref = unref(spdxid)
     # The SPDXID is SPDXRef-<MARK>-<sanitized name>; recover kind and name from it.
     kind, name = kind_and_name(ref)
 
@@ -814,7 +897,7 @@ def _package_from_tags(spdxid: str, tags: Dict[str, List[str]]) -> Package:
     for rel in tags.get('Relationship', []):
         _, sep, dst = rel.partition(' DEPENDS_ON ')
         if sep:
-            depends_on.append(_unref(dst.strip()))
+            depends_on.append(unref(dst.strip()))
 
     comment = parse_package_comment(tags)
 
@@ -840,7 +923,7 @@ def _package_from_tags(spdxid: str, tags: Dict[str, List[str]]) -> Package:
         purl=purl,
         cpes=cpes,
         checksum_sha256=checksum[len('SHA256: ') :] if checksum.startswith('SHA256: ') else checksum,
-        cve_exclude_list=comment.get('cve-exclude-list') or [],
+        assessments=[assessment_from_exclusion(entry) for entry in comment.get('cve-exclude-list') or []],
         cve_keywords=comment.get('cve-keywords') or [],
         depends_on=depends_on,
     )
@@ -863,7 +946,7 @@ def _parse_tagvalue(text: str) -> SBOM:
         elif not doc_id and line.startswith('DocumentNamespace:'):
             doc_id = line.split(':', 1)[1].strip()
         elif not root and line.startswith('Relationship:') and ' DESCRIBES ' in line:
-            root = _unref(line.split(' DESCRIBES ', 1)[1].strip())
+            root = unref(line.split(' DESCRIBES ', 1)[1].strip())
         elif not creator and line.startswith('Creator: Tool:'):
             creator = line[len('Creator: Tool:') :].strip()
         if name and root and creator and doc_id:
@@ -896,7 +979,7 @@ def _comment_to_dict(comment: str) -> Dict[str, Any]:
 
 
 def _package_from_json(obj: Dict[str, Any], depends_on: List[str]) -> Package:
-    ref = _unref(obj.get('SPDXID', ''))
+    ref = unref(obj.get('SPDXID', ''))
     kind, name = kind_and_name(ref)
 
     cpes: List[str] = []
@@ -936,7 +1019,7 @@ def _package_from_json(obj: Dict[str, Any], depends_on: List[str]) -> Package:
         purl=purl,
         cpes=cpes,
         checksum_sha256=checksum,
-        cve_exclude_list=comment.get('cve-exclude-list') or [],
+        assessments=[assessment_from_exclusion(entry) for entry in comment.get('cve-exclude-list') or []],
         cve_keywords=comment.get('cve-keywords') or [],
         depends_on=depends_on,
     )
@@ -952,9 +1035,9 @@ def _parse_json(text: str) -> SBOM:
         src = rel.get('spdxElementId', '')
         dst = rel.get('relatedSpdxElement', '')
         if rel_type == 'DESCRIBES' and src == 'SPDXRef-DOCUMENT':
-            root = _unref(dst)
+            root = unref(dst)
         elif rel_type == 'DEPENDS_ON':
-            depends_on.setdefault(src, []).append(_unref(dst))
+            depends_on.setdefault(src, []).append(unref(dst))
 
     packages = [
         _package_from_json(obj, depends_on.get(obj.get('SPDXID', ''), [])) for obj in document.get('packages', [])
@@ -980,6 +1063,14 @@ def _parse_json(text: str) -> SBOM:
         creator=creator,
         doc_id=document.get('documentNamespace', ''),
     )
+
+
+# Reverse of _JUSTIFICATION_TYPE. SPDX 3.0.1 has the same five values as the
+# model, so nothing is lost.
+_VEX_JUSTIFICATION_TYPE = {value: key for key, value in _JUSTIFICATION_TYPE.items()}
+
+# Reverse of _VEX_RELATIONSHIP: the status of each relationship class.
+_VEX_STATUS = {vex_type: status for status, (vex_type, _) in _VEX_RELATIONSHIP.items()}
 
 
 def _parse_jsonld(text: str) -> SBOM:
@@ -1022,7 +1113,7 @@ def _parse_jsonld(text: str) -> SBOM:
             vuln_cve[_id(e.get('spdxId'))] = next(iter(ids_of(e, 'cve')), '')
 
     depends: Dict[str, List[str]] = {}
-    excludes: Dict[str, List[Dict[str, str]]] = {}
+    assessments: Dict[str, List[VexAssessment]] = {}
     doc_name = ''
     creator = ''
     root = ''
@@ -1031,14 +1122,26 @@ def _parse_jsonld(text: str) -> SBOM:
         t = e.get('type')
         if t == 'Relationship' and e.get('relationshipType') == 'dependsOn':
             depends.setdefault(_id(e.get('from')), []).extend(_id(d) for d in _as_list(e.get('to')))
-        elif t == 'security_VexNotAffectedVulnAssessmentRelationship':
-            entry = {'cve': vuln_cve.get(_id(e.get('from')), ''), 'reason': e.get('security_impactStatement', '')}
+        elif t in _VEX_STATUS:
+            # SPDX 3.0.1 has no response, so none is read. A statement without a
+            # modified time was not changed since it was published.
+            published = e.get('security_publishedTime', '')
             for to in _as_list(e.get('to')):
-                excludes.setdefault(_id(to), []).append(entry)
+                assessment = VexAssessment(
+                    vulnerability=vuln_cve.get(_id(e.get('from')), ''),
+                    status=_VEX_STATUS[t],
+                    justification=_VEX_JUSTIFICATION_TYPE.get(e.get('security_justificationType', '')),
+                    impact_statement=e.get('security_impactStatement') or e.get('security_statusNotes', ''),
+                    action_statement=e.get('security_actionStatement', ''),
+                    first_issued=published,
+                    last_updated=e.get('security_modifiedTime') or published,
+                )
+                assessments.setdefault(_id(to), []).append(assessment)
         elif t == 'SpdxDocument':
             doc_name = e.get('name', '')
             # Our namespace. render writes it as '<docns>#SPDXRef-DOCUMENT'.
-            docns = _id(e.get('spdxId')).rsplit('#', 1)[0]
+            element = split_element_id(_id(e.get('spdxId')))
+            docns = element[0] if element else _id(e.get('spdxId'))
             roots = _as_list(e.get('rootElement'))
             if roots:
                 root = _id(roots[0])
@@ -1079,7 +1182,7 @@ def _parse_jsonld(text: str) -> SBOM:
                 version=e.get('software_packageVersion', ''),
                 purl=e.get('software_packageUrl', ''),
                 cpes=cpes,
-                cve_exclude_list=excludes.get(spdxid, []),
+                assessments=assessments.get(spdxid, []),
                 cve_keywords=cve_keywords,
                 depends_on=[_unref_jsonld(d, docns) for d in depends.get(spdxid, [])],
             )

@@ -85,6 +85,10 @@ EXCLUDED_CVES_FILE_ENV = 'SBOM_EXCLUDED_CVES_FILE'
 # manifest, so it does not create a duplicate package entry.
 LOCAL_EXCLUDED_CVES_FILE = 'excluded_cves.yaml'
 
+# The keys of an excluded CVE entry, as in a manifest cve-exclude-list. Only cve
+# and reason are always set.
+CVE_EXCLUDE_FIELDS = ('cve', 'reason', 'justification')
+
 
 def show_apikey_status(local_db: bool) -> None:
     """Report NVD API-key status once, before the online scan's progress bar.
@@ -333,8 +337,10 @@ def merge_local_excluded_cves(root: str) -> None:
     log.eprint(f'Merged {len(local)} local CVE exclusion(s) from {path}')
 
 
-def get_excluded_cves_for_cpe(cpe: str) -> Dict[str, str]:
-    """Return ``{cve_id: reason}`` for CPE-scoped exclusions matching ``cpe``.
+def get_excluded_cves_for_cpe(cpe: str) -> Dict[str, Dict[str, Any]]:
+    """Return ``{cve_id: entry}`` for CPE-scoped exclusions matching ``cpe``.
+
+    The entry has the CVE_EXCLUDE_FIELDS keys that are set.
 
     These are dict-valued entries in ``excluded_cves.yaml`` whose ``cpes`` list
     contains a match for the given CPE (OR semantics, NVD ``cpeMatch`` version
@@ -346,7 +352,7 @@ def get_excluded_cves_for_cpe(cpe: str) -> Dict[str, str]:
     Globally-excluded (string-valued) entries are intentionally not returned
     here; they are filtered at the NVD-query level instead.
     """
-    result: Dict[str, str] = {}
+    result: Dict[str, Dict[str, Any]] = {}
     cves = get_excluded_cves()
     if not isinstance(cves, dict):
         return result
@@ -364,7 +370,9 @@ def get_excluded_cves_for_cpe(cpe: str) -> Dict[str, str]:
                     cpe_match[key] = entry[key]
             synth_cfg = {'nodes': [{'cpeMatch': [cpe_match]}]}
             if is_version_vulnerable(cpe, synth_cfg):
-                result[cve_id] = value.get('reason', '')
+                # The CVE id is the key in the file, and the reason may be missing.
+                fields = {key: value[key] for key in CVE_EXCLUDE_FIELDS if key in value}
+                result[cve_id] = {'reason': '', **fields, 'cve': cve_id}
                 break
 
     return result
@@ -509,7 +517,8 @@ def cache_cves(cpes: List[str], keywords: List[str]) -> None:
 def get_cves_for_cpe(cpe: str) -> List[Dict[str, Any]]:
     global CVE_CACHE
     res: List[Dict[str, Any]] = []
-    cpe_base = ':'.join(cpe.split(':')[:5])
+    # The colon stops 'freertos' from matching 'freertos\+fat'.
+    cpe_base = ':'.join(cpe.lower().split(':')[:5]) + ':'
 
     for cve in CVE_CACHE:
         if 'configurations' not in cve['cve']:
@@ -651,8 +660,8 @@ def vercmp(ver1: str, ver2: str) -> int:
     # -1 ver1 < ver2
     #  0 ver1 == ver2
     #  1 ver1 > ver2
-    v1_parts = [part for part in ver1.split('.')]
-    v2_parts = [part for part in ver2.split('.')]
+    v1_parts = [part for part in ver1.lower().split('.')]
+    v2_parts = [part for part in ver2.lower().split('.')]
 
     # compare each part
     for p1, p2 in zip(v1_parts, v2_parts):
@@ -679,18 +688,22 @@ def vercmp(ver1: str, ver2: str) -> int:
 
 
 def is_version_vulnerable(cpe: str, configuration: Dict[str, Any]) -> bool:
-    cpe_base = ':'.join(cpe.split(':')[:5])
+    # Ignore case, as NVD and CPE.compare_avs() do.
+    cpe = cpe.lower()
+    # The colon stops 'freertos' from matching 'freertos\+fat'.
+    cpe_base = ':'.join(cpe.split(':')[:5]) + ':'
     cpe_ver = cpe.split(':')[5]
 
     for node in configuration['nodes']:
         for cpe_match in node['cpeMatch']:
-            criteria_ver = cpe_match['criteria'].split(':')[5]
+            criteria = cpe_match['criteria'].lower()
+            criteria_ver = criteria.split(':')[5]
 
             if not cpe_match['vulnerable']:
                 # skip, cpe_match not vulnerable
                 continue
 
-            if not cpe_match['criteria'].startswith(cpe_base):
+            if not criteria.startswith(cpe_base):
                 # skip, not cpe we want to check
                 continue
 

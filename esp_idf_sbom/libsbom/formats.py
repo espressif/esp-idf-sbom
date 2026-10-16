@@ -117,20 +117,29 @@ def load_sbom(path: str) -> SBOM:
 
 
 def load_vex(path: str) -> vex.Vex:
-    """Read a VEX file, detect its format and parse it into the model.
+    """Read a VEX file, detect its format and parse it into the model, see
+    parse_vex().
 
     This is the parse side entry point, like load_sbom() for SBOM files. Unlike
     load_sbom() it does not read standard input, because that is where the SBOM
     itself is read from.
     """
     with open(path) as f:
-        text = f.read()
+        return parse_vex(f.read())
 
+
+def parse_vex(text: str) -> vex.Vex:
+    """Detect the format of a VEX document and parse it into the model. The model
+    keeps the format, as a key of VEX_FORMATS, and the text."""
     obj = json.loads(text)
     if not isinstance(obj, dict):
         raise ValueError('unrecognized VEX format')
     if 'openvex.dev' in str(obj.get('@context', '')):
-        return openvex.parse_vex(text)
-    if obj.get('bomFormat') == 'CycloneDX':
-        return cyclonedx.parse_vex(text)
-    raise ValueError('unrecognized VEX format')
+        vexdoc = openvex.parse_vex(text)
+        vexdoc.format_name = 'openvex'
+    elif obj.get('bomFormat') == 'CycloneDX':
+        vexdoc = cyclonedx.parse_vex(text)
+        vexdoc.format_name = 'cyclonedx-json'
+    else:
+        raise ValueError('unrecognized VEX format')
+    return vexdoc

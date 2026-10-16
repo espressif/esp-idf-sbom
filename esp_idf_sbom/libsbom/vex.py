@@ -8,44 +8,31 @@ model. Backends render it to a VEX format, or parse a VEX format back into it.
 The VEX embedded in an SBOM and a standalone VEX file are both rendered from
 here, so the two cannot differ.
 
-The model uses the CISA vocabulary: four statuses and five justifications.
-OpenVEX and the SPDX 3.0.1 security profile use it as it is. Only the CycloneDX
-backend has to map it to its own six states and nine justifications.
+The status, justification and response values are in vexvalues.py.
 
-A statement has a status, it is not just an excluded CVE. esp-idf-sbom writes
-only not_affected today, but with an explicit status, check can later report
-affected or under_investigation without any backend change.
+A statement has a status, it is not just an excluded CVE. create writes only
+not_affected, for the excluded CVEs. vex update writes the status that the user
+decided.
 """
 
+import datetime
+import re
 from dataclasses import dataclass
 from dataclasses import field
-from enum import Enum
+from dataclasses import fields
 from typing import List
 from typing import Optional
+from typing import Tuple
 
 from esp_idf_sbom.libsbom import log
+from esp_idf_sbom.libsbom import utils
 from esp_idf_sbom.libsbom.sbom import SBOM
+from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
-
-
-class VexStatus(Enum):
-    """Status of a product for a vulnerability. These are the four CISA statuses."""
-
-    NOT_AFFECTED = 'not_affected'
-    AFFECTED = 'affected'
-    FIXED = 'fixed'
-    UNDER_INVESTIGATION = 'under_investigation'
-
-
-class VexJustification(Enum):
-    """Why a product is not affected. These are the five CISA justifications.
-    Used only with the not_affected status."""
-
-    COMPONENT_NOT_PRESENT = 'component_not_present'
-    VULNERABLE_CODE_NOT_PRESENT = 'vulnerable_code_not_present'
-    VULNERABLE_CODE_NOT_IN_EXECUTE_PATH = 'vulnerable_code_not_in_execute_path'
-    VULNERABLE_CODE_CANNOT_BE_CONTROLLED_BY_ADVERSARY = 'vulnerable_code_cannot_be_controlled_by_adversary'
-    INLINE_MITIGATIONS_ALREADY_EXIST = 'inline_mitigations_already_exist'
+from esp_idf_sbom.libsbom.sbom import VexAssessment
+from esp_idf_sbom.libsbom.vexvalues import VexJustification as VexJustification  # re-export for the backends
+from esp_idf_sbom.libsbom.vexvalues import VexResponse as VexResponse  # re-export for the backends
+from esp_idf_sbom.libsbom.vexvalues import VexStatus as VexStatus  # re-export for the backends
 
 
 @dataclass
@@ -66,31 +53,39 @@ class VexProduct:
 
 
 @dataclass
-class VexStatement:
+class VexStatement(VexAssessment):
     """One assessment: this vulnerability has this status for these products."""
 
-    vulnerability: str  # CVE id
-    status: VexStatus
     products: List[VexProduct] = field(default_factory=list)
-    # Not set by build(). Manifests have only {cve, reason}, and the reason is
-    # free text, not one of the five justifications. The field is here so that
-    # adding it to the manifest later changes mft.py and build(), not every backend.
-    justification: Optional[VexJustification] = None
-    impact_statement: str = ''  # why not affected, the reason from the manifest
-    action_statement: str = ''  # what to do, CISA requires it for the affected status
+    # The NVD page of the CVE. CISA requires the description of the vulnerability or
+    # a link to it.
+    nvd_url: str = ''
+    # The time that decides which of two statements about a CVE of a package is
+    # newer, see apply(). The parser of each format sets it. OpenVEX uses the
+    # timestamp of a statement, as the OpenVEX spec and go-vex do. CycloneDX uses
+    # lastUpdated, because vex update changes an analysis in place and keeps its
+    # firstIssued. It is empty for a statement that was not parsed. It comes from
+    # the other times, so == does not compare it.
+    time: str = field(default='', compare=False)
 
 
 @dataclass
 class Vex:
     """A VEX document: statements plus the id of the SBOM they describe.
 
-    Like the SBOM model, this model has no id of its own. The backend creates the
-    VEX document id when it renders. The SBOM id is different, it describes the
-    input file, and every backend that links back to the SBOM needs it, so it is
-    stored here.
+    The document id, version and times are read from the file, so that an update
+    can keep the id and increase the version. build() leaves them empty, and the
+    backend then writes a new document: a new id, version 1 and the current time.
     """
 
     statements: List[VexStatement] = field(default_factory=list)
+    # The id of this VEX document: the CycloneDX serialNumber or the OpenVEX @id.
+    doc_id: str = ''
+    doc_version: int = 1
+    # When the document was first issued and last updated, as the file writes the
+    # time. CycloneDX has only metadata.timestamp, which is the last update.
+    first_issued: str = ''
+    last_updated: str = ''
     sbom_id: str = ''  # the SBOM's serialNumber / document namespace
     # The SBOM document version. A CycloneDX BOM-Link points to one version of a
     # document, so the link needs it too.
@@ -98,8 +93,37 @@ class Vex:
     sbom_name: str = ''
     # Who made these statements, as the parsed file records it. Empty if the file
     # does not say, or if the model was built and not parsed. Same as SBOM.creator:
-    # render ignores it and writes the tool name.
+    # render ignores it and writes the manufacturer.
     author: str = ''
+    # The author of the statements: the manufacturer from the document key of the
+    # project manifest, as SBOM.manufacturer. Empty if the manifest does not say.
+    manufacturer: Organization = field(default_factory=Organization)
+    # The format, as a key of formats.VEX_FORMATS, and the text of the file that the
+    # document was read from. vex update writes into this text. Both are empty for a
+    # document made by build().
+    format_name: str = ''
+    text: str = field(default='', repr=False, compare=False)
+
+
+_FRACTION_RE = re.compile(r'\.(\d+)')
+
+
+def parse_time(value: str) -> Optional[datetime.datetime]:
+    """Read an ISO 8601 time, as VEX and SBOM files write it. Return None when it
+    cannot be read. A time without a time zone is in UTC.
+
+    Python before 3.11 reads a fraction of a second only with 3 or 6 digits, but
+    go-vex, for example, writes up to 9. So the fraction is cut or filled to 6
+    digits first.
+    """
+    value = _FRACTION_RE.sub(lambda m: '.' + m.group(1)[:6].ljust(6, '0'), value.replace('Z', '+00:00'))
+    try:
+        time = datetime.datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if time.tzinfo is None:
+        time = time.replace(tzinfo=datetime.timezone.utc)
+    return time
 
 
 def _product(pkg: Package) -> VexProduct:
@@ -112,90 +136,153 @@ def _product(pkg: Package) -> VexProduct:
     )
 
 
+_CVE_RE = re.compile(r'CVE-\d{4}-\d{4,}')
+
+
+def _nvd_url(vulnerability: str) -> str:
+    """The NVD page of a CVE. Other ids have no NVD page."""
+    return f'https://nvd.nist.gov/vuln/detail/{vulnerability}' if _CVE_RE.fullmatch(vulnerability) else ''
+
+
+def _statement(assessment: VexAssessment, pkg: Package) -> VexStatement:
+    """The statement for one assessment of a package. The package is the product."""
+    values = {f.name: getattr(assessment, f.name) for f in fields(VexAssessment)}
+    return VexStatement(**values, products=[_product(pkg)], nvd_url=_nvd_url(assessment.vulnerability))
+
+
 def build(sbom: SBOM, sbom_id: str = '') -> Vex:
     """Create a VEX model from an SBOM model. This is the VEX side of sbom.build().
 
-    Each cve-exclude-list entry becomes one not-affected statement for its own
-    package. Entries are not merged across packages, even for the same CVE with
-    the same reason, because then it would not be clear which package each reason
-    was written for.
+    Packages with the same assessment of a CVE get one statement. Some tools, for
+    example Trivy, use only one CycloneDX statement for each CVE.
 
-    :param sbom: the SBOM model to read the exclusions from
+    :param sbom: the SBOM model to read the assessments from
     :param sbom_id: id of the document the SBOM was read from. Backends that link
         a standalone VEX to the SBOM need it. Leave it empty for embedded VEX.
     """
-    statements = [
-        VexStatement(
-            vulnerability=entry['cve'],
-            status=VexStatus.NOT_AFFECTED,
-            products=[_product(pkg)],
-            impact_statement=entry['reason'],
-        )
-        for pkg in sbom.packages
-        for entry in pkg.cve_exclude_list
-    ]
+    statements: List[VexStatement] = []
+    for pkg in sbom.packages:
+        for assessment in pkg.assessments:
+            same = next((s for s in statements if _assessment(s) == assessment), None)
+            if same is not None:
+                # It says the same, so add the package to it.
+                same.products.append(_product(pkg))
+            else:
+                statements.append(_statement(assessment, pkg))
 
-    return Vex(statements=statements, sbom_id=sbom_id, sbom_name=sbom.name)
-
-
-# Statuses that say the CVE does not apply to the product. not_affected means it
-# was never affected, fixed means the product carries the fix. grype and trivy
-# both filter on these two. The other two say the CVE does apply, or that nobody
-# knows yet, so they must not silence anything.
-_SUPPRESSING = (VexStatus.NOT_AFFECTED, VexStatus.FIXED)
+    return Vex(statements=statements, sbom_id=sbom_id, sbom_name=sbom.name, manufacturer=sbom.manufacturer)
 
 
-def _reason(statement: VexStatement) -> str:
-    """The text reported for a suppressed CVE.
+def _assessment(statement: VexStatement) -> VexAssessment:
+    """The statement without its products."""
+    return VexAssessment(**{f.name: getattr(statement, f.name) for f in fields(VexAssessment)})
 
-    A not_affected statement carries an impact statement or a justification. A
-    fixed one needs neither, so fall back to the status itself.
+
+def _cpe_key(cpe: str) -> Tuple[str, str]:
+    """The part, vendor and product of a CPE, and its version, without case."""
+    parts = cpe.lower().split(':')
+    return ':'.join(parts[2:5]), parts[5] if len(parts) > 5 else '*'
+
+
+def _cpe_matches(cpe: str, package_cpes: List[str]) -> bool:
+    """Whether a CPE names a package with these CPEs.
+
+    Part, vendor and product are compared without case, also for the aliases of
+    the CPE. The version is compared only when the CPE has one. A CPE from an
+    NA-version match in the check report has '-', so it has none. The other
+    fields are not compared.
     """
-    if statement.impact_statement:
-        return statement.impact_statement
-    if statement.justification is not None:
-        return statement.justification.value
-    return statement.status.value
+    wanted = [_cpe_key(alias) for alias in utils.expand_cpe_aliases([cpe])]
+    for name, version in (_cpe_key(package_cpe) for package_cpe in package_cpes):
+        for wanted_name, wanted_version in wanted:
+            if name == wanted_name and wanted_version in ('*', '-', version):
+                return True
+    return False
+
+
+def find_packages(sbom: SBOM, product: VexProduct) -> List[Package]:
+    """The packages of the SBOM that a VEX product names.
+
+    The product is looked up by its ref, then by its PURL, then by its CPEs and
+    last by its name. The first of these that finds a package is used. A ref
+    names one package. A PURL, a CPE or a name can name more than one, for
+    example two copies of the same library, and then all of them are returned.
+    """
+    lookups = (
+        (product.ref, lambda pkg: pkg.ref == product.ref),
+        (product.purl, lambda pkg: pkg.purl == product.purl),
+        (product.cpes, lambda pkg: any(_cpe_matches(cpe, pkg.cpes) for cpe in product.cpes)),
+        (product.name, lambda pkg: pkg.package_name == product.name),
+    )
+    for value, matches in lookups:
+        if not value:
+            continue
+        found = [pkg for pkg in sbom.packages if matches(pkg)]
+        if found:
+            return found
+    return []
+
+
+def _replace_assessment(pkg: Package, assessment: VexAssessment) -> None:
+    """Replace the assessment of the same CVE at its position, so that the order
+    does not change. A new CVE goes at the end."""
+    for index, old in enumerate(pkg.assessments):
+        if old.vulnerability == assessment.vulnerability:
+            pkg.assessments[index] = assessment
+            return
+    pkg.assessments.append(assessment)
+
+
+def check_sbom(sbom: SBOM, vexdoc: Vex) -> None:
+    """Raise ValueError when the VEX document names another SBOM.
+
+    A VEX document that names its SBOM, for example a CycloneDX VEX with a
+    BOM-Link, is used only with that SBOM.
+    """
+    if vexdoc.sbom_id and vexdoc.sbom_id != sbom.doc_id:
+        this_sbom = f'this SBOM is "{sbom.doc_id}"' if sbom.doc_id else 'this SBOM has no id'
+        raise ValueError(f'VEX belongs to another SBOM. It links to "{vexdoc.sbom_id}", but {this_sbom}.')
+
+
+def _time(statement: VexStatement) -> datetime.datetime:
+    """The time of the statement, see VexStatement.time. A statement whose time
+    cannot be read counts as the oldest."""
+    time = parse_time(statement.time)
+    if time is None:
+        return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+    return time
 
 
 def apply(sbom: SBOM, vexdoc: Vex) -> None:
     """Merge the statements of a VEX document into the SBOM model.
 
-    The statements end up in Package.cve_exclude_list, which is where every
-    consumer of the model already reads them from, so nothing downstream has to
-    know a VEX file was involved. Only the statuses in _SUPPRESSING are used.
+    The statements end up in Package.assessments, which is where every consumer
+    of the model already reads them from, so nothing downstream has to know a
+    VEX file was involved. Statements of all statuses are kept.
 
-    Products are matched by ref first, then by PURL, then by CPE. Formats that
+    The packages of a statement are found with find_packages(). Formats that
     point into an SBOM document give a ref, the others give PURL and CPE.
-    """
-    by_ref = {pkg.ref: pkg for pkg in sbom.packages}
-    by_purl = {pkg.purl: pkg for pkg in sbom.packages if pkg.purl}
-    by_cpe = {cpe: pkg for pkg in sbom.packages for cpe in pkg.cpes}
 
-    def find(product: VexProduct) -> Optional[Package]:
-        pkg = by_ref.get(product.ref) if product.ref else None
-        if pkg is None and product.purl:
-            pkg = by_purl.get(product.purl)
-        for cpe in product.cpes:
-            if pkg is not None:
-                break
-            pkg = by_cpe.get(cpe)
-        return pkg
+    A newer statement about a CVE of a package overrides an older one. So the
+    statements are used in the order of their time, see VexStatement.time. Of
+    statements with the same time, the later one wins.
+
+    Raise ValueError when the VEX document belongs to another SBOM, see
+    check_sbom().
+    """
+    check_sbom(sbom, vexdoc)
 
     unmatched = 0
-    for statement in vexdoc.statements:
-        if statement.status not in _SUPPRESSING:
-            continue
+    # sorted() keeps the order of statements with the same time.
+    for statement in sorted(vexdoc.statements, key=_time):
         for product in statement.products:
-            pkg = find(product)
-            if pkg is None:
+            packages = find_packages(sbom, product)
+            if not packages:
                 unmatched += 1
-                continue
-            # The VEX file is the newer document, so it wins over an exclusion
-            # of the same CVE already in the SBOM.
-            entries = [e for e in pkg.cve_exclude_list if e['cve'] != statement.vulnerability]
-            entries.append({'cve': statement.vulnerability, 'reason': _reason(statement)})
-            pkg.cve_exclude_list = entries
+            for pkg in packages:
+                # The VEX file is the newer document, so it wins over an
+                # assessment of the same CVE already in the SBOM.
+                _replace_assessment(pkg, _assessment(statement))
 
     if unmatched:
         # Not an error. A VEX file may cover a whole product line, so it can name

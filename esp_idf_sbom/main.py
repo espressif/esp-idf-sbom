@@ -13,6 +13,7 @@ from typing import IO
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 import rich_click as click
@@ -29,6 +30,7 @@ from esp_idf_sbom.libsbom import report
 from esp_idf_sbom.libsbom import sbom
 from esp_idf_sbom.libsbom import utils
 from esp_idf_sbom.libsbom import vex
+from esp_idf_sbom.libsbom import vexyaml
 
 EXTENDED_SCAN_HELP = (
     'If available, use the product part of the CPE and the keywords found '
@@ -117,7 +119,7 @@ def cmd_create(args: Dict[str, Any]) -> int:
         # All formats write their vulnerability information from this one list.
         # Clearing it is enough.
         for pkg in model.packages:
-            pkg.cve_exclude_list = []
+            pkg.assessments = []
 
     # Create the document id here and pass it to render(). The VEX file needs the
     # same id to link to this SBOM.
@@ -138,40 +140,45 @@ def cmd_create(args: Dict[str, Any]) -> int:
     return 0
 
 
+def _load_vex(path: str) -> vex.Vex:
+    """Read a standalone VEX document. The model keeps its format and its text."""
+    try:
+        vexdoc = formats.load_vex(path)
+    except (OSError, ValueError) as e:
+        log.die(f'cannot read VEX file "{path}": {e}')
+    return vexdoc
+
+
+def _check_sbom(model: sbom.SBOM, vexdoc: vex.Vex, path: str) -> None:
+    """Stop when the VEX document read from path belongs to another SBOM."""
+    try:
+        vex.check_sbom(model, vexdoc)
+    except ValueError as e:
+        log.die(f'cannot use "{path}": {e}')
+
+
+def _apply_vex(model: sbom.SBOM, vexdoc: vex.Vex, path: str) -> None:
+    """Merge the VEX document read from path into the SBOM model. Stop when it
+    belongs to another SBOM."""
+    try:
+        vex.apply(model, vexdoc)
+    except ValueError as e:
+        log.die(f'cannot use "{path}": {e}')
+
+
 def _apply_vex_files(model: sbom.SBOM, paths: Tuple[str, ...]) -> None:
     """Merge standalone VEX documents into the SBOM model that was just loaded.
 
-    A VEX that names the SBOM it belongs to, which for CycloneDX is the
-    serialNumber in the BOM-Link, is used only with that SBOM. OpenVEX names
-    products by PURL and CPE and has no such link, so it is used with any SBOM.
+    The statements of all files are applied together, so that the newest statement
+    about a CVE of a package wins, and not the one from the last file, see
+    vex.apply().
     """
+    statements: List[vex.VexStatement] = []
     for path in paths:
-        try:
-            vexdoc = formats.load_vex(path)
-        except (OSError, ValueError) as e:
-            log.die(f'cannot read VEX file "{path}": {e}')
-
-        if vexdoc.sbom_id and vexdoc.sbom_id != model.doc_id:
-            if not model.doc_id:
-                # serialNumber is optional in CycloneDX, and an SPDX document may
-                # carry no namespace either.
-                log.die(
-                    f'The VEX file "{path}" links to a CycloneDX SBOM with a BOM-Link, but '
-                    f'the SBOM being checked has no serialNumber to match it against.'
-                )
-            if not model.doc_id.startswith('urn:uuid:'):
-                # A CycloneDX serialNumber is a urn:uuid, an SPDX document
-                # namespace is a URL, so the two can be told apart.
-                log.die(
-                    f'The VEX file "{path}" links to a CycloneDX SBOM with a BOM-Link, and '
-                    f'the SBOM being checked is not a CycloneDX document.'
-                )
-            log.die(
-                f'The VEX file "{path}" belongs to another SBOM. It links to '
-                f'"{vexdoc.sbom_id}", but this SBOM is "{model.doc_id}".'
-            )
-
-        vex.apply(model, vexdoc)
+        vexdoc = _load_vex(path)
+        _check_sbom(model, vexdoc, path)
+        statements += vexdoc.statements
+    vex.apply(model, vex.Vex(statements=statements))
 
 
 def cmd_check(args: Dict[str, Any]) -> int:
@@ -242,7 +249,6 @@ def cmd_check(args: Dict[str, Any]) -> int:
                     # Include the CPE product name in the keywords so it is searched in the CVE description.
                     keywords += [cpe.split(':')[4] for cpe in cpes]
 
-                manifest_exclude_list = {entry['cve']: entry['reason'] for entry in pkg.cve_exclude_list}
                 if args['extended_scan']:
                     keywords += pkg.cve_keywords
 
@@ -250,26 +256,18 @@ def cmd_check(args: Dict[str, Any]) -> int:
                 # utils.expand_cpe_aliases).
                 cpes = utils.expand_cpe_aliases(cpes)
 
-                for cpe in cpes:
-                    # Merge globally-applicable exclusions for this CPE with manifest excludes.
-                    # Manifest-level entries take precedence (more specific).
-                    cve_exclude_list = nvd.get_excluded_cves_for_cpe(cpe)
-                    cve_exclude_list.update(manifest_exclude_list)
+                # The package's own assessments, merged with the global exclusions for
+                # any of its CPEs. Used for the CPE, keyword and NA-version scans.
+                assessments = sbom.merge_excluded_cves(pkg.assessments, cpes)
 
+                for cpe in cpes:
                     vulns = nvd.check_cpe(cpe, args['local_db'])
                     for vuln in vulns:
-                        record = report.create_vulnerable_record(vuln, cve_exclude_list, cpe, '', pkg_name, pkg_ver)
+                        record = report.create_vulnerable_record(vuln, assessments, cpe, '', pkg_name, pkg_ver)
                         pkg_records.append(record)
                         package_added = True
 
                 if args['extended_scan']:
-                    # Keyword hits are not tied to a single CPE, so honor the
-                    # globally-applicable exclusions for any of the package
-                    # CPEs. Manifest-level entries take precedence.
-                    keyword_exclude_list: Dict[str, str] = {}
-                    for cpe in cpes:
-                        keyword_exclude_list.update(nvd.get_excluded_cves_for_cpe(cpe))
-                    keyword_exclude_list.update(manifest_exclude_list)
                     for keyword in keywords:
                         vulns = nvd.check_keyword(keyword, args['local_db'])
                         for vuln in vulns:
@@ -279,7 +277,7 @@ def cmd_check(args: Dict[str, Any]) -> int:
                                 existing_record['keyword'] += f', {keyword}'
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, keyword_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
+                                vuln, assessments, '', keyword, pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True
@@ -296,17 +294,29 @@ def cmd_check(args: Dict[str, Any]) -> int:
                             # Already NA/ANY; the regular scan above covers it.
                             continue
                         na_cpe = ':'.join(parts[:5] + ['-'] + parts[6:])
-                        cve_exclude_list = nvd.get_excluded_cves_for_cpe(cpe)
-                        cve_exclude_list.update(manifest_exclude_list)
                         for vuln in nvd.check_cpe(na_cpe, args['local_db']):
                             if report.find_record_by_cve(pkg_records, vuln['cve']['id']):
                                 # Already reported by the version or keyword scan.
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, cve_exclude_list, na_cpe, '', pkg_name, pkg_ver, maybe=True
+                                vuln, assessments, na_cpe, '', pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True
+
+                # The CVE of every VEX statement is reported, also when the scan did not
+                # find it. For example, NVD may have no CPE data for the CVE yet.
+                for assessment in pkg.assessments:
+                    cve_id = assessment.vulnerability
+                    if report.find_record_by_cve(pkg_records, cve_id):
+                        # The scan found it.
+                        continue
+                    # Only the id. The record has no data from NVD.
+                    vuln = {'cve': {'id': cve_id}}
+                    # The scan did not find the CVE, so under_investigation gives MAYBE, not YES.
+                    record = report.create_vulnerable_record(vuln, assessments, '', '', pkg_name, pkg_ver, maybe=True)
+                    pkg_records.append(record)
+                    package_added = True
 
                 if not package_added:
                     # No vulnerabilities found for given package
@@ -333,6 +343,82 @@ def cmd_check(args: Dict[str, Any]) -> int:
     report.show(record_list, args, proj_name, proj_ver)
 
     return exit_code
+
+
+def _product_name(product: vex.VexProduct) -> str:
+    """How a message names a VEX product."""
+    return product.ref or product.purl or next(iter(product.cpes), '') or product.name
+
+
+def _check_products(model: sbom.SBOM, vexdoc: vex.Vex, path: str) -> None:
+    """Stop when a statement names no package of the SBOM, because it would be
+    written nowhere. Warn when a statement names more than one package, for example
+    two copies of a library with the same CPE. The statement then applies to all of
+    them."""
+    unmatched = []
+    for statement in vexdoc.statements:
+        for product in statement.products:
+            packages = vex.find_packages(model, product)
+            if not packages:
+                unmatched.append(f'  {statement.vulnerability}: {_product_name(product)}')
+            elif len(packages) > 1:
+                refs = ', '.join(pkg.ref for pkg in packages)
+                log.warn(
+                    f'{statement.vulnerability} in "{path}": "{_product_name(product)}" names '
+                    f'{len(packages)} packages, {refs}. The statement applies to all of them.'
+                )
+    if unmatched:
+        names = '\n'.join(unmatched)
+        log.die(f'{len(unmatched)} statement(s) in "{path}" name a package that is not in the SBOM:\n{names}')
+
+
+def cmd_vex_update(args: Dict[str, Any]) -> int:
+    vex_file = args['vex_file']
+    if vex_file and args['format']:
+        log.die('--format cannot be used with --vex. The updated VEX document keeps the format of the VEX file.')
+
+    try:
+        model = formats.load_sbom(args['input_file'])
+    except (OSError, ValueError) as e:
+        log.die(f'cannot read SBOM file: {e}')
+
+    # Only the statements of the statements files go into the model. The statements
+    # embedded in the SBOM stay there and are not written to the VEX document, and
+    # check reads both.
+    for pkg in model.packages:
+        pkg.assessments = []
+    # A later file wins, because apply() replaces the statement of the same CVE.
+    for statements_file in args['statements_files']:
+        try:
+            with open(statements_file) as f:
+                statements = vexyaml.parse_vex(f.read())
+        except (OSError, ValueError) as e:
+            log.die(f'cannot read statements file "{statements_file}": {e}')
+        _check_products(model, statements, statements_file)
+        _apply_vex(model, statements, statements_file)
+
+    current: Optional[vex.Vex] = None
+    if vex_file:
+        current = _load_vex(vex_file)
+        _check_sbom(model, current, vex_file)
+
+    try:
+        if current is not None:
+            # Write the statements where they differ from the VEX file, and keep the rest of it.
+            backend = formats.VEX_FORMATS[current.format_name].backend
+            text = backend.update_vex(current, vex.build(model).statements, model)
+        else:
+            vexfmt = formats.VEX_FORMATS[args['format'] or 'openvex']
+            vexdoc = vex.build(model, sbom_id=model.doc_id if vexfmt.linked else '')
+            text = vexfmt.backend.render_vex(vexdoc, format=vexfmt.encoding, version=vexfmt.version)
+    except ValueError as e:
+        log.die(f'cannot write the VEX document: {e}')
+
+    # Without emoji=False, rich would replace a text like :warning: with an emoji.
+    # A VEX file that did not change is printed as it is, without an added new line.
+    unchanged = current is not None and text == current.text
+    log.print(text, markup=False, emoji=False, end='' if unchanged else '\n')
+    return 0
 
 
 def cmd_license(args: Dict[str, Any]) -> int:
@@ -520,29 +606,22 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                     # Without a package name or CPE, use the manifest path as the name.
                     pkg_name = manifest['_src']
 
-                manifest_exclude_list = {cve['cve']: cve['reason'] for cve in manifest.get('cve-exclude-list', [])}
                 if args['extended_scan']:
                     keywords += manifest.get('cve-keywords', [])
-                for cpe in cpes:
-                    # Merge globally-applicable exclusions for this CPE with manifest excludes.
-                    # Manifest-level entries take precedence (more specific).
-                    cve_exclude_list = nvd.get_excluded_cves_for_cpe(cpe)
-                    cve_exclude_list.update(manifest_exclude_list)
 
+                # The manifest's own exclusions, merged with the global ones for any
+                # of its CPEs. Used for the CPE, keyword and NA-version scans.
+                exclusions = [sbom.assessment_from_exclusion(entry) for entry in manifest.get('cve-exclude-list', [])]
+                assessments = sbom.merge_excluded_cves(exclusions, cpes)
+
+                for cpe in cpes:
                     vulns = nvd.check_cpe(cpe, args['local_db'])
                     for vuln in vulns:
-                        record = report.create_vulnerable_record(vuln, cve_exclude_list, cpe, '', pkg_name, pkg_ver)
+                        record = report.create_vulnerable_record(vuln, assessments, cpe, '', pkg_name, pkg_ver)
                         pkg_records.append(record)
                         package_added = True
 
                 if args['extended_scan']:
-                    # Keyword hits are not tied to a single CPE, so honor the
-                    # globally-applicable exclusions for any of the package
-                    # CPEs. Manifest-level entries take precedence.
-                    keyword_exclude_list: Dict[str, str] = {}
-                    for cpe in cpes:
-                        keyword_exclude_list.update(nvd.get_excluded_cves_for_cpe(cpe))
-                    keyword_exclude_list.update(manifest_exclude_list)
                     for keyword in keywords:
                         vulns = nvd.check_keyword(keyword, args['local_db'])
                         for vuln in vulns:
@@ -552,7 +631,7 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                                 existing_record['keyword'] += f', {keyword}'
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, keyword_exclude_list, '', keyword, pkg_name, pkg_ver, maybe=True
+                                vuln, assessments, '', keyword, pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True
@@ -569,14 +648,12 @@ def cmd_manifest_check(args: Dict[str, Any]) -> int:
                             # Already NA/ANY; the regular scan above covers it.
                             continue
                         na_cpe = ':'.join(parts[:5] + ['-'] + parts[6:])
-                        cve_exclude_list = nvd.get_excluded_cves_for_cpe(cpe)
-                        cve_exclude_list.update(manifest_exclude_list)
                         for vuln in nvd.check_cpe(na_cpe, args['local_db']):
                             if report.find_record_by_cve(pkg_records, vuln['cve']['id']):
                                 # Already reported by the version or keyword scan.
                                 continue
                             record = report.create_vulnerable_record(
-                                vuln, cve_exclude_list, na_cpe, '', pkg_name, pkg_ver, maybe=True
+                                vuln, assessments, na_cpe, '', pkg_name, pkg_ver, maybe=True
                             )
                             pkg_records.append(record)
                             package_added = True
@@ -987,10 +1064,12 @@ def create(ctx: click.Context, **params: Any) -> None:
     metavar='VEX_FILE',
     multiple=True,
     help=(
-        'Read a standalone VEX document, as written by "create --vex-output", and use its '
-        'not_affected statements when reporting. Can be used more than once. A '
-        'CycloneDX VEX links to one SBOM and is refused for any other one. An '
-        'OpenVEX document names products by PURL and CPE and works with any SBOM.'
+        'Read a standalone VEX document, as written by "create --vex-output" or "vex update", and use its '
+        'statements when reporting. A CVE with the status not_affected or fixed is '
+        'excluded, and a CVE with the status affected is reported. The CVE of a statement '
+        'from the VEX file is reported also when the scan does not find it. Can be used '
+        'more than once. A CycloneDX VEX links to one SBOM and is refused for any other one. '
+        'An OpenVEX document names products by PURL and CPE and works with any SBOM.'
     ),
 )
 @extended_scan_option
@@ -1193,6 +1272,62 @@ def manifest_license(ctx: click.Context, **params: Any) -> None:
 def manifest_aggregate(ctx: click.Context, **params: Any) -> None:
     """Combine all manifest files in AGGREGATE_PATH into a single SBOM manifest using the referenced manifests."""
     _dispatch(ctx, cmd_manifest_aggregate, **params)
+
+
+@main.group('vex', invoke_without_command=True)
+@click.pass_context
+def vex_group(ctx: click.Context) -> None:
+    """Commands operating on VEX documents."""
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help(), err=True)
+        ctx.exit(1)
+
+
+@vex_group.command('update')
+@click.argument('input_file', metavar='SBOM_FILE')
+@click.argument('statements_files', metavar='STATEMENTS_FILE...', nargs=-1, required=True)
+@click.option(
+    '-o',
+    '--output',
+    '--output-file',
+    'output_file',
+    metavar='OUTPUT_FILE',
+    default=None,
+    help='Print output to the specified file instead of stdout.',
+)
+@click.option(
+    '--vex',
+    'vex_file',
+    metavar='VEX_FILE',
+    default=None,
+    help=(
+        'The current VEX document of SBOM_FILE. The updated document keeps its format and '
+        'id, and gets a higher version when something changed. Only the new and changed '
+        'statements are written into it, and the rest of the document stays as it is. '
+        'Without --vex, a new VEX document is written with the statements in STATEMENTS_FILE.'
+    ),
+)
+@click.option(
+    '--format',
+    type=click.Choice(list(formats.VEX_FORMATS)),
+    default=None,
+    help=(
+        'The format of a new VEX document. It cannot be used with --vex. '
+        'openvex - OpenVEX 0.2.0. It works with any SBOM format. This is default. '
+        'cyclonedx-json - CycloneDX 1.6. It needs a CycloneDX SBOM.'
+    ),
+)
+@click.pass_context
+def vex_update(ctx: click.Context, **params: Any) -> None:
+    """Update a VEX document with the statements in STATEMENTS_FILE.
+
+    STATEMENTS_FILE is a YAML file with the status of CVEs in the packages of
+    SBOM_FILE. A statement in it replaces the statement of the same CVE for the
+    same package. More than one file can be given, and a later file wins, for
+    example a file shared by several products first and the file of one product
+    last. The statements embedded in SBOM_FILE are not written to the VEX document.
+    """
+    _dispatch(ctx, cmd_vex_update, **params)
 
 
 if __name__ == '__main__':

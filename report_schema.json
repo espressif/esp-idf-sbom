@@ -192,6 +192,22 @@
                     "kev_name": {
                         "type": "string",
                         "description": "Name CISA gives the vulnerability in the Known Exploited Vulnerabilities catalog. Empty if the CVE is not in the catalog."
+                    },
+                    "vex_status": {
+                        "type": "string",
+                        "description": "VEX status of the CVE for the package: not_affected, fixed, affected or under_investigation. Empty if no VEX statement covers the CVE."
+                    },
+                    "vex_justification": {
+                        "type": "string",
+                        "description": "Why the package is not affected, one of the CISA justifications. Empty if the VEX statement has none."
+                    },
+                    "vex_detail": {
+                        "type": "string",
+                        "description": "Text of the VEX statement about the impact of the CVE on the package. Empty if the VEX statement has none."
+                    },
+                    "vex_action": {
+                        "type": "string",
+                        "description": "What to do about the CVE, from the VEX statement for an affected package. Empty if the VEX statement has none."
                     }
                 },
                 "required": [
