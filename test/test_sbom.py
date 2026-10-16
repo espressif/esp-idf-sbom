@@ -1136,6 +1136,20 @@ def test_render_vex_cyclonedx_needs_sbom_identity() -> None:
         cyclonedx.render_vex(vex.build(_sbom_with_exclusions()))
 
 
+def test_cyclonedx_writes_no_empty_detail() -> None:
+    """An exclusion with an empty reason has no impact statement. CycloneDX then
+    writes no detail, not an empty one."""
+    from esp_idf_sbom.libsbom import cyclonedx
+
+    model = _sbom_with_exclusions()
+    model.packages[1].cve_exclude_list[0]['reason'] = ''
+    bom = json.loads(cyclonedx.render(model, version='1.6'))
+    assert [vulnerability['analysis'].get('detail') for vulnerability in bom['vulnerabilities']] == [
+        None,
+        'not reachable',
+    ]
+
+
 def test_render_vex_openvex() -> None:
     """OpenVEX takes the CISA vocabulary verbatim and names products by identity,
     so it carries no reference to the SBOM document at all."""
