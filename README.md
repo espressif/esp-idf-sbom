@@ -379,7 +379,12 @@ can use them:
 
 The option can be used more than once. A CycloneDX VEX is refused for any SBOM
 other than the one it was created with. A statement that names a package that is
-not in the SBOM is ignored with a warning.
+not in the SBOM is ignored with a warning. When the VEX files have more than one
+statement about a CVE of a package, the newest statement is used, whatever the
+order of the files on the command line. The time of an OpenVEX statement is its
+`timestamp`, as in the OpenVEX specification. The time of a CycloneDX statement
+is its `lastUpdated`, the time of its last change. With the same time, the
+statement of the file further right on the command line is used.
 
 A CVE is excluded when a statement says that it does not affect the package, or
 that the package has the fix. When a statement says that the CVE affects the

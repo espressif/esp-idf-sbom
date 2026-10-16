@@ -144,7 +144,12 @@ def _apply_vex_files(model: sbom.SBOM, paths: Tuple[str, ...]) -> None:
     A VEX that names the SBOM it belongs to, which for CycloneDX is the
     serialNumber in the BOM-Link, is used only with that SBOM. OpenVEX names
     products by PURL and CPE and has no such link, so it is used with any SBOM.
+
+    The statements of all files are applied together, so that the newest statement
+    about a CVE of a package wins, and not the one from the last file, see
+    vex.apply().
     """
+    statements: List[vex.VexStatement] = []
     for path in paths:
         try:
             vexdoc = formats.load_vex(path)
@@ -171,7 +176,8 @@ def _apply_vex_files(model: sbom.SBOM, paths: Tuple[str, ...]) -> None:
                 f'"{vexdoc.sbom_id}", but this SBOM is "{model.doc_id}".'
             )
 
-        vex.apply(model, vexdoc)
+        statements += vexdoc.statements
+    vex.apply(model, vex.Vex(statements=statements))
 
 
 def cmd_check(args: Dict[str, Any]) -> int:

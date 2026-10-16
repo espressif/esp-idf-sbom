@@ -59,6 +59,14 @@ class VexStatement(VexAssessment):
     # The NVD page of the CVE. CISA requires the description of the vulnerability or
     # a link to it.
     nvd_url: str = ''
+    # The time that decides which of two statements about a CVE of a package is
+    # newer, see apply(). The parser of each format sets it. OpenVEX uses the
+    # timestamp of a statement, as the OpenVEX spec and go-vex do. CycloneDX uses
+    # lastUpdated, the time of the last change of an analysis, because a tool can
+    # change an analysis in place and keep its firstIssued. It is empty for a
+    # statement that was not parsed. It comes from the other times, so == does not
+    # compare it.
+    time: str = field(default='', compare=False)
 
 
 @dataclass
@@ -210,6 +218,15 @@ def find_packages(sbom: SBOM, product: VexProduct) -> List[Package]:
     return []
 
 
+def _time(statement: VexStatement) -> datetime.datetime:
+    """The time of the statement, see VexStatement.time. A statement whose time
+    cannot be read counts as the oldest."""
+    time = parse_time(statement.time)
+    if time is None:
+        return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+    return time
+
+
 def apply(sbom: SBOM, vexdoc: Vex) -> None:
     """Merge the statements of a VEX document into the SBOM model.
 
@@ -219,9 +236,14 @@ def apply(sbom: SBOM, vexdoc: Vex) -> None:
 
     The packages of a statement are found with find_packages(). Formats that
     point into an SBOM document give a ref, the others give PURL and CPE.
+
+    A newer statement about a CVE of a package overrides an older one. So the
+    statements are used in the order of their time, see VexStatement.time. Of
+    statements with the same time, the later one wins.
     """
     unmatched = 0
-    for statement in vexdoc.statements:
+    # sorted() keeps the order of statements with the same time.
+    for statement in sorted(vexdoc.statements, key=_time):
         for product in statement.products:
             packages = find_packages(sbom, product)
             if not packages:

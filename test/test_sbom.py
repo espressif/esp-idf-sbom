@@ -1456,6 +1456,50 @@ def test_vex_document_reads_back_id_version_and_times() -> None:
     ]
 
 
+def test_openvex_newest_statement_wins() -> None:
+    """A newer OpenVEX statement about a CVE of a product overrides an older one,
+    also when it comes first in the document. go-vex, the OpenVEX library, does the
+    same."""
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    def statement(status: str, timestamp: str) -> dict:
+        return {
+            'vulnerability': {'name': 'CVE-2026-0001'},
+            'timestamp': timestamp,
+            'products': [{'@id': 'pkg:generic/freertos@10.0.0'}],
+            'status': status,
+        }
+
+    document = {
+        '@context': 'https://openvex.dev/ns/v0.2.0',
+        '@id': 'urn:uuid:11111111-2222-3333-4444-555555555555',
+        'author': 'Unknown Author',
+        'timestamp': '2026-01-01T10:00:00Z',
+        'version': 2,
+        'statements': [
+            # go-vex writes the time of a statement with nanoseconds.
+            statement('fixed', '2026-02-01T10:00:00.123456789Z'),
+            statement('under_investigation', '2026-01-01T10:00:00Z'),
+        ],
+    }
+    project = Package(ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT)
+    freertos = Package(
+        ref='COMPONENT-freertos',
+        name='freertos',
+        package_name='freertos',
+        kind=PackageKind.COMPONENT,
+        version='10.0.0',
+        purl='pkg:generic/freertos@10.0.0',
+    )
+    model = SBOM(name='app', root='PROJECT-app', packages=[project, freertos])
+    vex.apply(model, openvex.parse_vex(json.dumps(document)))
+    assert [assessment.status for assessment in freertos.assessments] == [vex.VexStatus('fixed')]
+
+
 def test_spdx_jsonld_reads_back_all_statuses() -> None:
     """SPDX 3.0.1 has one relationship class for each status, with the CISA
     justifications. Everything but the response comes back as it was, because
