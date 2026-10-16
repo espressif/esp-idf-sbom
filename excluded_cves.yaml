@@ -308,3 +308,117 @@ CVE-2026-73513: Related to Envoy (< 1.36.10, < 1.37.6, < 1.38.4 and < 1.39.1), w
 CVE-2026-81883: Related to radare2 (< 6.2.0), whose Lua 5.3 bytecode parser reads function metadata past the end of the input buffer. Not a vulnerability in Lua itself
 CVE-2026-47321: Related to Apache MINA (< 2.0.29, < 2.1.13 and < 2.2.8), a Java network framework whose CompressionFilter does not limit the inflated size of incoming data. Not a vulnerability in the zlib C library
 CVE-2026-67232: Related to RabbitMQ (< 3.13.15, < 4.0.20, < 4.1.11, < 4.2.6 and < 4.3.0), whose Web-MQTT plugin enables WebSocket permessage-deflate with no frame size limit, so a zlib bomb is inflated without an output limit. A broker-side flaw, not a vulnerability in the zlib C library or in the ESP-MQTT client
+
+CVE-2026-74222: Related to U-Boot (< 2026.10-rc5), whose lwIP wget receive callback httpc_recv_cb() frees the connection PCB when storing the HTTP data fails but returns ERR_BUF instead of ERR_ABRT, so the TCP input path uses the freed memory. Not a vulnerability in lwIP itself
+CVE-2026-19737: Related to the Zephyr RTOS I2S driver for Espressif SoCs (drivers/i2s/i2s_esp32.c, Zephyr 4.4.0 to < 4.5.0), whose i2s_esp32_trigger_check() dereferences a NULL stream pointer for a direction the devicetree does not describe. Zephyr code, not a vulnerability in ESP-IDF
+CVE-2026-84318: Related to Nginx UI (2.0.0-rc.6 to < 2.4.1), whose MCP tool nginx_config_add writes nginx configuration files without config.ValidateConfigFile, so blocked directives give code execution when the nginx Perl, njs or Lua module is loaded. Not a vulnerability in Lua itself
+CVE-2026-102875: Related to VLC media player (< 3.0.24), a path traversal in the skins2 ThemeLoader that writes arbitrary files from a crafted .vlt skin archive, which enables code execution through Lua script injection. Not a vulnerability in Lua itself
+CVE-2026-107333: Related to cisagov Malcolm (<= 26.07.1), whose Nginx Lua RBAC layer and Nginx request routing normalize URL paths differently, so a crafted path reaches role-restricted endpoints. Same class as CVE-2026-63177, already excluded. Not a vulnerability in Lua itself
+CVE-2026-107334: Related to cisagov Malcolm (<= 26.07.1), whose Nginx Lua RBAC layer matches the raw percent-encoded request URI while Nginx routes on the decoded one. Same description as CVE-2026-19670, already excluded. Not a vulnerability in Lua itself
+CVE-2026-102560: Related to libsoup, whose permessage-deflate WebSocket extension truncates the size used to grow the output GByteArray for a very large message, so zlib writes past the allocated buffer. Not a vulnerability in the zlib C library
+CVE-2026-105274: Related to hexpm hex_core (0.1.0 to < 0.20.0) and its copies in Hex (2.1.0 to < 2.5.2) and rebar3 (3.9.1 to < 3.27.3), Erlang code that inflates registry responses with zlib:gunzip/1 without a size limit before it checks the signature. Not a vulnerability in the zlib C library
+CVE-2026-76875: Related to PyPy (< 3.11.16 and 3.12.0 to < 3.12.14), whose pyexpat ExternalEntityParserCreate() lets the garbage collector free the parent parser while a child parser still points to it. Not a vulnerability in libexpat itself
+CVE-2026-109260: Related to ImageMagick (< 6.9.13-57 and 7.x < 7.1.2-32), whose PNG encoder leaks memory when libpng initialization fails. Not a vulnerability in libpng
+CVE-2026-106449: Related to yawkat lz4-java (< 1.11.4), whose LZ4BlockInputStream with stopOnEmptyBlock set to false recurses once per empty block and can overflow the Java thread stack. Not a vulnerability in the LZ4 C library
+CVE-2026-106450: Related to yawkat lz4-java (< 1.11.4), whose LZ4FrameInputStream allocates two 4 MiB block buffers for every minimal empty frame in a concatenated stream. Not a vulnerability in the LZ4 C library
+CVE-2026-106451: Related to yawkat lz4-java (1.7.0 to < 1.11.4), whose Native.load() writes the extracted native library to a predictable temporary path that another local user can replace before System.load(). Not a vulnerability in the LZ4 C library
+CVE-2026-106452: Related to yawkat lz4-java (< 1.11.2), whose LZ4BlockInputStream allocates the compressed-input buffer from an untrusted legacy block header length, up to about 2 GiB. Not a vulnerability in the LZ4 C library
+CVE-2026-106453: Related to yawkat lz4-java (< 1.11.2), whose LZ4DecompressorWithLength trusts the four-byte decompressed-length header and allocates up to about 2 GiB for a five-byte input. Not a vulnerability in the LZ4 C library
+
+CVE-2026-87121:
+  cpes:
+    - cpe: cpe:2.3:a:lwip_project:lwip:*:*:*:*:*:*:*:*
+      versionStartIncluding: '2.0.1'
+      versionEndIncluding: '2.2.1'
+  reason: >-
+    Out-of-bounds write into client->rx_buffer in mqtt_parse_incoming() of the
+    lwIP MQTT client application (src/apps/mqtt/mqtt.c), fixed upstream by
+    68b2c1191886 (ICSA-26-265-01). ESP-IDF does not build
+    src/apps/mqtt/mqtt.c. Its MQTT client is the separate ESP-MQTT component.
+
+CVE-2026-15340:
+  cpes:
+    - cpe: cpe:2.3:a:lwip_project:lwip:*:*:*:*:*:*:*:*
+      versionEndIncluding: '2.2.1'
+  reason: >-
+    Overflow of tx_buf in smtp_prepare_auth_or_mail() of the lwIP SMTP client
+    application (src/apps/smtp/smtp.c) when a server sends an AUTH line longer
+    than SMTP_TX_BUF_LEN, fixed upstream by 614420f82c87 (ICSA-26-279-02). The
+    advisory lists 2.2.1, but 2.1.3 and 2.2.0 have the same code. ESP-IDF does
+    not build src/apps/smtp/smtp.c.
+
+CVE-2026-91018:
+  cpes:
+    - cpe: cpe:2.3:a:lwip_project:lwip:*:*:*:*:*:*:*:*
+      versionStartIncluding: '2.0.1'
+      versionEndIncluding: '2.2.1'
+  reason: >-
+    Double free of the input pbuf in lowpan6_input() of the lwIP 6LoWPAN netif
+    (src/netif/lowpan6.c) when decompression of a FRAG1 fragment fails, fixed
+    upstream by f873b6295933 (ICSA-26-265-02). ESP-IDF does not build
+    src/netif/lowpan6.c or src/netif/lowpan6_common.c. Thread support uses the
+    6LoWPAN layer of OpenThread.
+
+CVE-2026-25832:
+  cpes:
+    - cpe: cpe:2.3:a:arm:mbed_tls:*:*:*:*:*:*:*:*
+      versionEndExcluding: '3.5.0'
+    - cpe: cpe:2.3:a:arm:mbed_tls:*:*:*:*:*:*:*:*
+      versionStartIncluding: '3.6.7'
+      versionEndExcluding: '4.0.0'
+    - cpe: cpe:2.3:a:arm:mbed_tls:*:*:*:*:*:*:*:*
+      versionStartIncluding: '4.1.1'
+    - cpe: cpe:2.3:a:trustedfirmware:mbed_tls:*:*:*:*:*:*:*:*
+      versionEndExcluding: '3.5.0'
+    - cpe: cpe:2.3:a:trustedfirmware:mbed_tls:*:*:*:*:*:*:*:*
+      versionStartIncluding: '3.6.7'
+      versionEndExcluding: '4.0.0'
+    - cpe: cpe:2.3:a:trustedfirmware:mbed_tls:*:*:*:*:*:*:*:*
+      versionStartIncluding: '4.1.1'
+  reason: >-
+    TLS 1.3 client accepts a HelloRetryRequest that selects a group it did not
+    advertise. The flawed check was added in 3.5.0. Fixed in 3.6.7 by
+    55ccd932658b and in 4.1.1 by cec2cef6b5ce, the 4.1.x fix commit named in
+    the advisory. The 4.1.1 ChangeLog lists CVE-2026-25832. The advisory and
+    the CVE record name 4.1.2 as the first fixed 4.x release, but the fix is
+    already in the mbedtls-4.1.1 tag.
+
+CVE-2026-73064:
+  cpes:
+    - cpe: cpe:2.3:a:arm:mbed_tls:*:*:*:*:*:*:*:*
+      versionEndExcluding: '3.2.0'
+    - cpe: cpe:2.3:a:arm:mbed_tls:*:*:*:*:*:*:*:*
+      versionStartIncluding: '3.6.7'
+      versionEndExcluding: '4.0.0'
+    - cpe: cpe:2.3:a:arm:mbed_tls:*:*:*:*:*:*:*:*
+      versionStartIncluding: '4.1.1'
+  reason: >-
+    Mbed TLS TLS 1.3 server flaw in 3.2.0 through 3.6.6 and 4.0.0 through
+    4.1.0. Fixed in 3.6.7 and 4.1.1
+
+CVE-2026-81507:
+  cpes:
+    - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+      versionStartIncluding: '5.2.8'
+      versionEndExcluding: '5.3'
+    - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+      versionStartIncluding: '5.3.6'
+      versionEndExcluding: '5.4'
+    - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+      versionStartIncluding: '5.4.5'
+      versionEndExcluding: '5.5'
+    - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+      versionStartIncluding: '5.5.5'
+      versionEndExcluding: '6.0'
+    - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+      versionStartIncluding: '6.0.3'
+      versionEndExcluding: '6.1'
+    - cpe: cpe:2.3:a:espressif:esp-idf:*:*:*:*:*:*:*:*
+      versionStartIncluding: '6.1'
+  reason: >-
+    Out-of-bounds read in the BlueDroid L2CAP configuration option parsing
+    (components/bt/host/bluedroid/stack/l2cap/l2c_main.c and l2c_utils.c).
+    Fixed in 5.2.8, 5.3.6, 5.5.5, 6.0.3 and 6.1-rc1. release/v5.4 has the fix
+    (5731c63ece12), so the next 5.4 release, 5.4.5, has it too. The
+    v6.1-beta1 pre-release also reports 6.1.0, but does not have the fix.
+    https://github.com/espressif/esp-idf/security/advisories/GHSA-v335-fxwc-rc44
