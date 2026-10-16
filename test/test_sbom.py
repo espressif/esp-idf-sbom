@@ -1302,6 +1302,82 @@ def test_parse_vex_round_trip() -> None:
     assert vex.VexStatus.NOT_AFFECTED is back.statements[0].status
 
 
+def _assessments_of_all_statuses() -> list:
+    """One assessment for each status, with every field that the status can have."""
+    from esp_idf_sbom.libsbom import vex
+
+    return [
+        vex.VexAssessment(
+            vulnerability='CVE-2020-1',
+            status=vex.VexStatus.NOT_AFFECTED,
+            justification=vex.VexJustification.COMPONENT_NOT_PRESENT,
+            response=[vex.VexResponse.WILL_NOT_FIX],
+            impact_statement='not used',
+        ),
+        vex.VexAssessment(vulnerability='CVE-2020-2', status=vex.VexStatus.FIXED, impact_statement='patched'),
+        vex.VexAssessment(
+            vulnerability='CVE-2020-3',
+            status=vex.VexStatus.AFFECTED,
+            response=[vex.VexResponse.UPDATE],
+            impact_statement='The TLS server is enabled.',
+            action_statement='Update to version 2.1.',
+        ),
+        vex.VexAssessment(vulnerability='CVE-2020-4', status=vex.VexStatus.UNDER_INVESTIGATION),
+    ]
+
+
+def test_cyclonedx_vex_reads_back_all_fields() -> None:
+    """Every field of a statement comes back from a CycloneDX VEX and from a
+    CycloneDX SBOM. The action is the recommendation. CycloneDX has no
+    component_not_present, so it comes back as vulnerable_code_not_present."""
+    import dataclasses
+
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_file()
+    model.packages[1].assessments = _assessments_of_all_statuses()
+
+    text = cyclonedx.render_vex(vex.build(model, sbom_id='urn:uuid:11111111-2222-3333-4444-555555555555'))
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+    first, _, third, _ = json.loads(text)['vulnerabilities']
+    assert first['analysis']['justification'] == 'code_not_present'
+    assert third['recommendation'] == 'Update to version 2.1.'
+
+    def assessments(statements: list) -> list:
+        """The statements without their products, as a package keeps them."""
+        names = [f.name for f in dataclasses.fields(vex.VexAssessment)]
+        return [vex.VexAssessment(**{name: getattr(s, name) for name in names}) for s in statements]
+
+    expected = model.packages[1].assessments[:]
+    expected[0] = dataclasses.replace(expected[0], justification=vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT)
+    assert assessments(cyclonedx.parse_vex(text).statements) == expected
+
+    text = cyclonedx.render(model, version='1.6')
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+    by_ref = {pkg.ref: pkg for pkg in cyclonedx.parse(text).packages}
+    assert by_ref['COMPONENT-lib'].assessments == expected
+
+
+def test_spdx_jsonld_reads_back_justification() -> None:
+    """SPDX 3.0.1 has the CISA justifications, so they come back as they were."""
+    from esp_idf_sbom.libsbom import spdx
+
+    model = _sbom_with_file()
+    model.packages[1].assessments = _assessments(
+        {'cve': 'CVE-2020-1', 'reason': 'not used', 'justification': 'component_not_present'},
+        {'cve': 'CVE-2020-2', 'reason': 'not reachable', 'justification': 'vulnerable_code_not_in_execute_path'},
+        {'cve': 'CVE-2020-3', 'reason': 'no justification'},
+    )
+
+    back = spdx.parse(spdx.render(model, format='json-ld', version='3.0.1'), format='json-ld')
+    by_ref = {pkg.ref: pkg for pkg in back.packages}
+    assert by_ref['COMPONENT-lib'].assessments == model.packages[1].assessments
+
+
 def test_parse_vex_detects_format(tmp_path: Path) -> None:
     """formats.load_vex detects the format from the top-level keys, like load_sbom does."""
     from esp_idf_sbom.libsbom import cyclonedx

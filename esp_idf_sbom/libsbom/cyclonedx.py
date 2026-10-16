@@ -19,6 +19,7 @@ import json
 import re
 import uuid
 from collections import defaultdict
+from dataclasses import replace
 from typing import Any
 from typing import Dict
 from typing import List
@@ -47,7 +48,6 @@ from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
 from esp_idf_sbom.libsbom.sbom import PackageKind
 from esp_idf_sbom.libsbom.sbom import VexAssessment
-from esp_idf_sbom.libsbom.sbom import assessment_from_exclusion
 from esp_idf_sbom.libsbom.sbom import declared_first
 from esp_idf_sbom.libsbom.sbom import kind_and_name
 from esp_idf_sbom.libsbom.sbom import simplify_licenses
@@ -278,8 +278,7 @@ _ANALYSIS_STATE = {
 }
 
 # component_not_present and vulnerable_code_not_present both map to
-# code_not_present, so this map cannot be reversed. Parsing reads back the status
-# and the detail text, not the justification.
+# code_not_present, so this map cannot be reversed, see _VEX_JUSTIFICATION.
 _ANALYSIS_JUSTIFICATION = {
     vex.VexJustification.COMPONENT_NOT_PRESENT: 'code_not_present',
     vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT: 'code_not_present',
@@ -310,6 +309,8 @@ def _vulnerability(statement: vex.VexStatement, bom_link: str = '') -> Dict[str,
     }
     if statement.nvd_url:
         vulnerability['source'] = {'name': 'NVD', 'url': statement.nvd_url}
+    if statement.action_statement:
+        vulnerability['recommendation'] = statement.action_statement
     vulnerability['analysis'] = analysis
     vulnerability['affects'] = [{'ref': f'{bom_link}#{p.ref}' if bom_link else p.ref} for p in statement.products]
     return vulnerability
@@ -441,8 +442,7 @@ def render_vex(vexdoc: vex.Vex, format: str = 'json', version: str = '1.6') -> s
 # ===========================================================================
 
 # Reverse of _ANALYSIS_STATE. CycloneDX has more states than CISA, so several
-# map to the same one. The justification is not read back at all, because
-# code_not_present has two CISA meanings and nothing downstream uses it.
+# map to the same one.
 _VEX_STATUS = {
     'not_affected': vex.VexStatus.NOT_AFFECTED,
     'false_positive': vex.VexStatus.NOT_AFFECTED,
@@ -451,6 +451,44 @@ _VEX_STATUS = {
     'resolved_with_pedigree': vex.VexStatus.FIXED,
     'in_triage': vex.VexStatus.UNDER_INVESTIGATION,
 }
+
+# Reverse of _ANALYSIS_JUSTIFICATION. CycloneDX describes code_not_present as "The
+# code has been removed or tree-shaked", which is vulnerable_code_not_present in
+# CISA terms. The other CycloneDX justifications have no CISA match.
+_VEX_JUSTIFICATION = {
+    'code_not_present': vex.VexJustification.VULNERABLE_CODE_NOT_PRESENT,
+    'code_not_reachable': vex.VexJustification.VULNERABLE_CODE_NOT_IN_EXECUTE_PATH,
+    'protected_at_runtime': vex.VexJustification.VULNERABLE_CODE_CANNOT_BE_CONTROLLED_BY_ADVERSARY,
+    'protected_by_mitigating_control': vex.VexJustification.INLINE_MITIGATIONS_ALREADY_EXIST,
+}
+
+
+def _parse_assessment(vulnerability: Dict[str, Any]) -> Optional[VexAssessment]:
+    """Read the analysis of a vulnerability entry, in an SBOM or in a standalone
+    VEX. Return None for an unknown state."""
+    cve = vulnerability.get('id', '')
+    analysis = vulnerability.get('analysis', {})
+    state = analysis.get('state', '')
+    if state not in _VEX_STATUS:
+        log.warn(f'Skipping CycloneDX vulnerability "{cve}" with unknown analysis state "{state}".')
+        return None
+
+    response = []
+    for value in analysis.get('response', []):
+        try:
+            response.append(vex.VexResponse(value))
+        except ValueError:
+            log.warn(f'Ignoring unknown CycloneDX response "{value}" for {cve}.')
+
+    return VexAssessment(
+        vulnerability=cve,
+        status=_VEX_STATUS[state],
+        justification=_VEX_JUSTIFICATION.get(analysis.get('justification', '')),
+        response=response,
+        impact_statement=analysis.get('detail', ''),
+        action_statement=vulnerability.get('recommendation', ''),
+    )
+
 
 # A BOM-Link names a document, and with a fragment it names one element in it.
 # The document form is used by the externalReferences entry, the element form by
@@ -502,10 +540,8 @@ def parse_vex(text: str) -> vex.Vex:
 
     statements = []
     for vulnerability in bom.get('vulnerabilities', []):
-        analysis = vulnerability.get('analysis', {})
-        state = analysis.get('state', '')
-        if state not in _VEX_STATUS:
-            log.warn(f'Skipping CycloneDX VEX entry with unknown analysis state "{state}".')
+        assessment = _parse_assessment(vulnerability)
+        if assessment is None:
             continue
 
         products = []
@@ -521,14 +557,7 @@ def parse_vex(text: str) -> vex.Vex:
                     f'the statements name more than one SBOM, "{sbom_id}/{sbom_version}" and "{link_id}/{link_version}"'
                 )
 
-        statements.append(
-            vex.VexStatement(
-                vulnerability=vulnerability.get('id', ''),
-                status=_VEX_STATUS[state],
-                products=products,
-                impact_statement=analysis.get('detail', ''),
-            )
-        )
+        statements.append(vex.VexStatement(**vars(assessment), products=products))
 
     return vex.Vex(statements=statements, sbom_id=sbom_id, sbom_version=sbom_version)
 
@@ -634,19 +663,19 @@ def _parse_json(text: str) -> SBOM:
 
     depends_on = {dep.get('ref', ''): list(dep.get('dependsOn', [])) for dep in bom.get('dependencies', [])}
 
-    # VEX not_affected statements -> per-component assessments.
-    excludes: Dict[str, List[VexAssessment]] = defaultdict(list)
+    # VEX statements -> per-component assessments.
+    assessments: Dict[str, List[VexAssessment]] = defaultdict(list)
     for vuln in bom.get('vulnerabilities', []):
-        if vuln.get('analysis', {}).get('state') != 'not_affected':
+        assessment = _parse_assessment(vuln)
+        if assessment is None:
             continue
-        entry = {'cve': vuln.get('id', ''), 'reason': vuln.get('analysis', {}).get('detail', '')}
         for affect in vuln.get('affects', []):
             ref = affect.get('ref', '')
             if ref:
-                excludes[ref].append(assessment_from_exclusion(entry))
+                assessments[ref].append(replace(assessment))
 
     packages = [
-        _package_from_component(c, depends_on.get(c.get('bom-ref', ''), []), excludes.get(c.get('bom-ref', ''), []))
+        _package_from_component(c, depends_on.get(c.get('bom-ref', ''), []), assessments.get(c.get('bom-ref', ''), []))
         for c in components
     ]
 
