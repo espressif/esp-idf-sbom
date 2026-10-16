@@ -32,6 +32,7 @@ import re
 import sys
 from dataclasses import dataclass
 from dataclasses import field
+from dataclasses import replace
 from enum import Enum
 from typing import Any
 from typing import Dict
@@ -50,6 +51,9 @@ from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import mft
 from esp_idf_sbom.libsbom import nvd
 from esp_idf_sbom.libsbom import utils
+from esp_idf_sbom.libsbom.vexvalues import VexJustification
+from esp_idf_sbom.libsbom.vexvalues import VexResponse
+from esp_idf_sbom.libsbom.vexvalues import VexStatus
 
 # Identity of this tool as the producer of the documents it renders; every
 # backend maps it onto its format's document provenance slot (SPDX creators,
@@ -105,6 +109,22 @@ class File:
 
 
 @dataclass
+class VexAssessment:
+    """The VEX status of one vulnerability for one package.
+
+    This is a VEX statement without the products: in the model it belongs to a
+    package, and that package is the product. vex.VexStatement adds the products.
+    """
+
+    vulnerability: str  # CVE id
+    status: VexStatus
+    justification: Optional[VexJustification] = None
+    response: List[VexResponse] = field(default_factory=list)
+    impact_statement: str = ''  # why not affected, the reason from the manifest
+    action_statement: str = ''  # what to do, CISA requires it for the affected status
+
+
+@dataclass
 class Package:
     """A project, framework, toolchain, component, subpackage, submodule or
     virtual package."""
@@ -144,10 +164,10 @@ class Package:
     license_refs: List['LicenseRef'] = field(default_factory=list)
 
     # --- vulnerability metadata -----------------------------------------
-    # CVEs evaluated and found not to apply, each with the nvd.CVE_EXCLUDE_FIELDS
-    # keys that are set, plus keywords for description-based CVE search.
-    # Backends choose how to serialize them.
-    cve_exclude_list: List[Dict[str, Any]] = field(default_factory=list)
+    # The VEX status of vulnerabilities in this package, for example the CVEs of
+    # the manifest cve-exclude-list, plus keywords for description-based CVE
+    # search. Backends choose how to serialize them.
+    assessments: List[VexAssessment] = field(default_factory=list)
     cve_keywords: List[str] = field(default_factory=list)
 
     # --- contents and relationships -------------------------------------
@@ -222,6 +242,56 @@ class SBOM:
     license_refs: List[LicenseRef] = field(default_factory=list)
 
 
+def _justification(entry: Dict[str, Any]) -> Optional[VexJustification]:
+    """The justification of a cve-exclude-list entry. Manifests are validated, but
+    an excluded_cves.yaml file outside this repository is not, so an unknown value
+    is skipped."""
+    value = entry.get('justification')
+    if value is None:
+        return None
+    try:
+        return VexJustification(value)
+    except ValueError:
+        log.warn(f'Ignoring unknown justification "{value}" for {entry["cve"]}.')
+        return None
+
+
+def assessment_from_exclusion(entry: Dict[str, Any]) -> VexAssessment:
+    """Map a cve-exclude-list entry to an assessment. The entry comes from a
+    manifest, from excluded_cves.yaml or from an SPDX 2.2 package comment."""
+    return VexAssessment(
+        vulnerability=entry['cve'],
+        status=VexStatus.NOT_AFFECTED,
+        justification=_justification(entry),
+        # The CVE does not affect this version, so no fix is planned.
+        response=[VexResponse.WILL_NOT_FIX],
+        impact_statement=entry.get('reason', ''),
+    )
+
+
+def merge_excluded_cves(assessments: List[VexAssessment], cpes: List[str]) -> Dict[str, VexAssessment]:
+    """Merge the assessments of a package with the CPE-scoped entries of
+    excluded_cves.yaml that match one of its CPEs.
+
+    The assessment of the package is more specific, so it wins. Only a
+    justification that it does not set comes from the global entry.
+
+    :param assessments: the assessments of the package, from its manifest or SBOM
+    :param cpes: the CPEs to look up in excluded_cves.yaml
+    :returns: ``{cve_id: assessment}``
+    """
+    merged: Dict[str, VexAssessment] = {}
+    for cpe in cpes:
+        for cve_id, entry in nvd.get_excluded_cves_for_cpe(cpe).items():
+            merged.setdefault(cve_id, assessment_from_exclusion(entry))
+    for assessment in assessments:
+        known = merged.get(assessment.vulnerability)
+        if known is not None and assessment.justification is None:
+            assessment = replace(assessment, justification=known.justification)
+        merged[assessment.vulnerability] = assessment
+    return merged
+
+
 # ===========================================================================
 # SBOMObject: project_description.json + build artifacts -> SBOM model
 #
@@ -239,8 +309,8 @@ class SBOM:
 # No SPDX serialization tokens ever enter the model: absent values are '' or an
 # empty set (never NOASSERTION), raw strings are stored without <text> wrappers,
 # refs carry no SPDXRef- prefix, the package verification code is left for the
-# render backend to compute from pkg.files, and the cve-exclude-list is kept
-# structured rather than serialized to YAML.
+# render backend to compute from pkg.files, and the cve-exclude-list entries are
+# kept as VexAssessment objects rather than serialized to YAML.
 # ===========================================================================
 
 
@@ -826,7 +896,8 @@ class SBOMPackage(SBOMObject):
 
         # Merge manifest-level cve-exclude-list with globally-applicable exclusions
         # from excluded_cves.yaml for any of this package's CPEs.
-        merged_excludes = nvd.merge_excluded_cves(self.manifest['cve-exclude-list'], self.manifest['cpe'])
+        assessments = [assessment_from_exclusion(entry) for entry in self.manifest['cve-exclude-list']]
+        merged_assessments = merge_excluded_cves(assessments, self.manifest['cpe'])
 
         # Licenses gathered from files are only meaningful when files were
         # actually collected for the package.
@@ -854,7 +925,7 @@ class SBOMPackage(SBOMObject):
             license_refs=self.get_license_refs(),
             copyrights_declared=set(self.tags.copyrights_declared),
             copyrights_concluded=set(self.tags.copyrights),
-            cve_exclude_list=list(merged_excludes.values()),
+            assessments=list(merged_assessments.values()),
             cve_keywords=list(self.manifest['cve-keywords']),
             files=[f.file for f in self.files],
         )
@@ -1796,7 +1867,7 @@ def build(args: Dict[str, Any], proj_desc_path: str) -> SBOM:
 
     # Honor a repository-local excluded_cves.yaml at the ESP-IDF root before any
     # package is built, since package construction bakes the applicable
-    # exclusions into Package.cve_exclude_list.
+    # exclusions into Package.assessments.
     idf_path = proj_desc.get('idf_path', '')
     if idf_path:
         nvd.merge_local_excluded_cves(idf_path)

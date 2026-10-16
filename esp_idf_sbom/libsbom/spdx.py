@@ -35,6 +35,8 @@ from esp_idf_sbom.libsbom.sbom import LicenseRef
 from esp_idf_sbom.libsbom.sbom import Organization
 from esp_idf_sbom.libsbom.sbom import Package
 from esp_idf_sbom.libsbom.sbom import PackageKind
+from esp_idf_sbom.libsbom.sbom import VexAssessment
+from esp_idf_sbom.libsbom.sbom import assessment_from_exclusion
 from esp_idf_sbom.libsbom.sbom import declared_first
 from esp_idf_sbom.libsbom.sbom import kind_and_name
 from esp_idf_sbom.libsbom.sbom import simplify_licenses
@@ -67,13 +69,22 @@ def _verification_code(sha1s: List[str]) -> str:
     return hashlib.sha1(''.join(sorted(sha1s)).encode()).hexdigest()
 
 
+def _cve_exclude_entry(assessment: VexAssessment) -> Dict[str, Any]:
+    """An assessment as a cve-exclude-list entry, the form that the package comment
+    uses. It is the same form as in the manifest."""
+    entry: Dict[str, Any] = {'cve': assessment.vulnerability, 'reason': assessment.impact_statement}
+    if assessment.justification is not None:
+        entry['justification'] = assessment.justification.value
+    return entry
+
+
 def _package_comment(pkg: Package) -> str:
     """Reconstruct the PackageComment body (without the <text> wrapper) from the
     structured cve-exclude-list / cve-keywords carried on the model."""
     comment = ''
 
-    if pkg.cve_exclude_list:
-        cve_info = {'cve-exclude-list': pkg.cve_exclude_list}
+    if pkg.assessments:
+        cve_info = {'cve-exclude-list': [_cve_exclude_entry(a) for a in pkg.assessments]}
         cve_info_yaml = yaml.dump(cve_info, indent=4)
         cve_info_desc = (
             '# The cve-exclude-list list contains CVEs, which were already evaluated and the package is not vulnerable.'
@@ -853,7 +864,7 @@ def _package_from_tags(spdxid: str, tags: Dict[str, List[str]]) -> Package:
         purl=purl,
         cpes=cpes,
         checksum_sha256=checksum[len('SHA256: ') :] if checksum.startswith('SHA256: ') else checksum,
-        cve_exclude_list=comment.get('cve-exclude-list') or [],
+        assessments=[assessment_from_exclusion(entry) for entry in comment.get('cve-exclude-list') or []],
         cve_keywords=comment.get('cve-keywords') or [],
         depends_on=depends_on,
     )
@@ -949,7 +960,7 @@ def _package_from_json(obj: Dict[str, Any], depends_on: List[str]) -> Package:
         purl=purl,
         cpes=cpes,
         checksum_sha256=checksum,
-        cve_exclude_list=comment.get('cve-exclude-list') or [],
+        assessments=[assessment_from_exclusion(entry) for entry in comment.get('cve-exclude-list') or []],
         cve_keywords=comment.get('cve-keywords') or [],
         depends_on=depends_on,
     )
@@ -1035,7 +1046,7 @@ def _parse_jsonld(text: str) -> SBOM:
             vuln_cve[_id(e.get('spdxId'))] = next(iter(ids_of(e, 'cve')), '')
 
     depends: Dict[str, List[str]] = {}
-    excludes: Dict[str, List[Dict[str, str]]] = {}
+    excludes: Dict[str, List[VexAssessment]] = {}
     doc_name = ''
     creator = ''
     root = ''
@@ -1047,7 +1058,7 @@ def _parse_jsonld(text: str) -> SBOM:
         elif t == 'security_VexNotAffectedVulnAssessmentRelationship':
             entry = {'cve': vuln_cve.get(_id(e.get('from')), ''), 'reason': e.get('security_impactStatement', '')}
             for to in _as_list(e.get('to')):
-                excludes.setdefault(_id(to), []).append(entry)
+                excludes.setdefault(_id(to), []).append(assessment_from_exclusion(entry))
         elif t == 'SpdxDocument':
             doc_name = e.get('name', '')
             # Our namespace. render writes it as '<docns>#SPDXRef-DOCUMENT'.
@@ -1092,7 +1103,7 @@ def _parse_jsonld(text: str) -> SBOM:
                 version=e.get('software_packageVersion', ''),
                 purl=e.get('software_packageUrl', ''),
                 cpes=cpes,
-                cve_exclude_list=excludes.get(spdxid, []),
+                assessments=excludes.get(spdxid, []),
                 cve_keywords=cve_keywords,
                 depends_on=[_unref_jsonld(d, docns) for d in depends.get(spdxid, [])],
             )

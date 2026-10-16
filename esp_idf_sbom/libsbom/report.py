@@ -16,6 +16,7 @@ from esp_idf_sbom import __version__
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import nvd
 from esp_idf_sbom.libsbom import utils
+from esp_idf_sbom.libsbom.sbom import VexAssessment
 
 REPORT_VERSION = 2
 empty_record = {
@@ -448,7 +449,7 @@ def select_cvss_metric(metrics: Optional[Dict[str, List[Dict[str, Any]]]]) -> Op
 
 def create_vulnerable_record(
     vuln: Dict[str, Any],
-    cve_exclude_list: Dict[str, Dict[str, Any]],
+    assessments: Dict[str, VexAssessment],
     cpe: str,
     keyword: str,
     pkg_name: str,
@@ -491,8 +492,8 @@ def create_vulnerable_record(
     kev_added = vuln['cve'].get('cisaExploitAdd', '')
     kev_name = vuln['cve'].get('cisaVulnerabilityName', '')
 
-    if cve_id in cve_exclude_list:
-        exclude_reason = cve_exclude_list[cve_id]['reason']
+    if cve_id in assessments:
+        exclude_reason = assessments[cve_id].impact_statement
         vulnerable = 'EXCLUDED'
     elif maybe:
         # The caller could not confirm the CVE applies to the scanned version (a
