@@ -75,7 +75,7 @@ def show(records: List[Dict[str, str]], args: Dict[str, Any], proj_name: str = '
     # Get summary
     summary: Dict[str, Any] = {
         'version': REPORT_VERSION,
-        'date': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'date': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         'database': database,
         'tool': {
             'name': 'esp-idf-sbom',
