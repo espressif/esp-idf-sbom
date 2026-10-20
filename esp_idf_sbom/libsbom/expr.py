@@ -11,10 +11,16 @@ from typing import Union
 
 import pyparsing as pp
 
+
+def _pp(obj: Any, name: str, legacy: str) -> Any:
+    # pyparsing 2.x has only the camelCase names, which pyparsing 3.3 deprecates.
+    return getattr(obj, name, None) or getattr(obj, legacy)
+
+
 # Parse actions used should not have any side effects, ensuring
 # the safety of using packrat. Parsing expressions with brackets
 # is very slow without caching.
-pp.ParserElement.enablePackrat()
+_pp(pp.ParserElement, 'enable_packrat', 'enablePackrat')()
 
 ppc = pp.pyparsing_common
 
@@ -100,20 +106,22 @@ def _eval_variable(toks: pp.ParseResults):
     return _variables.get(variable, default_variables.get(variable, False))
 
 
-_variable = ppc.identifier.setParseAction(_eval_variable)
-_hex = pp.Regex(r'0[xX][0-9a-fA-F]+').setParseAction(lambda t: int(t[0][2:], 16))
+_variable = _pp(ppc.identifier, 'set_parse_action', 'setParseAction')(_eval_variable)
+_hex = _pp(pp.Regex(r'0[xX][0-9a-fA-F]+'), 'set_parse_action', 'setParseAction')(lambda t: int(t[0][2:], 16))
 _number = ppc.number
 _string = pp.QuotedString('"', '\\')
 
-_expr = pp.infixNotation(
+_op_assoc = _pp(pp, 'OpAssoc', 'opAssoc')
+_one_of = _pp(pp, 'one_of', 'oneOf')
+_expr = _pp(pp, 'infix_notation', 'infixNotation')(
     _variable | _hex | _number | _string,
     [
         # Precedence according to Linux bison scripts/kconfig/parser.y
-        ('!', 1, pp.opAssoc.RIGHT, _eval_unary_operator),
-        (pp.oneOf('< > >= <='), 2, pp.opAssoc.LEFT, _eval_comparison_operator),
-        (pp.oneOf('= !='), 2, pp.opAssoc.LEFT, _eval_comparison_operator),
-        ('&&', 2, pp.opAssoc.LEFT, _eval_logical_operator),
-        ('||', 2, pp.opAssoc.LEFT, _eval_logical_operator),
+        ('!', 1, _op_assoc.RIGHT, _eval_unary_operator),
+        (_one_of('< > >= <='), 2, _op_assoc.LEFT, _eval_comparison_operator),
+        (_one_of('= !='), 2, _op_assoc.LEFT, _eval_comparison_operator),
+        ('&&', 2, _op_assoc.LEFT, _eval_logical_operator),
+        ('||', 2, _op_assoc.LEFT, _eval_logical_operator),
     ],
 )
 
@@ -125,7 +133,8 @@ def set_variables(variables: Dict[str, Any]) -> None:
 
 def evaluate(string: str) -> bool:
     try:
-        res = _expr.parseString(string, parseAll=True)
+        # The second argument is parse_all in pyparsing 3.x and parseAll in 2.x.
+        res = _pp(_expr, 'parse_string', 'parseString')(string, True)
     except pp.ParseException as e:
         raise RuntimeError(e)
     return _boolit(res[0])

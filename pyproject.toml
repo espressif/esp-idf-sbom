@@ -39,9 +39,7 @@ dependencies = [
     "schema",
     "license-expression",
     "rich",
-    # The upper bound avoids later breaking changes. Fix the pyparsing deprecation warnings
-    # (camelCase API used in esp_idf_sbom/libsbom/expr.py) before lifting this restriction.
-    "pyparsing>=2.2.2,<=3.3.3",
+    "pyparsing>=2.2.2",
     "esp-pylib[cli]>=1.1.3",
 ]
 
