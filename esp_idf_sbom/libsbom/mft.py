@@ -216,7 +216,7 @@ def get_files(sources: List[str]) -> Dict[str, Set[str]]:
                 for file in files:
                     if file not in manifest_files.keys():
                         continue
-                    add_file(os.path.join(root, file))
+                    add_file(utils.pjoin(root, file))
         else:
             raise RuntimeError(f'"{source}" is not file nor directory')
 

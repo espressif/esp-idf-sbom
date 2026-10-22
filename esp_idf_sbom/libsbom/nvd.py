@@ -312,7 +312,7 @@ def merge_local_excluded_cves(root: str) -> None:
     degrades to "no local exclusions" with a warning rather than aborting the
     scan.
     """
-    path = os.path.join(root, LOCAL_EXCLUDED_CVES_FILE)
+    path = utils.pjoin(root, LOCAL_EXCLUDED_CVES_FILE)
     if not os.path.isfile(path):
         return
 
