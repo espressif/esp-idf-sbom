@@ -2192,6 +2192,42 @@ def test_vex_update_statement_without_status(tmp_path: Path) -> None:
     assert (statement['status'], statement['impact_statement']) == ('fixed', 'Fixed.')
 
 
+def test_vex_update_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--report prints the statements to stderr, the modified one first, with the
+    values that the output format writes."""
+    # stderr gets the width of the terminal, or 80 columns without one. COLUMNS
+    # gives the table the same width everywhere.
+    monkeypatch.setenv('COLUMNS', '300')
+    sbom_file, vex_file = _vex_update_files(
+        tmp_path,
+        statements=[
+            _vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='Not built.'),
+            _vex_assessment('CVE-2026-0002', 'not_affected', impact_statement='Not used.'),
+        ],
+    )
+    statements = _write_statements(
+        tmp_path, {'cve': 'CVE-2026-0002', 'package': 'COMPONENT-freertos', 'status': 'affected'}
+    )
+    output = tmp_path / 'new.vex.json'
+    result = _vex_update('--vex', str(vex_file), '--report', '-o', str(output), str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+
+    # The modified statement first, with its old, stated and new status in the
+    # CycloneDX vocabulary.
+    lines = result.stderr.splitlines()
+    first = next(index for index, line in enumerate(lines) if 'CVE-2026-000' in line)
+    assert 'CVE-2026-0002' in lines[first]
+    status = next(line for line in lines[first:] if '│ status ' in line)
+    assert re.search(r'│ status +│ not_affected +│ exploitable +│ exploitable +│', status)
+    for name, count, cves in (
+        ('Statements:', 2, 'CVE-2026-0002, CVE-2026-0001'),
+        ('Modified:', 1, 'CVE-2026-0002'),
+        ('Status changed:', 1, 'CVE-2026-0002'),
+        ('In no statements file:', 1, 'CVE-2026-0001'),
+    ):
+        assert re.search(rf'{name} +│ {count} +│ {cves} +│', result.stderr)
+
+
 def test_output_file_kept_on_failure(hello_world_build: Path, tmp_path: Path) -> None:
     """A failing command must not touch the output file. Creating it upfront left
     an empty file behind and destroyed the output of a previous run."""

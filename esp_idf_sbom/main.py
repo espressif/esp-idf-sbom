@@ -370,12 +370,15 @@ def cmd_vex_update(args: Dict[str, Any]) -> int:
         # The statements files change the statements of the VEX file. A statement for
         # a package that is not in the SBOM is not changed. It stays in the VEX file.
         _apply_vex(model, current, vex_file)
+    # The statements before the statements files, for the report.
+    original = vex.build(model)
 
     # A statement of a statements file changes only the keys that it has. The files
     # are applied from left to right on the command line, so a file further right
     # wins. The writer checks the final statements, so the keys that it needs can
     # come from different files, for example the status from one file and the
     # detail from another.
+    loaded: List[vex.Vex] = []
     for statements_file in args['statements_files']:
         try:
             with open(statements_file) as f:
@@ -383,14 +386,15 @@ def cmd_vex_update(args: Dict[str, Any]) -> int:
         except (OSError, ValueError) as e:
             log.die(f'cannot read statements file "{statements_file}": {e}')
         _apply_vex(model, statements, statements_file)
+        loaded.append(statements)
 
+    format_name = current.format_name if current is not None else args['format'] or 'openvex'
+    vexfmt = formats.VEX_FORMATS[format_name]
     try:
         if current is not None:
             # Write the statements where they differ from the VEX file, and keep the rest of it.
-            backend = formats.VEX_FORMATS[current.format_name].backend
-            text = backend.update_vex(current, vex.build(model).statements, model)
+            text = vexfmt.backend.update_vex(current, vex.build(model).statements, model)
         else:
-            vexfmt = formats.VEX_FORMATS[args['format'] or 'openvex']
             vexdoc = vex.build(model, sbom_id=model.doc_id if vexfmt.linked else '')
             text = vexfmt.backend.render_vex(vexdoc, format=vexfmt.encoding, version=vexfmt.version)
     except ValueError as e:
@@ -400,6 +404,8 @@ def cmd_vex_update(args: Dict[str, Any]) -> int:
     # A VEX file that did not change is printed as it is, without an added new line.
     unchanged = current is not None and text == current.text
     log.print(text, markup=False, emoji=False, end='' if unchanged else '\n')
+    if args['report']:
+        report.show_vex_update(model, original, loaded, vexfmt.vocabulary)
     return 0
 
 
@@ -1297,6 +1303,15 @@ def vex_group(ctx: click.Context) -> None:
         'The format of a new VEX document. It cannot be used with --vex. '
         'openvex - OpenVEX 0.2.0. It works with any SBOM format. This is default. '
         'cyclonedx-json - CycloneDX 1.6. It needs a CycloneDX SBOM.'
+    ),
+)
+@click.option(
+    '--report',
+    is_flag=True,
+    default=False,
+    help=(
+        'Print the statements to stderr: for each field the value in the VEX file, '
+        'the value that the statements files set and the new value.'
     ),
 )
 @click.pass_context

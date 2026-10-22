@@ -549,6 +549,24 @@ from `product.yaml` and the `detail` from `shared.yaml`.
 
 The statements that no statements file names stay as they are.
 
+With `--report`, `vex update` also prints the statements of the updated VEX
+document to stderr, the modified ones first:
+
+    esp-idf-sbom vex update --report --vex app.vex.cdx.json -o app.updated.vex.cdx.json \
+                            app.cdx.json statements.yaml
+
+The report starts with a summary: the number of statements, of modified
+statements, of changed statuses and of statements that no statements file names.
+For each statement, the report gives the CVE, the package with its version and
+ids, whether the statement is modified, and whether a statements file has an
+entry for it. Each id can be used as `package` in a statements file. A table
+below gives for each field the value in the VEX file (Old), the value that the
+statements files set (Statement) and the new value (New), with the names of the
+format of the VEX document, see
+[Statuses and justifications](#statuses-and-justifications). For a changed
+field, the old value is red and the new value is green. A new statement is
+modified too, and has no old values.
+
 The statements in the SBOM are not written to the VEX document. They stay in
 the SBOM, and `check` uses both, see
 [Using a VEX file with check](#using-a-vex-file-with-check).

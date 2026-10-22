@@ -8,14 +8,19 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Tuple
 
 from rich.box import MARKDOWN
+from rich.console import Group
 from rich.table import Table
+from rich.text import Text
 
 from esp_idf_sbom import __version__
 from esp_idf_sbom.libsbom import log
 from esp_idf_sbom.libsbom import nvd
 from esp_idf_sbom.libsbom import utils
+from esp_idf_sbom.libsbom import vex
+from esp_idf_sbom.libsbom.sbom import SBOM
 from esp_idf_sbom.libsbom.sbom import VexAssessment
 
 REPORT_VERSION = 3
@@ -578,3 +583,120 @@ def find_record_by_cve(records: List[Dict[str, str]], cve_id: str) -> Optional[D
         if record['cve_id'] == cve_id:
             return record
     return None
+
+
+# The fields of a VEX statement, by the name in VexAssessment, and the keys of a
+# statements file that set them.
+_VEX_FIELDS = (
+    ('status', 'status'),
+    ('justification', 'justification'),
+    ('impact_statement', 'detail'),
+    ('action_statement', 'action'),
+    ('response', 'response'),
+)
+
+
+def _vex_text(assessment: VexAssessment, field: str, vocabulary: str) -> str:
+    """The value of a field in a vocabulary, cisa or cyclonedx, see vexvalues.py. A
+    response has only a CycloneDX name."""
+    value = getattr(assessment, field)
+    if isinstance(value, list):
+        return ', '.join(str(getattr(item, vocabulary, item)) for item in value)
+    if value is None or isinstance(value, str):
+        return value or ''
+    return str(getattr(value, vocabulary))
+
+
+def show_vex_update(sbom: SBOM, original: vex.Vex, statements: List[vex.Vex], vocabulary: str) -> None:
+    """Print the statements of vex update to stderr.
+
+    For each statement of the SBOM model, it prints the CVE and the package, and a
+    table with the value of each field in original, the value that the statements
+    files set and the new value. The values are in the vocabulary of the output
+    format. So a field whose value changes in the model, but keeps its name, is not
+    changed. For example, CycloneDX has code_not_present for two CISA
+    justifications. A summary with the counts comes first, then the modified
+    statements. A new statement is modified too, and has no old values.
+
+    :param sbom: the SBOM model after the statements files are applied
+    :param original: the VEX of the model before the statements files are applied
+    :param statements: the statements files, in their order
+    :param vocabulary: the vocabulary of the output format, see formats.VexFormat
+    """
+    old = {(product.ref, s.vulnerability): s for s in original.statements for product in s.products}
+    # The fields that the statements files set for each package and CVE. As in
+    # vex.apply(), the value of a later file wins.
+    stated: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for vexdoc in statements:
+        for statement in vexdoc.statements:
+            for product in statement.products:
+                for pkg in vex.find_packages(sbom, product):
+                    values = stated.setdefault((pkg.ref, statement.vulnerability), {})
+                    values.update({field: getattr(statement, field) for field in statement.keys or ()})
+
+    cards: List[Tuple[bool, str, Table, Table]] = []
+    # The CVEs whose status changed and the CVEs that no statements file names.
+    status_changed: List[str] = []
+    unstated: List[str] = []
+    for pkg in sbom.packages:
+        for assessment in pkg.assessments:
+            key = (pkg.ref, assessment.vulnerability)
+            before = old.get(key)
+            stated_values = stated.get(key, {})
+            stated_assessment = VexAssessment(vulnerability=assessment.vulnerability, **stated_values)
+            # The table fills the console. Rich splits the width equally between Old,
+            # Statement and New, so with less width a short value would wrap.
+            fields = Table(expand=True)
+            fields.add_column('Field', no_wrap=True)
+            for name in ('Old', 'Statement', 'New'):
+                fields.add_column(name, ratio=1, overflow='fold')
+            changed = False
+            for field, name in _VEX_FIELDS:
+                old_text = _vex_text(before, field, vocabulary) if before is not None else ''
+                new_text = _vex_text(assessment, field, vocabulary)
+                stated_text = ''
+                if field in stated_values:
+                    # A key with an empty value removes the field.
+                    stated_text = _vex_text(stated_assessment, field, vocabulary) or '(removed)'
+                if old_text != new_text:
+                    fields.add_row(
+                        Text(name, 'yellow'), Text(old_text, 'red'), Text(stated_text), Text(new_text, 'green')
+                    )
+                    changed = True
+                    if field == 'status' and before is not None:
+                        status_changed.append(assessment.vulnerability)
+                else:
+                    fields.add_row(name, Text(old_text), Text(stated_text), Text(new_text))
+
+            info = Table.grid(padding=(0, 1))
+            info.add_column(style='yellow', no_wrap=True)
+            info.add_column(no_wrap=True)
+            info.add_row('CVE', Text(assessment.vulnerability, 'bold'))
+            info.add_row('Package', Text(pkg.package_name, 'bright_blue'))
+            info.add_row('Version', Text(pkg.version))
+            info.add_row('Package id', Text('\n'.join([pkg.ref, *pkg.cpes])))
+            info.add_row('Modified', 'yes' if changed else 'no')
+            info.add_row('Statements', 'yes' if key in stated else 'no')
+            if key not in stated:
+                unstated.append(assessment.vulnerability)
+            cards.append((changed, assessment.vulnerability, info, fields))
+
+    # The modified statements first. sort() keeps the order of the others, so the
+    # CVEs of each line of the summary are in the order of the statements.
+    cards.sort(key=lambda card: not card[0])
+    summary = Table(title='VEX update report', show_header=False)
+    summary.add_column('key', no_wrap=True)
+    summary.add_column('count')
+    summary.add_column('CVEs')
+    for name, cves in (
+        ('Statements:', [card[1] for card in cards]),
+        ('Modified:', [card[1] for card in cards if card[0]]),
+        ('Status changed:', status_changed),
+        ('In no statements file:', unstated),
+    ):
+        summary.add_row(name, str(len(cves)), Text(', '.join(cves)))
+
+    report: List[Any] = [summary]
+    for _, _, info, fields in cards:
+        report += [Text(), info, fields]
+    log.eprint(Group(*report))

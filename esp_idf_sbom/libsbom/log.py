@@ -62,20 +62,22 @@ class SbomLog(EspLog):
         self.set_console_options(
             # A file target (e.g. --output-file) pins stdout and drops
             # force_terminal there so the written report stays ANSI-free; None
-            # lets stdout follow the live sys.stdout. Reports can be wider than
-            # the terminal, so widen the console for file output to avoid
-            # wrapping tables to the default 80 columns (harmless on stderr,
-            # whose plain soft-wrapped diagnostics ignore the width).
+            # lets stdout follow the live sys.stdout.
             file=None if file is sys.stdout else file,
             no_color=no_color,
             force_terminal=True if force_terminal else None,
-            width=None if file is sys.stdout else 10000,
             soft_wrap=True,
             # Keep Rich's auto-highlight, which the previous hand-built consoles
             # used by default.
             highlight=True,
             quiet=quiet,
         )
+        # Reports can be wider than the terminal, so a report in a file target is
+        # not wrapped to the default 80 columns. The width is set here, because
+        # set_console_options() would give it to stderr too, and stderr keeps the
+        # width of the terminal.
+        if file is not sys.stdout:
+            self.stdout.width = 10000
         # Machine-readable reports go to stdout, so send note/hint/debug to
         # stderr to keep it clean.
         self.set_info_stream(sys.stderr)
