@@ -173,7 +173,8 @@ def test_embedded_manifests(hello_world_build: Path) -> None:
     """This is similar test as test_referenced_manifests, but this time
     embedded manifests are used to create subpackages. Meaning the
     sbom.yml manifest is created for the main component only and it contains
-    embedded manifests for subpackage and subsubpackage.
+    embedded manifests for subpackage and subsubpackage. A cpe string with the
+    {} placeholder works as in a manifest file.
     main
     ├── sbom.yml
     └── subpackage
@@ -186,6 +187,8 @@ def test_embedded_manifests(hello_world_build: Path) -> None:
               manifests:
                 - manifest:
                     name: TEST_SUBPACKAGE
+                    version: 1.2.3
+                    cpe: cpe:2.3:a:example:test_subpackage:{}:*:*:*:*:*:*:*
                   dest: subpackage
                 - manifest:
                     name: TEST_SUBSUBPACKAGE
@@ -203,9 +206,32 @@ def test_embedded_manifests(hello_world_build: Path) -> None:
 
     assert 'TEST_SUBPACKAGE' in p.stdout
     assert 'TEST_SUBSUBPACKAGE' in p.stdout
+    assert 'cpe:2.3:a:example:test_subpackage:1.2.3:*:*:*:*:*:*:*' in p.stdout
 
     shutil.rmtree(subpackage_path)
     manifest.unlink()
+
+
+def test_get_manifests_fixes_embedded_manifest(tmp_path: Path) -> None:
+    """The manifest commands fix an embedded manifest like a manifest file, so a
+    cpe string with the {} placeholder works there too."""
+    from esp_idf_sbom.libsbom import mft
+
+    (tmp_path / 'sub').mkdir()
+    (tmp_path / 'sbom.yml').write_text(
+        dedent("""
+              manifests:
+                - manifest:
+                    name: sub
+                    version: 1.2.3
+                    cpe: cpe:2.3:a:example:sub:{}:*:*:*:*:*:*:*
+                  dest: sub
+              """)
+    )
+
+    sub = next(m for m in mft.get_manifests([str(tmp_path)]) if m.get('name') == 'sub')
+    assert sub['cpe'] == ['cpe:2.3:a:example:sub:1.2.3:*:*:*:*:*:*:*']
+    mft.validate(sub, sub['_src'], sub['_dst'], die=False)
 
 
 def test_sbom_manifest_from_idf_component(hello_world_build: Path) -> None:
@@ -405,6 +431,22 @@ def test_pwalk_prunes_excluded_subtree(tmp_path: Path) -> None:
     assert collected == {'top.txt'}
 
 
+def test_is_espressif_path_needs_a_directory_boundary(tmp_path: Path) -> None:
+    """A path is in ESP-IDF only if it is IDF_PATH or below it. A sibling directory
+    whose name starts with the same text, like esp-idf-app, is not, so its
+    packages do not get Espressif as their supplier."""
+    from esp_idf_sbom.libsbom.sbom import SBOMObject
+
+    idf = tmp_path / 'esp-idf'
+    sibling = tmp_path / 'esp-idf-app' / 'main'
+    obj = SBOMObject({'no_guess': False}, {'idf_path': idf.as_posix()})
+
+    assert obj.is_espressif_path(idf.as_posix())
+    assert obj.is_espressif_path((idf / 'components' / 'log').as_posix())
+    assert not obj.is_espressif_path(sibling.as_posix())
+    assert obj.guess_supplier(sibling.as_posix()) == ''
+
+
 def test_cve_exclude_list() -> None:
     """Test that CVE-2020-27209 is reported for the manifest file, then add
     it to cve-exclude-list and test it's not reported."""
@@ -572,6 +614,13 @@ def _sbom_with_file():
     return SBOM(name='app', root='PROJECT-app', packages=[proj, lib])
 
 
+def _assessments(*entries: dict) -> list:
+    """The assessments for cve-exclude-list entries."""
+    from esp_idf_sbom.libsbom.sbom import assessment_from_exclusion
+
+    return [assessment_from_exclusion(entry) for entry in entries]
+
+
 def test_cyclonedx_renders_files() -> None:
     """--files add: files must be emitted as nested CycloneDX components and validate."""
     from cyclonedx.schema import SchemaVersion
@@ -646,7 +695,7 @@ def test_spdx_jsonld_parses_bare_refs() -> None:
     from esp_idf_sbom.libsbom import spdx
 
     model = _sbom_with_file()
-    model.packages[1].cve_exclude_list = [{'cve': 'CVE-2020-1', 'reason': 'not used'}]
+    model.packages[1].assessments = _assessments({'cve': 'CVE-2020-1', 'reason': 'not used'})
 
     back = spdx.parse(spdx.render(model, format='json-ld', version='3.0.1'), format='json-ld')
 
@@ -655,7 +704,7 @@ def test_spdx_jsonld_parses_bare_refs() -> None:
     assert set(by_ref) == {'PROJECT-app', 'COMPONENT-lib'}
     assert by_ref['PROJECT-app'].depends_on == ['COMPONENT-lib']
     # The graph is still keyed on full ids, so this breaks if the two ever drift.
-    assert by_ref['COMPONENT-lib'].cve_exclude_list == [{'cve': 'CVE-2020-1', 'reason': 'not used'}]
+    assert [a.vulnerability for a in by_ref['COMPONENT-lib'].assessments] == ['CVE-2020-1']
 
     graph = json.loads(spdx.render(back, format='json-ld', version='3.0.1'))['@graph']
     assert all(e.get('spdxId', '').count('#') <= 1 for e in graph)
@@ -868,7 +917,8 @@ def test_cyclonedx_custom_license_only_in_evidence() -> None:
 def test_producer_attribution() -> None:
     """Every format must attribute the document to the tool that produced it:
     name and version, the organization supplying the tool, and the tool's purl
-    wherever the format has a slot for one."""
+    wherever the format has a slot for one. Espressif made the tool, not the
+    document, so it is not a creator of the document."""
     from esp_idf_sbom.libsbom import cyclonedx
     from esp_idf_sbom.libsbom import spdx
     from esp_idf_sbom.libsbom.sbom import TOOL_NAME
@@ -882,10 +932,10 @@ def test_producer_attribution() -> None:
 
     tagvalue = spdx.render(model, format='tagvalue', version='2.2')
     assert f'Creator: Tool: {tool_id}' in tagvalue
-    assert f'Creator: {TOOL_SUPPLIER}' in tagvalue
+    assert 'Creator: Organization:' not in tagvalue
 
     document = json.loads(spdx.render(model, format='json', version='2.2'))
-    assert document['creationInfo']['creators'] == [f'Tool: {tool_id}', TOOL_SUPPLIER]
+    assert document['creationInfo']['creators'] == [f'Tool: {tool_id}']
 
     graph = json.loads(spdx.render(model, format='json-ld', version='3.0.1'))['@graph']
     tool = next(e for e in graph if e['type'] == 'Tool')
@@ -893,8 +943,9 @@ def test_producer_attribution() -> None:
     assert tool['externalIdentifier'][0]['identifier'] == TOOL_PURL
     creation_info = next(e for e in graph if e['type'] == 'CreationInfo')
     assert creation_info['createdUsing'] == [tool['spdxId']]
+    # createdBy is required. Without a manufacturer it names the tool.
     creator = next(e for e in graph if e.get('spdxId') in creation_info['createdBy'])
-    assert creator['type'] == 'Organization' and creator['name'] == org
+    assert creator['type'] == 'SoftwareAgent' and creator['name'] == tool_id
 
     bom = json.loads(cyclonedx.render(model, version='1.6'))
     component = bom['metadata']['tools']['components'][0]
@@ -913,10 +964,10 @@ def test_vex_build() -> None:
     lib = model.packages[1]
     lib.purl = 'pkg:github/example/lib@2.0'
     lib.cpes = ['cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*']
-    lib.cve_exclude_list = [
+    lib.assessments = _assessments(
         {'cve': 'CVE-2020-1', 'reason': 'not used'},
         {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
-    ]
+    )
 
     doc = vex.build(model, sbom_id='urn:uuid:11111111-2222-3333-4444-555555555555')
 
@@ -925,7 +976,7 @@ def test_vex_build() -> None:
     assert [s.vulnerability for s in doc.statements] == ['CVE-2020-1', 'CVE-2020-2']
 
     statement = doc.statements[0]
-    assert statement.status is vex.VexStatus.NOT_AFFECTED
+    assert statement.status == vex.VexStatus('not_affected')
     assert statement.justification is None
     assert statement.impact_statement == 'not used'
 
@@ -946,33 +997,68 @@ def test_vex_build_without_exclusions() -> None:
     assert vex.build(_sbom_with_file()).statements == []
 
 
-def test_vex_vocabulary_is_cisa() -> None:
-    """The model vocabulary has to stay CISA's. OpenVEX and the SPDX 3.0.1 security
-    profile use it verbatim, so only the CycloneDX backend maps out of it; changing
-    these values would push that mapping into every backend."""
+def test_vex_build_merges_equal_statements() -> None:
+    """Packages with the same assessment of a CVE get one statement. Another content
+    or other times give another statement."""
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    def package(name: str, *assessments) -> Package:
+        return Package(
+            ref=f'COMPONENT-{name}',
+            name=name,
+            package_name=name,
+            kind=PackageKind.COMPONENT,
+            assessments=list(assessments),
+        )
+
+    def not_affected(**values):
+        values = {'impact_statement': 'Not used.', **values}
+        return vex.VexAssessment(vulnerability='CVE-2026-0001', status=vex.VexStatus('not_affected'), **values)
+
+    fixed = vex.VexAssessment(vulnerability='CVE-2026-0002', status=vex.VexStatus('fixed'))
+    model = SBOM(
+        name='app',
+        root='',
+        packages=[
+            package('a', not_affected()),
+            package('b', not_affected(), fixed),
+            package('c', not_affected(impact_statement='Other.')),
+            package('d', not_affected(first_issued='2020-01-01T00:00:00Z')),
+        ],
+    )
+    assert [(s.vulnerability, [p.ref for p in s.products]) for s in vex.build(model).statements] == [
+        ('CVE-2026-0001', ['COMPONENT-a', 'COMPONENT-b']),
+        ('CVE-2026-0002', ['COMPONENT-b']),
+        ('CVE-2026-0001', ['COMPONENT-c']),
+        ('CVE-2026-0001', ['COMPONENT-d']),
+    ]
+
+
+def test_vex_build_nvd_url() -> None:
+    """Each statement links to the NVD page of its CVE, because CISA requires the
+    description of the vulnerability or a link to it. Other ids have no NVD page."""
     from esp_idf_sbom.libsbom import vex
 
-    assert {s.value for s in vex.VexStatus} == {
-        'not_affected',
-        'affected',
-        'fixed',
-        'under_investigation',
-    }
-    assert {j.value for j in vex.VexJustification} == {
-        'component_not_present',
-        'vulnerable_code_not_present',
-        'vulnerable_code_not_in_execute_path',
-        'vulnerable_code_cannot_be_controlled_by_adversary',
-        'inline_mitigations_already_exist',
-    }
+    model = _sbom_with_file()
+    model.packages[1].assessments = _assessments(
+        {'cve': 'CVE-2025-66442', 'reason': 'not used'},
+        {'cve': 'GHSA-2qrg-x229-3v8q', 'reason': 'not used'},
+    )
+
+    cve, ghsa = vex.build(model).statements
+    assert cve.nvd_url == 'https://nvd.nist.gov/vuln/detail/CVE-2025-66442'
+    assert ghsa.nvd_url == ''
 
 
 def _sbom_with_exclusions():
     model = _sbom_with_file()
-    model.packages[1].cve_exclude_list = [
+    model.packages[1].assessments = _assessments(
         {'cve': 'CVE-2020-1', 'reason': 'not used'},
         {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
-    ]
+    )
     return model
 
 
@@ -1092,6 +1178,20 @@ def test_render_vex_cyclonedx_needs_sbom_identity() -> None:
         cyclonedx.render_vex(vex.build(_sbom_with_exclusions()))
 
 
+def test_cyclonedx_writes_no_empty_detail() -> None:
+    """An exclusion with an empty reason has no impact statement. CycloneDX then
+    writes no detail, not an empty one."""
+    from esp_idf_sbom.libsbom import cyclonedx
+
+    model = _sbom_with_exclusions()
+    model.packages[1].assessments[0].impact_statement = ''
+    bom = json.loads(cyclonedx.render(model, version='1.6'))
+    assert [vulnerability['analysis'].get('detail') for vulnerability in bom['vulnerabilities']] == [
+        None,
+        'not reachable',
+    ]
+
+
 def test_render_vex_openvex() -> None:
     """OpenVEX takes the CISA vocabulary verbatim and names products by identity,
     so it carries no reference to the SBOM document at all."""
@@ -1101,7 +1201,7 @@ def test_render_vex_openvex() -> None:
 
     assert document['@context'] == 'https://openvex.dev/ns/v0.2.0'
     assert document['@id'].startswith('urn:uuid:')
-    assert document['author'] == 'Espressif Systems (Shanghai) CO LTD'
+    assert document['author'] == 'Unknown Author'
     assert 'esp-idf-sbom' in document['tooling']
     assert 'urn:cdx' not in json.dumps(document)
 
@@ -1130,6 +1230,19 @@ def test_render_vex_openvex_skips_unidentifiable_products() -> None:
 
     document = json.loads(openvex.render_vex(vex.build(_sbom_with_exclusions())))
     assert document['statements'] == []
+
+
+def test_render_vex_openvex_product_without_purl() -> None:
+    """The @id of an OpenVEX product is an IRI, and a package ref is not one. A
+    package without a purl gets only its identifiers."""
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+
+    cpe = 'cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*'
+    model = _sbom_with_exclusions()
+    model.packages[1].cpes = [cpe]
+    document = json.loads(openvex.render_vex(vex.build(model)))
+    assert [statement['products'] for statement in document['statements']] == [[{'identifiers': {'cpe23': cpe}}]] * 2
 
 
 def test_create_vex_none(hello_world_build: Path) -> None:
@@ -1195,7 +1308,7 @@ def test_parse_vex_round_trip() -> None:
 
     back = openvex.parse_vex(openvex.render_vex(original))
     assert back.sbom_id == ''
-    assert back.author == 'Espressif Systems (Shanghai) CO LTD'
+    assert back.author == 'Unknown Author'
     assert [(s.vulnerability, s.status, s.impact_statement) for s in back.statements] == [
         (s.vulnerability, s.status, s.impact_statement) for s in original.statements
     ]
@@ -1205,11 +1318,259 @@ def test_parse_vex_round_trip() -> None:
     assert product.purl == 'pkg:github/example/lib@2.0'
     assert product.cpes == ['cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*']
 
-    assert vex.VexStatus.NOT_AFFECTED is back.statements[0].status
+    assert vex.VexStatus('not_affected') == back.statements[0].status
+
+
+def _assessments_of_cisa_statuses() -> list:
+    """One assessment for each CISA status, with every field that the status can have."""
+    from esp_idf_sbom.libsbom import vex
+
+    return [
+        vex.VexAssessment(
+            vulnerability='CVE-2020-1',
+            status=vex.VexStatus('not_affected'),
+            justification=vex.VexJustification('component_not_present'),
+            response=[vex.VexResponse('will_not_fix')],
+            impact_statement='not used',
+            first_issued='2026-01-01T10:00:00Z',
+            last_updated='2026-01-01T10:00:00Z',
+        ),
+        vex.VexAssessment(
+            vulnerability='CVE-2020-2',
+            status=vex.VexStatus('fixed'),
+            impact_statement='patched',
+            first_issued='2026-01-01T10:00:00Z',
+            last_updated='2026-02-01T10:00:00Z',
+        ),
+        vex.VexAssessment(
+            vulnerability='CVE-2020-3',
+            status=vex.VexStatus('affected'),
+            response=[vex.VexResponse('update')],
+            impact_statement='The TLS server is enabled.',
+            action_statement='Update to version 2.1.',
+            first_issued='2026-02-01T10:00:00Z',
+            last_updated='2026-02-01T10:00:00Z',
+        ),
+        vex.VexAssessment(
+            vulnerability='CVE-2020-4',
+            status=vex.VexStatus('under_investigation'),
+            first_issued='2026-03-01T10:00:00Z',
+            last_updated='2026-03-01T10:00:00Z',
+        ),
+    ]
+
+
+def test_cyclonedx_vex_reads_back_all_fields() -> None:
+    """Every field of a statement comes back from a CycloneDX VEX and from a
+    CycloneDX SBOM. The action is the recommendation. CycloneDX has no
+    component_not_present, so it comes back as code_not_present."""
+    import dataclasses
+
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_file()
+    model.packages[1].assessments = _assessments_of_cisa_statuses()
+
+    text = cyclonedx.render_vex(vex.build(model, sbom_id='urn:uuid:11111111-2222-3333-4444-555555555555'))
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+    first, _, third, _ = json.loads(text)['vulnerabilities']
+    assert first['analysis']['justification'] == 'code_not_present'
+    assert third['recommendation'] == 'Update to version 2.1.'
+
+    def assessments(statements: list) -> list:
+        """The statements without their products, as a package keeps them."""
+        names = [f.name for f in dataclasses.fields(vex.VexAssessment)]
+        return [vex.VexAssessment(**{name: getattr(s, name) for name in names}) for s in statements]
+
+    expected = model.packages[1].assessments[:]
+    expected[0] = dataclasses.replace(expected[0], justification=vex.VexJustification('code_not_present'))
+    assert assessments(cyclonedx.parse_vex(text).statements) == expected
+
+    text = cyclonedx.render(model, version='1.6')
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+    by_ref = {pkg.ref: pkg for pkg in cyclonedx.parse(text).packages}
+    assert by_ref['COMPONENT-lib'].assessments == expected
+
+
+def test_vex_document_reads_back_id_version_and_times() -> None:
+    """The document id, version and times come back from both formats, so that
+    an update can keep the id. A statement without a time of its own gets the
+    time of the document, and its last update is its first issue. CycloneDX has
+    no first-issued time for the document, and its metadata.timestamp is the last
+    update."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+
+    document = _vex_with_identities()
+    document.doc_id = 'urn:uuid:22222222-3333-4444-5555-666666666666'
+    document.doc_version = 3
+    document.first_issued = '2026-01-01T10:00:00Z'
+    document.last_updated = '2026-03-01T10:00:00Z'
+    first, second = document.statements
+    first.first_issued = '2026-02-01T10:00:00Z'
+    first.last_updated = '2026-03-01T10:00:00Z'
+
+    def times(vexdoc: vex.Vex) -> list:
+        return [(s.first_issued, s.last_updated) for s in vexdoc.statements]
+
+    back = cyclonedx.parse_vex(cyclonedx.render_vex(document))
+    assert (back.doc_id, back.doc_version) == (document.doc_id, 3)
+    assert (back.first_issued, back.last_updated) == ('', '2026-03-01T10:00:00Z')
+    assert times(back) == [
+        ('2026-02-01T10:00:00Z', '2026-03-01T10:00:00Z'),
+        ('2026-03-01T10:00:00Z', '2026-03-01T10:00:00Z'),
+    ]
+
+    back = openvex.parse_vex(openvex.render_vex(document))
+    assert (back.doc_id, back.doc_version) == (document.doc_id, 3)
+    assert (back.first_issued, back.last_updated) == ('2026-01-01T10:00:00Z', '2026-03-01T10:00:00Z')
+    assert times(back) == [
+        ('2026-02-01T10:00:00Z', '2026-03-01T10:00:00Z'),
+        ('2026-01-01T10:00:00Z', '2026-01-01T10:00:00Z'),
+    ]
+
+
+def test_openvex_newest_statement_wins() -> None:
+    """A newer OpenVEX statement about a CVE of a product overrides an older one,
+    also when it comes first in the document. go-vex, the OpenVEX library, does the
+    same."""
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    def statement(status: str, timestamp: str) -> dict:
+        return {
+            'vulnerability': {'name': 'CVE-2026-0001'},
+            'timestamp': timestamp,
+            'products': [{'@id': 'pkg:generic/freertos@10.0.0'}],
+            'status': status,
+        }
+
+    document = {
+        '@context': 'https://openvex.dev/ns/v0.2.0',
+        '@id': 'urn:uuid:11111111-2222-3333-4444-555555555555',
+        'author': 'Unknown Author',
+        'timestamp': '2026-01-01T10:00:00Z',
+        'version': 2,
+        'statements': [
+            # go-vex writes the time of a statement with nanoseconds.
+            statement('fixed', '2026-02-01T10:00:00.123456789Z'),
+            statement('under_investigation', '2026-01-01T10:00:00Z'),
+        ],
+    }
+    project = Package(ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT)
+    freertos = Package(
+        ref='COMPONENT-freertos',
+        name='freertos',
+        package_name='freertos',
+        kind=PackageKind.COMPONENT,
+        version='10.0.0',
+        purl='pkg:generic/freertos@10.0.0',
+    )
+    model = SBOM(name='app', root='PROJECT-app', packages=[project, freertos])
+    vex.apply(model, openvex.parse_vex(json.dumps(document)))
+    assert [assessment.status for assessment in freertos.assessments] == [vex.VexStatus('fixed')]
+
+
+def test_vex_every_justification_rendered() -> None:
+    """Every justification is written as a value that the format has. The SPDX 2.2
+    comment gives back the value as it was given. CycloneDX gives back its
+    CycloneDX value, and OpenVEX and SPDX 3.0.1 give back its CISA value."""
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import spdx
+    from esp_idf_sbom.libsbom import vex
+
+    model = _sbom_with_file()
+    # OpenVEX names a package by its purl or CPE.
+    model.packages[1].purl = 'pkg:github/example/lib@2.0'
+    given = [vex.VexJustification(name) for name in vex.VexJustification.names()]
+    cves = {justification: f'CVE-2020-{number}' for number, justification in enumerate(given, start=1)}
+    model.packages[1].assessments = [
+        _vex_assessment(cve, 'not_affected', justification=justification) for justification, cve in cves.items()
+    ]
+    cisa = [vex.VexJustification(justification.cisa) for justification in given]
+
+    def justifications(sbom) -> list:
+        (pkg,) = [pkg for pkg in sbom.packages if pkg.ref == 'COMPONENT-lib']
+        return [assessment.justification for assessment in pkg.assessments]
+
+    text = cyclonedx.render(model, version='1.6')
+    assert JsonStrictValidator(SchemaVersion.V1_6).validate_str(text) is None
+    entries = {entry['id']: entry for entry in json.loads(text)['vulnerabilities']}
+    # A CycloneDX value is written as it is. A CISA value is mapped, and it comes
+    # back as the CycloneDX value.
+    cyclonedx_value = entries[cves[vex.VexJustification('requires_environment')]]
+    assert cyclonedx_value['analysis']['justification'] == 'requires_environment'
+    cisa_value = entries[cves[vex.VexJustification('component_not_present')]]
+    assert cisa_value['analysis']['justification'] == 'code_not_present'
+    assert justifications(cyclonedx.parse(text)) == [vex.VexJustification(j.cyclonedx) for j in given]
+
+    for fmt in ('tagvalue', 'json'):
+        assert justifications(spdx.parse(spdx.render(model, format=fmt, version='2.2'), format=fmt)) == given
+
+    document = json.loads(openvex.render_vex(vex.build(model)))
+    assert [statement['justification'] for statement in document['statements']] == [j.cisa for j in given]
+    assert [statement.justification for statement in openvex.parse_vex(json.dumps(document)).statements] == cisa
+
+    text = spdx.render(model, format='json-ld', version='3.0.1')
+    assert justifications(spdx.parse(text, format='json-ld')) == cisa
+
+
+def test_spdx_jsonld_reads_back_cisa_statuses() -> None:
+    """SPDX 3.0.1 has one relationship class for each CISA status, with the CISA
+    justifications. Everything but the response comes back as it was, because
+    SPDX has no response. The document must still validate."""
+    import urllib.request
+    from dataclasses import replace
+
+    import jsonschema
+
+    from esp_idf_sbom.libsbom import spdx
+
+    model = _sbom_with_file()
+    model.packages[1].assessments = _assessments_of_cisa_statuses()
+
+    text = spdx.render(model, format='json-ld', version='3.0.1')
+    graph = json.loads(text)['@graph']
+    relationships = [e for e in graph if e['type'].startswith('security_Vex')]
+    assert [(e['type'], e['relationshipType']) for e in relationships] == [
+        ('security_VexNotAffectedVulnAssessmentRelationship', 'doesNotAffect'),
+        ('security_VexFixedVulnAssessmentRelationship', 'fixedIn'),
+        ('security_VexAffectedVulnAssessmentRelationship', 'affects'),
+        ('security_VexUnderInvestigationVulnAssessmentRelationship', 'underInvestigationFor'),
+    ]
+    affected = relationships[2]
+    assert affected['security_actionStatement'] == 'Update to version 2.1.'
+    assert affected['security_statusNotes'] == 'The TLS server is enabled.'
+    assert relationships[1]['security_modifiedTime'] == '2026-02-01T10:00:00Z'
+
+    back = spdx.parse(text, format='json-ld')
+    by_ref = {pkg.ref: pkg for pkg in back.packages}
+    assert by_ref['COMPONENT-lib'].assessments == [replace(a, response=[]) for a in model.packages[1].assessments]
+
+    try:
+        with urllib.request.urlopen('https://spdx.org/schema/3.0.1/spdx-json-schema.json', timeout=30) as resp:
+            schema = json.loads(resp.read())
+    except Exception as e:
+        pytest.skip(f'cannot fetch the SPDX 3.0.1 schema: {e}')
+    errors = list(jsonschema.Draft202012Validator(schema).iter_errors(json.loads(text)))
+    assert not errors, f'SPDX 3.0 file validation failed: {errors[:2]}'
 
 
 def test_parse_vex_detects_format(tmp_path: Path) -> None:
-    """formats.load_vex detects the format from the top-level keys, like load_sbom does."""
+    """formats.load_vex detects the format from the top-level keys, like load_sbom does.
+    The model keeps the format and the text of the file."""
     from esp_idf_sbom.libsbom import cyclonedx
     from esp_idf_sbom.libsbom import formats
     from esp_idf_sbom.libsbom import openvex
@@ -1218,11 +1579,15 @@ def test_parse_vex_detects_format(tmp_path: Path) -> None:
 
     cdx_file = tmp_path / 'a.vex.cdx.json'
     cdx_file.write_text(cyclonedx.render_vex(original))
-    assert formats.load_vex(str(cdx_file)).sbom_id == original.sbom_id
+    vexdoc = formats.load_vex(str(cdx_file))
+    assert vexdoc.sbom_id == original.sbom_id
+    assert (vexdoc.format_name, vexdoc.text) == ('cyclonedx-json', cdx_file.read_text())
 
     ovx_file = tmp_path / 'a.openvex.json'
     ovx_file.write_text(openvex.render_vex(original))
-    assert len(formats.load_vex(str(ovx_file)).statements) == 2
+    vexdoc = formats.load_vex(str(ovx_file))
+    assert len(vexdoc.statements) == 2
+    assert (vexdoc.format_name, vexdoc.text) == ('openvex', ovx_file.read_text())
 
     other = tmp_path / 'other.json'
     other.write_text(json.dumps({'spdxVersion': 'SPDX-2.2'}))
@@ -1260,8 +1625,9 @@ def test_parse_vex_rejects_two_sboms() -> None:
 
 
 def test_vex_apply() -> None:
-    """apply() puts the statements into cve_exclude_list, which is where the rest
-    of the tool already reads exclusions from."""
+    """apply() puts the statements into the assessments, which is where the rest
+    of the tool already reads them from. OpenVEX has no response, so none comes
+    back."""
     from esp_idf_sbom.libsbom import openvex
     from esp_idf_sbom.libsbom import vex
 
@@ -1269,57 +1635,145 @@ def test_vex_apply() -> None:
 
     model = _sbom_with_file()
     model.packages[1].purl = 'pkg:github/example/lib@2.0'
-    assert model.packages[1].cve_exclude_list == []
+    assert model.packages[1].assessments == []
 
     vex.apply(model, document)
-    assert model.packages[1].cve_exclude_list == [
-        {'cve': 'CVE-2020-1', 'reason': 'not used'},
-        {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
+    # The statements have no times of their own, so they get the document time.
+    issued = document.first_issued
+    assert model.packages[1].assessments == [
+        vex.VexAssessment(
+            vulnerability='CVE-2020-1',
+            status=vex.VexStatus('not_affected'),
+            impact_statement='not used',
+            first_issued=issued,
+            last_updated=issued,
+        ),
+        vex.VexAssessment(
+            vulnerability='CVE-2020-2',
+            status=vex.VexStatus('not_affected'),
+            impact_statement='not reachable',
+            first_issued=issued,
+            last_updated=issued,
+        ),
     ]
-    assert model.packages[0].cve_exclude_list == []
+    assert model.packages[0].assessments == []
 
 
-def test_vex_apply_suppresses_not_affected_and_fixed() -> None:
-    """not_affected and fixed both mean the CVE does not apply, and both grype and
-    trivy filter on the two of them. affected and under_investigation say the CVE
-    does apply, or that nobody knows yet, so they must not silence anything."""
+def _sbom_for_lookup():
+    """Packages for find_packages(): a package with a PURL, two copies of cJSON
+    with the same CPE and name, and Mbed TLS under the arm vendor name."""
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    def package(ref: str, name: str, cpe: str, purl: str = '') -> Package:
+        return Package(ref=ref, name=name, package_name=name, kind=PackageKind.COMPONENT, purl=purl, cpes=[cpe])
+
+    cjson = 'cpe:2.3:a:cjson_project:cjson:1.7.19:*:*:*:*:*:*:*'
+    packages = [
+        package('COMPONENT-lib', 'lib', 'cpe:2.3:a:example:lib:2.0:*:*:*:*:*:*:*', 'pkg:github/example/lib@2.0'),
+        package('SUBMODULE-json-cJSON', 'cJSON', cjson),
+        package('COMPONENT-espressif-cjson', 'cJSON', cjson),
+        package('SUBMODULE-mbedtls-mbedtls', 'mbedtls', 'cpe:2.3:a:arm:mbed_tls:3.6.2:*:*:*:*:*:*:*'),
+    ]
+    return SBOM(name='app', root='COMPONENT-lib', packages=packages)
+
+
+def test_vex_apply_reaches_every_package_with_the_cpe() -> None:
+    """A statement found by CPE goes to every package with that CPE. Before, only
+    the last package with the CPE got it."""
     from esp_idf_sbom.libsbom import vex
 
-    def statement(cve, status, **kwargs):
-        return vex.VexStatement(
-            vulnerability=cve, status=status, products=[vex.VexProduct(ref='COMPONENT-lib')], **kwargs
-        )
-
-    model = _sbom_with_file()
-    vex.apply(
-        model,
-        vex.Vex(
-            statements=[
-                statement('CVE-2020-7', vex.VexStatus.AFFECTED),
-                statement('CVE-2020-8', vex.VexStatus.UNDER_INVESTIGATION),
-                statement('CVE-2020-9', vex.VexStatus.FIXED),
-                statement('CVE-2020-10', vex.VexStatus.NOT_AFFECTED, impact_statement='not used'),
-                # A not_affected statement may carry a justification instead of text.
-                statement(
-                    'CVE-2020-11',
-                    vex.VexStatus.NOT_AFFECTED,
-                    justification=vex.VexJustification.COMPONENT_NOT_PRESENT,
-                ),
-            ]
-        ),
+    model = _sbom_for_lookup()
+    statement = vex.VexStatement(
+        vulnerability='CVE-2020-1',
+        status=vex.VexStatus('not_affected'),
+        products=[vex.VexProduct(cpes=['cpe:2.3:a:cjson_project:cjson:1.7.19:*:*:*:*:*:*:*'])],
+        impact_statement='not used',
     )
+    vex.apply(model, vex.Vex(statements=[statement]))
+    with_statement = [pkg.ref for pkg in model.packages if pkg.assessments]
+    assert with_statement == ['SUBMODULE-json-cJSON', 'COMPONENT-espressif-cjson']
 
-    # A fixed statement needs no text of its own, so the status is reported.
-    assert model.packages[1].cve_exclude_list == [
-        {'cve': 'CVE-2020-9', 'reason': 'fixed'},
-        {'cve': 'CVE-2020-10', 'reason': 'not used'},
-        {'cve': 'CVE-2020-11', 'reason': 'component_not_present'},
+
+def test_vexyaml_parses_statements() -> None:
+    """Each CVE of a package becomes a statement for that package. Its keys are the
+    fields that the file sets. The form of the package id says which id of the
+    package it is, and find_packages() then finds the package. Unknown keys are
+    ignored, so that a newer version can add keys."""
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom import vexyaml
+
+    cjson_cpe = 'cpe:2.3:a:cjson_project:cjson:1.7.19:*:*:*:*:*:*:*'
+    text = dedent(
+        f"""\
+        future: ignored
+        packages:
+          - package: {cjson_cpe}
+            future: ignored
+            vulnerabilities:
+              - cve: CVE-2026-1
+                status: not_affected
+                justification: vulnerable_code_not_in_execute_path
+                detail: Not used.
+                future: ignored
+              - cve: CVE-2026-6
+                status: fixed
+          - package: pkg:github/example/lib@2.0
+            vulnerabilities:
+              - cve: CVE-2026-2
+                status: affected
+                detail: The server is enabled.
+                action: Update to 2.1.
+          - package: urn:cdx:11111111-2222-3333-4444-555555555555/1#COMPONENT-lib
+            vulnerabilities:
+              - cve: CVE-2026-3
+                status: fixed
+          - package: SPDXRef-COMPONENT-lib
+            vulnerabilities:
+              - cve: CVE-2026-4
+                status: under_investigation
+          - package: cJSON
+            vulnerabilities:
+              - cve: CVE-2026-5
+                status: under_investigation
+        """
+    )
+    document = vexyaml.parse_vex(text)
+
+    statements = document.statements
+    assert [s.vulnerability for s in statements] == [f'CVE-2026-{n}' for n in (1, 6, 2, 3, 4, 5)]
+    assert statements[0].status == vex.VexStatus('not_affected')
+    assert statements[0].justification == vex.VexJustification('vulnerable_code_not_in_execute_path')
+    assert statements[0].impact_statement == 'Not used.'
+    assert statements[0].keys == {'status', 'justification', 'impact_statement'}
+    assert statements[1].keys == {'status'}
+    affected = statements[2]
+    assert affected.status == vex.VexStatus('affected')
+    assert (affected.impact_statement, affected.action_statement) == ('The server is enabled.', 'Update to 2.1.')
+    assert affected.keys == {'status', 'impact_statement', 'action_statement'}
+    assert [s.products for s in statements] == [
+        [vex.VexProduct(cpes=[cjson_cpe])],
+        [vex.VexProduct(cpes=[cjson_cpe])],
+        [vex.VexProduct(purl='pkg:github/example/lib@2.0')],
+        [vex.VexProduct(ref='COMPONENT-lib')],
+        [vex.VexProduct(ref='COMPONENT-lib')],
+        [vex.VexProduct(ref='cJSON', name='cJSON')],
     ]
+    # The BOM-Link names the SBOM it was copied from.
+    assert (document.sbom_id, document.sbom_version) == ('urn:uuid:11111111-2222-3333-4444-555555555555', 1)
+
+    model = _sbom_for_lookup()
+    cjson = ['SUBMODULE-json-cJSON', 'COMPONENT-espressif-cjson']
+    lib = ['COMPONENT-lib']
+    found = [[pkg.ref for pkg in vex.find_packages(model, s.products[0])] for s in statements]
+    assert found == [cjson, cjson, lib, lib, lib, cjson]
 
 
 def test_vex_apply_replaces_existing_entry() -> None:
-    """The VEX file is the newer document, so it wins over the same CVE already in
-    the SBOM. A statement that matches no package is ignored, not an error."""
+    """The VEX file is the newer document, so its statement replaces the same CVE
+    in the SBOM, at the same position. A statement that matches no package is
+    ignored, not an error."""
     from esp_idf_sbom.libsbom import vex
 
     model = _sbom_with_exclusions()
@@ -1327,13 +1781,13 @@ def test_vex_apply_replaces_existing_entry() -> None:
         statements=[
             vex.VexStatement(
                 vulnerability='CVE-2020-1',
-                status=vex.VexStatus.NOT_AFFECTED,
+                status=vex.VexStatus('not_affected'),
                 products=[vex.VexProduct(ref='COMPONENT-lib')],
                 impact_statement='re-checked, still not used',
             ),
             vex.VexStatement(
                 vulnerability='CVE-2020-7',
-                status=vex.VexStatus.NOT_AFFECTED,
+                status=vex.VexStatus('not_affected'),
                 products=[vex.VexProduct(purl='pkg:github/other/thing@1.0')],
                 impact_statement='not in this SBOM',
             ),
@@ -1341,9 +1795,13 @@ def test_vex_apply_replaces_existing_entry() -> None:
     )
 
     vex.apply(model, document)
-    assert model.packages[1].cve_exclude_list == [
-        {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
-        {'cve': 'CVE-2020-1', 'reason': 're-checked, still not used'},
+    assert model.packages[1].assessments == [
+        vex.VexAssessment(
+            vulnerability='CVE-2020-1',
+            status=vex.VexStatus('not_affected'),
+            impact_statement='re-checked, still not used',
+        ),
+        *_assessments({'cve': 'CVE-2020-2', 'reason': 'not reachable'}),
     ]
 
 
@@ -1389,7 +1847,7 @@ def _freertos_sbom_and_vex(tmp_path, sbom_format='cyclonedx-json', vex_format='c
         version='10.0.0',
         purl='pkg:generic/freertos@10.0.0',
         cpes=[cpe],
-        cve_exclude_list=[{'cve': 'CVE-2021-31571', 'reason': 'evaluated in the VEX file'}],
+        assessments=_assessments({'cve': 'CVE-2021-31571', 'reason': 'evaluated in the VEX file'}),
     )
     model = SBOM(name='app', root='PROJECT-app', packages=[proj, comp])
 
@@ -1399,7 +1857,7 @@ def _freertos_sbom_and_vex(tmp_path, sbom_format='cyclonedx-json', vex_format='c
 
     # The SBOM itself is clean, as create --vex-output writes it.
     for pkg in model.packages:
-        pkg.cve_exclude_list = []
+        pkg.assessments = []
 
     sbom_file = tmp_path / 'app.cdx.json'
     assert backend is not None
@@ -1419,6 +1877,57 @@ def _check_freertos(sbom_file, *extra):
         *extra, str(sbom_file),
     ]  # fmt: skip
     return run(cmd, capture_output=True, text=True)
+
+
+def test_check_global_exclusion_for_any_cpe_of_package(tmp_path: Path) -> None:
+    """A global entry that matches one CPE of a package also excludes a CVE that
+    NVD reports under another CPE of the package. NVD lists CVE-2025-27810 for
+    Mbed TLS 3.6.2 only under the trustedfirmware vendor name, and check adds that
+    CPE to arm:mbed_tls (utils.CPE_ALIASES)."""
+    import csv
+    import io
+
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    proj = Package(
+        ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT, depends_on=['COMPONENT-mbedtls']
+    )
+    comp = Package(
+        ref='COMPONENT-mbedtls',
+        name='mbedtls',
+        package_name='mbedtls',
+        kind=PackageKind.COMPONENT,
+        version='3.6.2',
+        cpes=['cpe:2.3:a:arm:mbed_tls:3.6.2:*:*:*:*:*:*:*'],
+    )
+    sbom_file = tmp_path / 'app.cdx.json'
+    sbom_file.write_text(cyclonedx.render(SBOM(name='app', root='PROJECT-app', packages=[proj, comp]), version='1.6'))
+
+    excluded = tmp_path / 'excluded_cves.yaml'
+    excluded.write_text(
+        dedent(
+            """\
+            CVE-2025-27810:
+              cpes:
+                - cpe: cpe:2.3:a:arm:mbed_tls:*:*:*:*:*:*:*:*
+                  versionStartIncluding: '3.6.0'
+              reason: test reason
+            """
+        )
+    )
+
+    env = {**os.environ, 'SBOM_EXCLUDED_CVES_FILE': str(excluded)}
+    p = run(
+        [sys.executable, '-m', 'esp_idf_sbom', 'check', '--local-db', '--format', 'csv', str(sbom_file)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    rows = [row for row in csv.DictReader(io.StringIO(p.stdout)) if row['cve_id'] == 'CVE-2025-27810']
+    assert [(row['vulnerable'], row['cpe'].split(':')[3]) for row in rows] == [('EXCLUDED', 'trustedfirmware')]
 
 
 def test_check_vex_excludes_reported_cve() -> None:
@@ -1467,7 +1976,8 @@ def test_check_vex_rejects_foreign_cyclonedx_vex(tmp_path: Path) -> None:
 
 
 def test_check_vex_rejects_cyclonedx_vex_with_spdx_sbom(tmp_path: Path) -> None:
-    """An SPDX SBOM has no serialNumber for a BOM-Link to resolve against."""
+    """A CycloneDX VEX links to the serialNumber of a CycloneDX SBOM, so an SPDX
+    SBOM is another SBOM."""
     from esp_idf_sbom.libsbom import cyclonedx
     from esp_idf_sbom.libsbom import spdx
 
@@ -1477,7 +1987,7 @@ def test_check_vex_rejects_cyclonedx_vex_with_spdx_sbom(tmp_path: Path) -> None:
 
     result = _check_freertos(spdx_file, '--vex', str(vex_file))
     assert result.returncode != 0
-    assert 'is not a CycloneDX document' in result.stderr
+    assert 'belongs to another SBOM' in result.stderr
 
 
 def test_check_vex_rejects_cyclonedx_vex_without_serial(tmp_path: Path) -> None:
@@ -1492,7 +2002,230 @@ def test_check_vex_rejects_cyclonedx_vex_without_serial(tmp_path: Path) -> None:
 
     result = _check_freertos(no_serial, '--vex', str(vex_file))
     assert result.returncode != 0
-    assert 'has no serialNumber to match it against' in result.stderr
+    assert 'this SBOM has no id' in result.stderr
+
+
+_OLD_TIME = '2020-01-01T00:00:00Z'
+
+
+def _vex_update(*args: str):
+    cmd = [sys.executable, '-m', 'esp_idf_sbom', 'vex', 'update', *args]
+    return run(cmd, capture_output=True, text=True)
+
+
+def _vex_assessment(cve: str, status: str, **values):
+    from esp_idf_sbom.libsbom import vex
+
+    return vex.VexAssessment(vulnerability=cve, status=vex.VexStatus(status), **values)
+
+
+def _write_statements(tmp_path: Path, *statements: dict, name: str = 'statements.yaml') -> Path:
+    """Write a statements file. Each statement names its package, and the
+    statements for the same package are grouped under it."""
+    packages: dict = {}
+    for statement in statements:
+        fields = dict(statement)
+        packages.setdefault(fields.pop('package'), []).append(fields)
+    path = tmp_path / name
+    # JSON is also YAML.
+    path.write_text(json.dumps({'packages': [{'package': p, 'vulnerabilities': v} for p, v in packages.items()]}))
+    return path
+
+
+def _vex_update_files(tmp_path: Path, vex_format: str = 'cyclonedx-json', statements=(), embedded=()):
+    """A CycloneDX SBOM of an app with FreeRTOS 10.0.0 and a VEX file for it, both
+    from 2020. statements are the assessments in the VEX file, embedded are the
+    assessments in the SBOM. Returns the two file paths."""
+    from esp_idf_sbom.libsbom import cyclonedx
+    from esp_idf_sbom.libsbom import openvex
+    from esp_idf_sbom.libsbom import vex
+    from esp_idf_sbom.libsbom.sbom import SBOM
+    from esp_idf_sbom.libsbom.sbom import Package
+    from esp_idf_sbom.libsbom.sbom import PackageKind
+
+    proj = Package(
+        ref='PROJECT-app', name='app', package_name='app', kind=PackageKind.PROJECT, depends_on=['COMPONENT-freertos']
+    )
+    comp = Package(
+        ref='COMPONENT-freertos',
+        name='freertos',
+        package_name='freertos',
+        kind=PackageKind.COMPONENT,
+        version='10.0.0',
+        purl='pkg:generic/freertos@10.0.0',
+        cpes=['cpe:2.3:o:amazon:freertos:10.0.0:*:*:*:*:*:*:*'],
+        assessments=list(statements),
+    )
+    model = SBOM(name='app', root='PROJECT-app', packages=[proj, comp])
+    doc_id = cyclonedx.new_document_id(model)
+    vexdoc = vex.build(model, sbom_id=doc_id)
+    # The statements have no times, so they get the times of the document.
+    vexdoc.first_issued = vexdoc.last_updated = _OLD_TIME
+
+    comp.assessments = list(embedded)
+    bom = json.loads(cyclonedx.render(model, version='1.6', doc_id=doc_id))
+    bom['metadata']['timestamp'] = _OLD_TIME
+    sbom_file = tmp_path / 'app.cdx.json'
+    sbom_file.write_text(json.dumps(bom, indent=2))
+
+    vex_file = tmp_path / 'app.vex.json'
+    backend = cyclonedx if vex_format == 'cyclonedx-json' else openvex
+    vex_file.write_text(backend.render_vex(vexdoc))
+    return sbom_file, vex_file
+
+
+def test_vex_update_adds_statement(tmp_path: Path) -> None:
+    """A statement about a new CVE becomes a new statement in the VEX document,
+    issued now. The document keeps its id and gets the next version. The other
+    statement keeps its times."""
+    sbom_file, vex_file = _vex_update_files(
+        tmp_path, statements=[_vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='Not used.')]
+    )
+    statements = _write_statements(
+        tmp_path,
+        {
+            'cve': 'CVE-2026-0002',
+            'package': 'pkg:generic/freertos@10.0.0',
+            'status': 'affected',
+            'action': 'Update FreeRTOS.',
+        },
+    )
+    output = tmp_path / 'new.vex.json'
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+
+    old = json.loads(vex_file.read_text())
+    new = json.loads(output.read_text())
+    assert new['serialNumber'] == old['serialNumber']
+    assert new['version'] == old['version'] + 1
+    assert new['externalReferences'] == old['externalReferences']
+    now = new['metadata']['timestamp']
+    assert now != _OLD_TIME
+
+    kept, added = new['vulnerabilities']
+    assert kept == old['vulnerabilities'][0]
+    assert added['id'] == 'CVE-2026-0002'
+    assert added['analysis']['state'] == 'exploitable'
+    assert added['recommendation'] == 'Update FreeRTOS.'
+    assert added['analysis']['firstIssued'] == added['analysis']['lastUpdated'] == now
+
+
+def test_vex_update_adds_an_openvex_statement(tmp_path: Path) -> None:
+    """An OpenVEX document keeps the history of a CVE, and a newer statement
+    overrides an older one. So a change is a new statement at the end, with the
+    current time, and the older statements stay as they are. The document keeps its
+    id and the time when it was first issued."""
+    sbom_file, vex_file = _vex_update_files(
+        tmp_path,
+        'openvex',
+        statements=[
+            _vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='First.'),
+            _vex_assessment('CVE-2026-0002', 'not_affected', impact_statement='Second.'),
+        ],
+    )
+    statements = _write_statements(
+        tmp_path,
+        {
+            'cve': 'CVE-2026-0001',
+            'package': 'cpe:2.3:o:amazon:freertos:10.0.0:*:*:*:*:*:*:*',
+            'status': 'fixed',
+            'detail': 'Patched.',
+        },
+    )
+    output = tmp_path / 'new.openvex.json'
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+
+    old = json.loads(vex_file.read_text())
+    new = json.loads(output.read_text())
+    assert new['@id'] == old['@id']
+    assert new['version'] == 2
+    assert new['timestamp'] == _OLD_TIME
+    assert new['last_updated'] != _OLD_TIME
+
+    *kept, added = new['statements']
+    assert kept == old['statements']
+    assert (added['vulnerability']['name'], added['status']) == ('CVE-2026-0001', 'fixed')
+    assert added['timestamp'] == added['last_updated'] == new['last_updated']
+
+
+def test_vex_update_statement_without_status(tmp_path: Path) -> None:
+    """A statement without a status keeps the status of the VEX file, for example
+    when it fixes only the detail. The writer refuses a statement that has no
+    status after all statements files are applied, also without --vex. A later
+    statements file can give the status."""
+    freertos = {'cve': 'CVE-2026-0001', 'package': 'COMPONENT-freertos'}
+    detail = _write_statements(tmp_path, {**freertos, 'detail': 'Fixed.'}, name='detail.yaml')
+    output = tmp_path / 'new.vex.json'
+    affected = _vex_assessment('CVE-2026-0001', 'affected', impact_statement='Fixd.', action_statement='Update.')
+
+    sbom_file, vex_file = _vex_update_files(tmp_path, statements=[affected])
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(detail))
+    assert result.returncode == 0, result.stderr
+    (entry,) = json.loads(output.read_text())['vulnerabilities']
+    assert (entry['analysis']['state'], entry['analysis']['detail'], entry['recommendation']) == (
+        'exploitable',
+        'Fixed.',
+        'Update.',
+    )
+
+    sbom_file, vex_file = _vex_update_files(tmp_path, 'openvex', statements=[affected])
+    result = _vex_update('--vex', str(vex_file), '-o', str(output), str(sbom_file), str(detail))
+    assert result.returncode == 0, result.stderr
+    *_, added = json.loads(output.read_text())['statements']
+    assert (added['status'], added['impact_statement'], added['action_statement']) == ('affected', 'Fixed.', 'Update.')
+
+    error = 'cannot write the VEX document: CVE-2026-0001 for COMPONENT-freertos: the statement needs a status.'
+    for vex_format in ('cyclonedx-json', 'openvex'):
+        sbom_file, vex_file = _vex_update_files(tmp_path, vex_format)
+        result = _vex_update('--vex', str(vex_file), str(sbom_file), str(detail))
+        assert result.returncode != 0
+        assert error in result.stderr
+        result = _vex_update('--format', vex_format, str(sbom_file), str(detail))
+        assert result.returncode != 0
+        assert error in result.stderr
+
+    status = _write_statements(tmp_path, {**freertos, 'status': 'fixed'}, name='status.yaml')
+    result = _vex_update(str(sbom_file), str(detail), str(status))
+    assert result.returncode == 0, result.stderr
+    (statement,) = json.loads(result.stdout)['statements']
+    assert (statement['status'], statement['impact_statement']) == ('fixed', 'Fixed.')
+
+
+def test_vex_update_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--report prints the statements to stderr, the modified one first, with the
+    values that the output format writes."""
+    # stderr gets the width of the terminal, or 80 columns without one. COLUMNS
+    # gives the table the same width everywhere.
+    monkeypatch.setenv('COLUMNS', '300')
+    sbom_file, vex_file = _vex_update_files(
+        tmp_path,
+        statements=[
+            _vex_assessment('CVE-2026-0001', 'not_affected', impact_statement='Not built.'),
+            _vex_assessment('CVE-2026-0002', 'not_affected', impact_statement='Not used.'),
+        ],
+    )
+    statements = _write_statements(
+        tmp_path, {'cve': 'CVE-2026-0002', 'package': 'COMPONENT-freertos', 'status': 'affected'}
+    )
+    output = tmp_path / 'new.vex.json'
+    result = _vex_update('--vex', str(vex_file), '--report', '-o', str(output), str(sbom_file), str(statements))
+    assert result.returncode == 0, result.stderr
+
+    # The modified statement first, with its old, stated and new status in the
+    # CycloneDX vocabulary.
+    lines = result.stderr.splitlines()
+    first = next(index for index, line in enumerate(lines) if 'CVE-2026-000' in line)
+    assert 'CVE-2026-0002' in lines[first]
+    status = next(line for line in lines[first:] if '│ status ' in line)
+    assert re.search(r'│ status +│ not_affected +│ exploitable +│ exploitable +│', status)
+    for name, count, cves in (
+        ('Statements:', 2, 'CVE-2026-0002, CVE-2026-0001'),
+        ('Modified:', 1, 'CVE-2026-0002'),
+        ('Status changed:', 1, 'CVE-2026-0002'),
+        ('In no statements file:', 1, 'CVE-2026-0001'),
+    ):
+        assert re.search(rf'{name} +│ {count} +│ {cves} +│', result.stderr)
 
 
 def test_output_file_kept_on_failure(hello_world_build: Path, tmp_path: Path) -> None:
@@ -2004,7 +2737,7 @@ def test_kev_fields() -> None:
         return {'cve': cve}
 
     def record(cve_id: str, kev: bool, pkg: str, exclude: bool = False) -> dict:
-        exclude_list = {cve_id: 'not applicable'} if exclude else {}
+        exclude_list = {cve_id: _assessments({'cve': cve_id, 'reason': 'not applicable'})[0]} if exclude else {}
         return report.create_vulnerable_record(
             nvd_cve(cve_id, kev), exclude_list, f'cpe:2.3:a:test:{pkg}:1.0.0:*:*:*:*:*:*:*', '', pkg, '1.0.0'
         )
@@ -2315,8 +3048,87 @@ def test_create_vulnerable_record_maybe() -> None:
     assert report.create_vulnerable_record(awaiting, {}, cpe, '', 'lwip', '2.2.0')['vulnerable'] == 'YES'
 
     # Exclusion still wins over maybe.
-    rec = report.create_vulnerable_record(vuln, {'CVE-2020-22283': 'fixed'}, cpe, '', 'lwip', '2.2.0', maybe=True)
+    excluded = {'CVE-2020-22283': _assessments({'cve': 'CVE-2020-22283', 'reason': 'fixed'})[0]}
+    rec = report.create_vulnerable_record(vuln, excluded, cpe, '', 'lwip', '2.2.0', maybe=True)
     assert rec['vulnerable'] == 'EXCLUDED'
+
+
+def test_create_vulnerable_record_vex_fields() -> None:
+    """A record shows what the VEX says about its CVE. A record without a VEX
+    statement leaves the fields empty."""
+    from esp_idf_sbom.libsbom import report
+    from esp_idf_sbom.libsbom.sbom import VexAssessment
+    from esp_idf_sbom.libsbom.vexvalues import VexJustification
+    from esp_idf_sbom.libsbom.vexvalues import VexStatus
+
+    cpe = 'cpe:2.3:a:lwip_project:lwip:2.2.0:*:*:*:*:*:*:*'
+    vuln = {
+        'cve': {
+            'id': 'CVE-2020-22283',
+            'vulnStatus': 'Analyzed',
+            'descriptions': [{'lang': 'en', 'value': 'buffer overflow'}],
+            'metrics': {},
+        }
+    }
+    fields = ('vex_status', 'vex_justification', 'vex_detail', 'vex_action')
+
+    def record(assessment: VexAssessment) -> tuple:
+        rec = report.create_vulnerable_record(vuln, {'CVE-2020-22283': assessment}, cpe, '', 'lwip', '2.2.0')
+        return tuple(rec[field] for field in fields)
+
+    affected = VexAssessment(
+        vulnerability='CVE-2020-22283',
+        status=VexStatus('affected'),
+        impact_statement='The product enables PPP.',
+        action_statement='Update to lwIP 2.2.1.',
+    )
+    assert record(affected) == ('affected', '', 'The product enables PPP.', 'Update to lwIP 2.2.1.')
+    not_affected = VexAssessment(
+        vulnerability='CVE-2020-22283',
+        status=VexStatus('not_affected'),
+        justification=VexJustification('vulnerable_code_not_present'),
+    )
+    assert record(not_affected) == ('not_affected', 'vulnerable_code_not_present', '', '')
+
+    rec = report.create_vulnerable_record(vuln, {}, cpe, '', 'lwip', '2.2.0')
+    assert all(rec[field] == '' for field in fields)
+
+
+def test_create_vulnerable_record_uses_vex_status() -> None:
+    """not_affected, false_positive, fixed and resolved_with_pedigree exclude the
+    CVE. A fixed assessment needs no text of its own, so the status is the reason.
+    affected confirms a MAYBE match, and under_investigation changes nothing."""
+    from esp_idf_sbom.libsbom import report
+    from esp_idf_sbom.libsbom.sbom import VexAssessment
+    from esp_idf_sbom.libsbom.vexvalues import VexJustification
+    from esp_idf_sbom.libsbom.vexvalues import VexStatus
+
+    cpe = 'cpe:2.3:a:lwip_project:lwip:-:*:*:*:*:*:*:*'
+    vuln = {
+        'cve': {
+            'id': 'CVE-2020-22283',
+            'vulnStatus': 'Analyzed',
+            'descriptions': [{'lang': 'en', 'value': 'buffer overflow'}],
+            'metrics': {},
+        }
+    }
+
+    def record(maybe: bool, **fields) -> tuple:
+        assessments = {'CVE-2020-22283': VexAssessment(vulnerability='CVE-2020-22283', **fields)}
+        rec = report.create_vulnerable_record(vuln, assessments, cpe, '', 'lwip', '2.2.0', maybe=maybe)
+        return rec['vulnerable'], rec['exclude_reason']
+
+    not_affected = VexStatus('not_affected')
+    assert record(False, status=not_affected, impact_statement='not used') == ('EXCLUDED', 'not used')
+    justification = VexJustification('component_not_present')
+    assert record(False, status=not_affected, justification=justification) == ('EXCLUDED', 'component_not_present')
+    assert record(True, status=VexStatus('fixed')) == ('EXCLUDED', 'fixed')
+    assert record(True, status=VexStatus('resolved_with_pedigree')) == ('EXCLUDED', 'resolved_with_pedigree')
+    false_positive = VexStatus('false_positive')
+    assert record(False, status=false_positive, impact_statement='not lwip') == ('EXCLUDED', 'not lwip')
+    assert record(True, status=VexStatus('affected')) == ('YES', '')
+    assert record(True, status=VexStatus('under_investigation')) == ('MAYBE', '')
+    assert record(False, status=VexStatus('under_investigation')) == ('YES', '')
 
 
 def test_evaluate_cpematch_ignores_na_target_for_versioned_criteria(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2353,6 +3165,152 @@ def test_evaluate_cpematch_ignores_na_target_for_versioned_criteria(monkeypatch:
         'matchCriteriaId': 'NA',
     }
     assert nvd.evaluate_cpematch(na_cpe, na) is True
+
+
+def test_is_version_vulnerable_ignores_case() -> None:
+    """CPE values are compared without case, as NVD does. The FatFs manifest
+    uses version R0.16, while NVD writes r0.16."""
+    from esp_idf_sbom.libsbom import nvd
+
+    fatfs = 'cpe:2.3:a:elm-chan:fatfs:{}:*:*:*:*:*:*:*'
+
+    def config(criteria: str, **versions: str) -> dict:
+        return {'nodes': [{'cpeMatch': [{'vulnerable': True, 'criteria': criteria, **versions}]}]}
+
+    ranged = fatfs.format('*')
+    assert nvd.is_version_vulnerable(
+        fatfs.format('R0.16'), config(ranged, versionStartIncluding='r0.15', versionEndIncluding='r0.16')
+    )
+    assert not nvd.is_version_vulnerable(fatfs.format('R0.16'), config(ranged, versionEndExcluding='r0.16'))
+    assert not nvd.is_version_vulnerable(fatfs.format('R0.17'), config(ranged, versionEndIncluding='r0.16'))
+
+    # Without a range, the versions must be equal. Vendor and product are checked too.
+    assert nvd.is_version_vulnerable('cpe:2.3:a:ELM-CHAN:FATFS:R0.16:*:*:*:*:*:*:*', config(fatfs.format('r0.16')))
+
+
+def test_get_cves_for_cpe_ignores_case(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CPE from the SBOM is compared without case, as NVD does."""
+    from esp_idf_sbom.libsbom import nvd
+
+    # Data from NVD.
+    match = {'vulnerable': True, 'criteria': 'cpe:2.3:a:elm-chan:fatfs:*:*:*:*:*:*:*:*', 'versionEndIncluding': 'r0.16'}
+    cve = {'cve': {'id': 'CVE-2026-6682', 'configurations': [{'nodes': [{'cpeMatch': [match]}]}]}}
+    monkeypatch.setattr(nvd, 'CVE_CACHE', [cve])
+
+    assert nvd.get_cves_for_cpe('cpe:2.3:a:ELM-CHAN:FATFS:R0.16:*:*:*:*:*:*:*') == [cve]
+
+
+def test_cpe_product_must_match_in_full(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The product name must match in full. 'freertos' must not match 'freertos\\+fat'."""
+    from esp_idf_sbom.libsbom import nvd
+
+    def cve(cve_id: str, criteria: str, **versions: str) -> dict:
+        match = {'vulnerable': True, 'criteria': criteria, **versions}
+        return {'cve': {'id': cve_id, 'configurations': [{'nodes': [{'cpeMatch': [match]}]}]}}
+
+    # Data from NVD. CVE-2019-18178 is for FreeRTOS+FAT, CVE-2024-28115 is for FreeRTOS.
+    fat = cve('CVE-2019-18178', 'cpe:2.3:o:amazon:freertos\\+fat:160919a:*:*:*:*:*:*:*')
+    kernel = cve('CVE-2024-28115', 'cpe:2.3:o:amazon:freertos:*:*:*:*:*:*:*:*', versionEndExcluding='10.6.2')
+    monkeypatch.setattr(nvd, 'CVE_CACHE', [fat, kernel])
+
+    assert nvd.get_cves_for_cpe('cpe:2.3:o:amazon:freertos:10.5.1:*:*:*:*:*:*:*') == [kernel]
+    cpe = 'cpe:2.3:o:amazon:freertos:160919a:*:*:*:*:*:*:*'
+    assert not nvd.is_version_vulnerable(cpe, fat['cve']['configurations'][0])
+
+
+def test_spdx_comment_keeps_assessments() -> None:
+    """SPDX 2.2 has no VEX fields, so the assessments go into the package comment
+    as the cve-exclude-list, in the manifest form. Both SPDX 2.2 formats read
+    them back."""
+    from esp_idf_sbom.libsbom import spdx
+
+    model = _sbom_with_file()
+    model.packages[1].assessments = _assessments(
+        {'cve': 'CVE-2020-1', 'reason': 'not used', 'justification': 'vulnerable_code_not_present'},
+        {'cve': 'CVE-2020-2', 'reason': 'not reachable'},
+    )
+
+    assert 'justification: vulnerable_code_not_present' in spdx.render(model, format='tagvalue', version='2.2')
+    for fmt in ('tagvalue', 'json'):
+        back = spdx.parse(spdx.render(model, format=fmt, version='2.2'), format=fmt)
+        by_ref = {pkg.ref: pkg for pkg in back.packages}
+        assert by_ref['COMPONENT-lib'].assessments == model.packages[1].assessments
+
+
+def test_spdx_comment_has_only_excluded_cves() -> None:
+    """Released versions read every cve-exclude-list entry as excluded, so the
+    package comment must not get an assessment that says the CVE applies."""
+    from esp_idf_sbom.libsbom import spdx
+    from esp_idf_sbom.libsbom.sbom import VexAssessment
+    from esp_idf_sbom.libsbom.vexvalues import VexStatus
+
+    model = _sbom_with_file()
+    model.packages[1].assessments = [
+        VexAssessment(vulnerability='CVE-2020-1', status=VexStatus('not_affected'), impact_statement='not used'),
+        VexAssessment(vulnerability='CVE-2020-2', status=VexStatus('fixed')),
+        VexAssessment(vulnerability='CVE-2020-3', status=VexStatus('affected')),
+        VexAssessment(vulnerability='CVE-2020-4', status=VexStatus('under_investigation')),
+    ]
+
+    text = spdx.render(model, format='tagvalue', version='2.2')
+    assert 'CVE-2020-1' in text
+    assert 'CVE-2020-2' in text
+    assert 'CVE-2020-3' not in text
+    assert 'CVE-2020-4' not in text
+
+
+def test_merge_excluded_cves(tmp_path: Path) -> None:
+    """The assessment of the package wins over the matching entry in
+    excluded_cves.yaml, except for a justification that it does not set. A
+    global entry is used only when its CPE matches."""
+    from esp_idf_sbom.libsbom import nvd
+    from esp_idf_sbom.libsbom import sbom
+
+    global_file = tmp_path / 'excluded_cves.yaml'
+    global_file.write_text(
+        dedent(
+            """\
+            CVE-2020-1000:
+              cpes:
+                - cpe: cpe:2.3:a:vendor:product:*:*:*:*:*:*:*:*
+                  versionEndExcluding: '2.0'
+              reason: global reason
+              justification: vulnerable_code_not_present
+            CVE-2020-1001:
+              cpes:
+                - cpe: cpe:2.3:a:vendor:product:*:*:*:*:*:*:*:*
+                  versionEndExcluding: '2.0'
+              reason: only global
+            """
+        )
+    )
+    nvd.get_excluded_cves(path=str(global_file))
+
+    assessments = _assessments(
+        {'cve': 'CVE-2020-1000', 'reason': 'package reason'},
+        {'cve': 'CVE-2020-1002', 'reason': 'only package'},
+    )
+
+    def expected(*entries: dict) -> dict:
+        return {a.vulnerability: a for a in _assessments(*entries)}
+
+    assert sbom.merge_excluded_cves(assessments, ['cpe:2.3:a:vendor:product:1.0:*:*:*:*:*:*:*']) == expected(
+        {'cve': 'CVE-2020-1000', 'reason': 'package reason', 'justification': 'vulnerable_code_not_present'},
+        {'cve': 'CVE-2020-1001', 'reason': 'only global'},
+        {'cve': 'CVE-2020-1002', 'reason': 'only package'},
+    )
+
+    # Version 2.0 is out of the range, so nothing comes from the global file.
+    assert sbom.merge_excluded_cves(assessments, ['cpe:2.3:a:vendor:product:2.0:*:*:*:*:*:*:*']) == expected(
+        {'cve': 'CVE-2020-1000', 'reason': 'package reason'},
+        {'cve': 'CVE-2020-1002', 'reason': 'only package'},
+    )
+
+    # An affected assessment of the package wins over the global exclusion, and it
+    # takes no justification.
+    affected = sbom.VexAssessment(vulnerability='CVE-2020-1000', status=sbom.VexStatus('affected'))
+    merged = sbom.merge_excluded_cves([affected], ['cpe:2.3:a:vendor:product:1.0:*:*:*:*:*:*:*'])
+    assert merged['CVE-2020-1000'] == affected
 
 
 def test_merge_local_excluded_cves(tmp_path: Path) -> None:
@@ -2396,7 +3354,7 @@ def test_merge_local_excluded_cves(tmp_path: Path) -> None:
     # The local scoped entry is honored for the matching CPE/version, but not for
     # a different version, and the original global entry is untouched.
     assert nvd.get_excluded_cves_for_cpe('cpe:2.3:a:espressif:esp-idf:6.0.1:*:*:*:*:*:*:*') == {
-        'CVE-2026-45160': 'Fixed on release/v6.0'
+        'CVE-2026-45160': {'cve': 'CVE-2026-45160', 'reason': 'Fixed on release/v6.0'}
     }
     assert nvd.get_excluded_cves_for_cpe('cpe:2.3:a:espressif:esp-idf:6.0.2:*:*:*:*:*:*:*') == {}
     assert nvd.get_globally_excluded_cves() == {'CVE-1111-0001': 'Unrelated to Espressif'}
@@ -2541,12 +3499,14 @@ def test_document_metadata_spdx(hello_world_build: Path) -> None:
     finally:
         (hello_world_build / 'sbom.yml').unlink()
 
-    assert 'Creator: Organization: Acme Corp (psirt@acme.example)' in outputs['spdx-tag-value'].read_text()
+    tagvalue = outputs['spdx-tag-value'].read_text()
+    assert 'Creator: Organization: Acme Corp (psirt@acme.example)' in tagvalue
+    assert 'Creator: Organization: Espressif' not in tagvalue
 
     graph = json.loads(outputs['spdx-json-ld'].read_text())['@graph']
     creation_info = next(e for e in graph if e.get('type') == 'CreationInfo')
     agent = next(e for e in graph if e.get('name') == 'Acme Corp')
-    assert agent['spdxId'] in creation_info['createdBy']
+    assert creation_info['createdBy'] == [agent['spdxId']]
     identifiers = {i['externalIdentifierType']: i['identifier'] for i in agent['externalIdentifier']}
     assert identifiers == {'email': 'psirt@acme.example', 'urlScheme': 'https://acme.example'}
 
