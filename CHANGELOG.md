@@ -1,3 +1,64 @@
+## v1.5.0 (2026-10-26)
+
+### ✨ New Features
+
+- add a report of the statements to vex update *(Frantisek Hrbata - dec5c44)*
+- add the vex update command *(Frantisek Hrbata - 7f246fd)*
+- accept the VEX values of CISA and CycloneDX *(Frantisek Hrbata - ecfc680)*
+- show the VEX statement of each CVE in the check report *(Frantisek Hrbata - d4cb8f1)*
+- use the status of each VEX statement in check *(Frantisek Hrbata - bc79138)*
+- link each VEX statement to the NVD page of its CVE *(Frantisek Hrbata - 9e8e88e)*
+- add justification to excluded CVEs *(Frantisek Hrbata - a87f070)*
+- Add support for Python 3.15 *(Roland Dobai - 771b1ab)*
+- rename the create --vex option to --vex-format *(Frantisek Hrbata - 1e1ab52)*
+- describe custom licenses in the manifest *(Frantisek Hrbata - 0bdb56f)*
+- add --vex to idf.py sbom-create *(Frantisek Hrbata - 8a77bac)*
+- add check --vex for standalone VEX *(Frantisek Hrbata - 065dc59)*
+- parse standalone VEX documents *(Frantisek Hrbata - f30d02c)*
+- write a standalone VEX alongside the SBOM *(Frantisek Hrbata - 8d7048f)*
+- render standalone VEX documents *(Frantisek Hrbata - a395b55)*
+- add the create --vex option *(Frantisek Hrbata - a56531c)*
+- add a format-neutral VEX model *(Frantisek Hrbata - 25f96e9)*
+
+### 🐛 Bug Fixes
+
+- write the aggregated manifests to the output file *(Frantisek Hrbata - 0f7167d)*
+- use the newest VEX statement about a CVE in check *(Frantisek Hrbata - 4f14684)*
+- show text in brackets in warnings and errors *(Frantisek Hrbata - b5438dc)*
+- do not write an empty CycloneDX detail *(Frantisek Hrbata - 758615e)*
+- write an OpenVEX product @id only for a package with a purl *(Frantisek Hrbata - 730058c)*
+- apply a VEX statement to every package with its CPE *(Frantisek Hrbata - 06812f8)*
+- accept a cpe string and the {} placeholder in embedded manifests *(Frantisek Hrbata - 0719aa7)*
+- do not name Espressif as the creator of SBOM and VEX documents *(Frantisek Hrbata - 2c474a9)*
+- match the ESP-IDF path in full when guessing the supplier *(Frantisek Hrbata - 876b100)*
+- apply a global CVE exclusion to every CPE of the package *(Frantisek Hrbata - 8a1e2ae)*
+- match the CPE product name in full *(Frantisek Hrbata - c58231d)*
+- compare CPEs without case *(Frantisek Hrbata - 386eb21)*
+- avoid pyparsing 3.3 deprecation warnings in expr.py *(Frantisek Hrbata - d0f0b2b)*
+- Declare the license without deprecated metadata *(Peter Dragun - 13bbb4e)*
+- ignore unknown keys under the manifest document key *(Frantisek Hrbata - f29e1c2)*
+- recover a submodule PURL when git fails in the submodule *(Frantisek Hrbata - 0c54243)*
+- report the supplier email as a CycloneDX contact *(Frantisek Hrbata - 6aa330e)*
+- keep the declared license and copyright in CycloneDX *(Frantisek Hrbata - a35b454)*
+- keep the declared copyright in the SPDX copyright field *(Frantisek Hrbata - 95885b7)*
+- define custom licenses in the generated SPDX documents *(Frantisek Hrbata - ed70a46)*
+- accept custom LicenseRef identifiers in license expressions *(Frantisek Hrbata - 2a43db5)*
+- write PackageChecksum before the package relationships *(Frantisek Hrbata - 612faea)*
+- write the output file only after the command succeeded *(Frantisek Hrbata - 84c1ab6)*
+- strip the document namespace from parsed SPDX 3.0.1 refs *(Frantisek Hrbata - 481509e)*
+
+### 📖 Documentation
+
+- describe the CVE statements in one README section *(Frantisek Hrbata - 2c827e9)*
+- correct the SPDX text in the output formats section *(Frantisek Hrbata - f988cbf)*
+- describe your own project and components *(Frantisek Hrbata - a2c2383)*
+- say that the supplier prefix is required *(Frantisek Hrbata - 15e6ffe)*
+- say that the manifest license is a validated SPDX expression *(Frantisek Hrbata - 1702cd4)*
+- describe how declared and scanned licenses are reported *(Frantisek Hrbata - caadf27)*
+- describe the custom-licenses manifest key *(Frantisek Hrbata - 68f091a)*
+- document the standalone VEX workflow *(Frantisek Hrbata - 4363605)*
+
+
 ## v1.4.0 (2026-09-10)
 
 ### ✨ New Features
