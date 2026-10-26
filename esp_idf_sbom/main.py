@@ -754,12 +754,8 @@ def cmd_manifest_aggregate(args: Dict[str, Any]) -> int:
                 continue
             aggregated['manifests'].append({'manifest': manifest, 'dest': dst})
 
-        if args['output_file']:
-            with open(args['output_file'], 'w') as f:
-                yaml.dump(aggregated, f)
-
-        else:
-            log.print(yaml.dump(aggregated))
+        # The manifests are data, not rich markup.
+        log.print(yaml.dump(aggregated), markup=False)
 
     except (RuntimeError, OSError) as e:
         log.die(str(e))
