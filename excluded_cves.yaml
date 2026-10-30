@@ -325,6 +325,17 @@ CVE-2026-106451: Related to yawkat lz4-java (1.7.0 to < 1.11.4), whose Native.lo
 CVE-2026-106452: Related to yawkat lz4-java (< 1.11.2), whose LZ4BlockInputStream allocates the compressed-input buffer from an untrusted legacy block header length, up to about 2 GiB. Not a vulnerability in the LZ4 C library
 CVE-2026-106453: Related to yawkat lz4-java (< 1.11.2), whose LZ4DecompressorWithLength trusts the four-byte decompressed-length header and allocates up to about 2 GiB for a five-byte input. Not a vulnerability in the LZ4 C library
 
+CVE-2026-102551: Related to FreeRTOS-Plus-TCP (< 4.4.2), whose IPv6 Router Advertisement handler does not verify the source of the message, so a remote sender can change the default gateway, prefix and address configuration. ESP-IDF does not use FreeRTOS-Plus-TCP. It uses lwIP for the TCP/IP stack. Not a vulnerability in the FreeRTOS kernel
+CVE-2026-102552: Related to FreeRTOS-Plus-TCP (< 4.4.2), whose DNS resolver does not verify the source of a reply, so a forged reply can insert an address into the DNS cache. ESP-IDF does not use FreeRTOS-Plus-TCP. It uses lwIP for the TCP/IP stack. Not a vulnerability in the FreeRTOS kernel
+CVE-2026-19741: Related to Zephyr's OpenThread integration (modules/openthread/Kconfig.thread, Zephyr 1.14.0 to < 4.5.0), whose CONFIG_OPENTHREAD_JOINER_PSKD defaults to the public example credential J01NME. Zephyr code, not a vulnerability in OpenThread. ESP-IDF has no such default and does not start the joiner on its own
+CVE-2026-99061: Related to the Linux kernel brcmfmac Wi-Fi driver, a race between brcmf_detach() and brcmf_p2p_del_vif() that removes the P2P device interface twice. Matched on "wpa_supplicant" in the description; not a vulnerability in wpa_supplicant
+CVE-2026-97200: Related to hackney (2.0.0-beta.1 to < 4.9.0), an Erlang HTTP client that buffers a whole response body with no limit and inflates it with zlib:gunzip/1. Same class as CVE-2026-105274, already excluded. Not a vulnerability in the zlib C library
+CVE-2026-111157: Related to SoX (<= 14.4.2), a heap out-of-bounds write in lsx_ms_adpcm_block_expand_i() triggered by an odd samplesPerBlock value in the WAV fmt chunk. Matched on "fmt" in the description; not a vulnerability in the C++ fmtlib/fmt library
+CVE-2026-116013: Related to OpenResty lua-resty-dns (< 0.24), whose parse_section() and _decode_name() do not check resource record lengths against the received message. A library written in Lua, not a vulnerability in Lua itself
+CVE-2026-82104: Related to Teltonika Networks RUTOS (7.22 to 7.24.2) and TSWOS (1.9 to 1.10) firmware, where an unauthenticated user can call LUA functions directly and bypass the validation of normal API requests. Not a vulnerability in Lua itself
+CVE-2026-116579: Related to Autobahn Python (26.7.1 to < 26.10.1), whose PerMessageBrotli.decompress_message_data calls the Brotli decompressor without an output limit. Not a vulnerability in the brotli C library
+CVE-2026-107692: Related to the War Thunder game client (2.57.1.140 to < 2.59.0.9), which sends its authentication token with LZ4 compression only and no encryption. Not a vulnerability in the LZ4 C library
+
 CVE-2026-87121:
   cpes:
     - cpe: cpe:2.3:a:lwip_project:lwip:*:*:*:*:*:*:*:*
