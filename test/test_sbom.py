@@ -124,6 +124,39 @@ def test_rem_subpackages_keeps_submodules(hello_world_build: Path) -> None:
     assert 'SPDXRef-SUBPACKAGE-' not in p.stdout
 
 
+def test_rem_unused_keeps_component_with_other_linked_archive(tmp_path: Path) -> None:
+    """--rem-unused and --rem-config keep a component when any archive from its
+    build or source directory is linked, not only its own library. Before ESP-IDF
+    v6.0, mbedtls has the crypto code in libmbedcrypto.a."""
+    from esp_idf_sbom.libsbom.sbom import SBOMProject
+
+    build = tmp_path / 'build'
+    comps = tmp_path / 'components'
+    build.mkdir()
+    (build / 'app.map').write_text(
+        'Archive member included to satisfy reference by file (symbol)\n\n'
+        'esp-idf/mbedtls/mbedtls/library/libmbedcrypto.a(sha256.c.obj)\n'
+        '                              esp-idf/main/libmain.a(main.c.obj) (mbedtls_sha256)\n'
+        f'{comps.as_posix()}/effects/lib/libeffects.a(eq.o)\n'
+        '                              esp-idf/main/libmain.a(main.c.obj) (eq_open)\n\n'
+    )
+    info: dict = {}
+    for name, file in [('mbedtls', 'libmbedtls.a'), ('effects', ''), ('log', 'liblog.a')]:
+        info[name] = {
+            'dir': (comps / name).as_posix(),
+            'file': file and (build / 'esp-idf' / name / file).as_posix(),
+            'type': 'LIBRARY' if file else 'CONFIG_ONLY',
+            **{req: [] for req in ['reqs', 'priv_reqs', 'managed_reqs', 'managed_priv_reqs']},
+        }
+
+    project = SBOMProject.__new__(SBOMProject)
+    project.args = {'rem_config': True, 'rem_unused': True}
+    project.proj_desc = {'build_dir': build.as_posix(), 'project_name': 'app', 'build_component_info': info}
+    project.linked_components = project._get_linked_components()
+    # effects is a configuration only component with a prebuilt library
+    assert sorted(project._filter_components(info)) == ['effects', 'mbedtls']
+
+
 def test_referenced_manifests(hello_world_build: Path) -> None:
     """This is similar test as test_sbom_subpackages, but this time
     referenced manifests are used to create subpackages. Meaning the

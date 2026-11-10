@@ -1161,7 +1161,7 @@ class SBOMProject(SBOMPackage):
         self.proj_desc = proj_desc
 
         self._resolve_req_aliases()
-        self.linked_libs = self._get_linked_libs()
+        self.linked_components = self._get_linked_components()
         self.components = self._get_components()
         self.framework = SBOMFramework(args, proj_desc)
         self.toolchain = SBOMToolchain(args, proj_desc)
@@ -1206,13 +1206,13 @@ class SBOMProject(SBOMPackage):
         return components
 
     def _remove_config_only(self, components: Dict[str, Dict]) -> Dict[str, Dict]:
-        # Remove configuration only components.
+        # Remove configuration only components without a linked archive.
         if not self.args['rem_config']:
             return components
 
         remove = []
         for name, info in components.items():
-            if info['type'] == 'CONFIG_ONLY':
+            if info['type'] == 'CONFIG_ONLY' and name not in self.linked_components:
                 remove.append(name)
 
         return self._remove_components(remove, components)
@@ -1249,6 +1249,33 @@ class SBOMProject(SBOMPackage):
 
         return list(libs)
 
+    def _get_linked_components(self) -> Set[str]:
+        # Return names of components with an archive linked into the final binary.
+        # Besides its own library, a component can link archives it builds, like
+        # libmbedcrypto.a in mbedtls, or prebuilt archives from its directory.
+        # Such an archive belongs to the component with the longest build or
+        # source directory containing it.
+        build_components = self.proj_desc['build_component_info']
+        files = {info['file']: name for name, info in build_components.items() if info['file']}
+        dirs = []
+        for name, info in build_components.items():
+            # The build directory is not in project_description.json, but ESP-IDF
+            # always uses this one, also for configuration only components.
+            dirs.append((utils.pjoin(self.proj_desc['build_dir'], 'esp-idf', name), name))
+            dirs.append((info['dir'], name))
+        dirs.sort(key=lambda d: len(d[0]), reverse=True)
+
+        components = set()
+        for lib in self._get_linked_libs():
+            if lib in files:
+                components.add(files[lib])
+                continue
+            for comp_dir, name in dirs:
+                if lib.startswith(comp_dir + '/'):
+                    components.add(name)
+                    break
+        return components
+
     def _remove_not_linked(self, components: Dict[str, Dict]) -> Dict[str, Dict]:
         # Remove components not linked into the final binary.
         if not self.args['rem_unused']:
@@ -1258,7 +1285,7 @@ class SBOMProject(SBOMPackage):
         for name, info in components.items():
             if info['type'] == 'CONFIG_ONLY':
                 continue
-            if info['file'] not in self.linked_libs:
+            if name not in self.linked_components:
                 remove.append(name)
 
         return self._remove_components(remove, components)
@@ -1270,15 +1297,18 @@ class SBOMProject(SBOMPackage):
 
         return components
 
-    def _component_used(self, info: Dict) -> bool:
+    def _component_used(self, name: str) -> bool:
         """Helper to check if component was used as part of the project.
-        Configuration only components and components not linked into the final binary
-        are considered as not used, unless explicitly requested."""
+        Components without an archive linked into the final binary are considered
+        as not used, unless explicitly requested."""
+        if name in self.linked_components:
+            return True
+        info = self.proj_desc['build_component_info'][name]
         # Configuration only component.
         if not self.args['add_config_deps'] and info['type'] == 'CONFIG_ONLY':
             return False
         # Components not linked into final binary.
-        if not self.args['add_unused_deps'] and info['type'] == 'LIBRARY' and info['file'] not in self.linked_libs:
+        if not self.args['add_unused_deps'] and info['type'] == 'LIBRARY':
             return False
 
         return True
@@ -1299,7 +1329,7 @@ class SBOMProject(SBOMPackage):
             log.debug(f'component {name} requires: {reqs}')
             for req in sorted(reqs):
                 try:
-                    if not self._component_used(build_components[req]):
+                    if not self._component_used(req):
                         continue
                 except KeyError:
                     # This is a workaround for components that are required by other components, but
@@ -1356,8 +1386,8 @@ class SBOMProject(SBOMPackage):
                 yield subpkg
                 yield from walk_subpackages(subpkg.subpackages)
 
-        for component in self.components.values():
-            if not self._component_used(component.info):
+        for name, component in self.components.items():
+            if not self._component_used(name):
                 continue
             yield component
             yield from walk_subpackages(component.subpackages)
@@ -1388,7 +1418,7 @@ class SBOMProject(SBOMPackage):
                 # the similar workaround in _get_components() and
                 # https://github.com/espressif/esp-idf/issues/13447.
                 continue
-            if not self._component_used(build_components[name]):
+            if not self._component_used(name):
                 continue
             reachable.add(name)
             info = build_components[name]
@@ -1424,7 +1454,7 @@ class SBOMProject(SBOMPackage):
 
         reqs: Set[str] = set()
         for name, info in build_components.items():
-            if not self._component_used(build_components[name]):
+            if not self._component_used(name):
                 # Do not include requirements from a component that the project
                 # binary did not use, as it might be a transitional component.
                 # This means its library is not linked, but its requirements could be.
@@ -1443,7 +1473,7 @@ class SBOMProject(SBOMPackage):
         for name, info in build_components.items():
             if name in reqs:
                 continue
-            if not self._component_used(build_components[name]):
+            if not self._component_used(name):
                 continue
             proj_reqs.append(name)
 
@@ -1462,7 +1492,7 @@ class SBOMProject(SBOMPackage):
         for name, info in build_components.items():
             if name in reachable:
                 continue
-            if not self._component_used(build_components[name]):
+            if not self._component_used(name):
                 continue
             # The component is not reachable, so include it as a direct dependency in the
             # project package. Additionally, add all its direct and indirect
