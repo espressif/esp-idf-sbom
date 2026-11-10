@@ -212,9 +212,9 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}, path: Optional[str]
     # later argless callers see it.
     if path is not None:
         try:
-            with open(path) as f:
+            with open(path, encoding='utf-8-sig') as f:
                 cves = yaml.safe_load(f) or {}
-        except (yaml.YAMLError, OSError) as e:
+        except (yaml.YAMLError, OSError, UnicodeDecodeError) as e:
             log.warn(f'Cannot read excluded CVEs from {path}: {e}')
         cache['cves'] = cves
         return cves
@@ -230,9 +230,9 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}, path: Optional[str]
     override = os.environ.get(EXCLUDED_CVES_FILE_ENV)
     if override:
         try:
-            with open(override) as f:
+            with open(override, encoding='utf-8-sig') as f:
                 cves = yaml.safe_load(f) or {}
-        except (yaml.YAMLError, OSError) as e:
+        except (yaml.YAMLError, OSError, UnicodeDecodeError) as e:
             log.warn(f'Cannot read excluded CVEs from {override}: {e}')
         cache['cves'] = cves
         return cves
@@ -244,11 +244,11 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}, path: Optional[str]
         age = time.time() - cache_path.stat().st_mtime
         if age < EXCLUDED_CVES_TTL_SECONDS:
             try:
-                with open(cache_path) as f:
+                with open(cache_path, encoding='utf-8-sig') as f:
                     cves = yaml.safe_load(f) or {}
                 cache['cves'] = cves
                 return cves
-            except (yaml.YAMLError, OSError) as e:
+            except (yaml.YAMLError, OSError, UnicodeDecodeError) as e:
                 log.warn(f'Cannot read cached excluded CVEs from {cache_path}: {e}')
 
     # 2) Cache stale or missing -- fetch from upstream and refresh the cache.
@@ -285,11 +285,11 @@ def get_excluded_cves(cache: Dict[str, Dict[str, Any]] = {}, path: Optional[str]
     #    user explicitly opted into using whatever is on disk.
     if not fetched and cache_path.is_file():
         try:
-            with open(cache_path) as f:
+            with open(cache_path, encoding='utf-8-sig') as f:
                 cves = yaml.safe_load(f) or {}
             if not EXCLUDED_CVES_NO_SYNC:
                 log.warn(f'Using stale on-disk cache for excluded CVEs at {cache_path}')
-        except (yaml.YAMLError, OSError) as e:
+        except (yaml.YAMLError, OSError, UnicodeDecodeError) as e:
             log.warn(f'Cannot read cached excluded CVEs from {cache_path}: {e}')
 
     cache['cves'] = cves
@@ -317,9 +317,9 @@ def merge_local_excluded_cves(root: str) -> None:
         return
 
     try:
-        with open(path) as f:
+        with open(path, encoding='utf-8-sig') as f:
             local = yaml.safe_load(f) or {}
-    except (yaml.YAMLError, OSError) as e:
+    except (yaml.YAMLError, OSError, UnicodeDecodeError) as e:
         log.warn(f'Cannot read local excluded CVEs from {path}: {e}')
         return
 

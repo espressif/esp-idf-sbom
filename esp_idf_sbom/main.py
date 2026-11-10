@@ -381,7 +381,7 @@ def cmd_vex_update(args: Dict[str, Any]) -> int:
     loaded: List[vex.Vex] = []
     for statements_file in args['statements_files']:
         try:
-            with open(statements_file) as f:
+            with open(statements_file, encoding='utf-8-sig') as f:
                 statements = vexyaml.parse_vex(f.read())
         except (OSError, ValueError) as e:
             log.die(f'cannot read statements file "{statements_file}": {e}')
@@ -766,10 +766,11 @@ def cmd_manifest_aggregate(args: Dict[str, Any]) -> int:
 
 
 class _OutputBuffer(io.StringIO):
-    # rich replaces characters that the encoding of the console file cannot
-    # represent with an ASCII counterpart. io.StringIO reports no encoding, and
-    # rich then assumes UTF-8. Report the encoding _write_output_file() writes
-    # with, so the output is rendered as if it went into the file directly.
+    # rich draws tables with ASCII characters when the encoding of the console
+    # file is not UTF-8. io.StringIO reports no encoding, and rich then assumes
+    # UTF-8. Report the locale encoding, so that the tables in the file stay
+    # ASCII on Windows, where some viewers, for example type in cmd, do not read
+    # the file as UTF-8.
     encoding = locale.getpreferredencoding(False)
 
 
@@ -777,10 +778,10 @@ def _write_output_file(fn: str, data: str) -> None:
     try:
         path = Path(fn)
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Escape characters that the output file encoding cannot represent, for
-        # example a package name with non-ASCII characters in a cp1252 locale, so
-        # that one name does not stop the whole file from being written.
-        path.write_text(data, encoding=_OutputBuffer.encoding, errors='backslashreplace')
+        # Escape what UTF-8 cannot encode, for example the surrogates that Python
+        # uses for a file name that is not valid UTF-8, so that one name does not
+        # stop the whole file from being written.
+        path.write_text(data, encoding='utf-8', errors='backslashreplace')
     except OSError as e:
         log.die(f'cannot write to "{fn}": {e}')
 

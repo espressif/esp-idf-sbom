@@ -95,7 +95,7 @@ def load_sbom(path: str) -> SBOM:
     if path == '-':
         text = sys.stdin.read()
     else:
-        with open(path) as f:
+        with open(path, encoding='utf-8-sig') as f:
             text = f.read()
 
     # Parse the structure first and dispatch on the top-level keys, rather than
@@ -129,7 +129,7 @@ def load_vex(path: str) -> vex.Vex:
     load_sbom() it does not read standard input, because that is where the SBOM
     itself is read from.
     """
-    with open(path) as f:
+    with open(path, encoding='utf-8-sig') as f:
         return parse_vex(f.read())
 
 
