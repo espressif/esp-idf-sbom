@@ -7,6 +7,7 @@ import re
 import shutil
 import sys
 from distutils.dir_util import copy_tree
+from functools import partial
 from pathlib import Path
 from subprocess import run
 from tempfile import TemporaryDirectory
@@ -2284,6 +2285,21 @@ def test_manifest_aggregate_output_file(tmp_path: Path) -> None:
     output = tmp_path / 'out.yml'
     run([sys.executable, '-m', 'esp_idf_sbom', 'manifest', 'aggregate', '-o', output, tmp_path], check=True)
     assert 'description: text [x]' in output.read_text()
+
+
+def test_files_are_utf8(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Files are read and written as UTF-8, also when the locale encoding is not
+    UTF-8, for example cp1252 on Windows. A byte order mark is skipped."""
+    from esp_idf_sbom import main
+    from esp_idf_sbom.libsbom import mft
+
+    monkeypatch.setattr('builtins.open', partial(open, encoding='cp1252'))
+    monkeypatch.setattr(main._OutputBuffer, 'encoding', 'cp1252')
+    manifest = tmp_path / 'sbom.yml'
+    manifest.write_text('\ufeffdescription: Espressif\u2019s\n', encoding='utf-8')
+    output = tmp_path / 'output.txt'
+    main._write_output_file(str(output), mft.load(str(manifest))['description'])
+    assert output.read_bytes() == 'Espressif\u2019s'.encode()
 
 
 def test_create_vex_output(hello_world_build: Path, tmp_path: Path) -> None:

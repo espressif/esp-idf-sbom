@@ -519,7 +519,7 @@ class SBOMFileTags(SBOMTags):
         super().__init__()
         self.path = file
 
-        with open(file) as f:
+        with open(file, encoding='utf-8-sig') as f:
             # check only first 10 lines
             for i in range(1, 10):
                 try:
@@ -1224,7 +1224,7 @@ class SBOMProject(SBOMPackage):
         if not os.path.isfile(map_file):
             log.die(f'file "{map_file}" does not exist, please make sure your project is configured and built')
 
-        with open(map_file) as f:
+        with open(map_file, encoding='utf-8-sig') as f:
             lines = f.read().splitlines()
 
         build_components = self.proj_desc['build_component_info']
@@ -1597,7 +1597,7 @@ class SBOMToolchain(SBOMPackage):
         platform = self._get_current_platform()
         tools_fn = utils.pjoin(self.proj_desc['idf_path'], 'tools', 'tools.json')
         try:
-            with open(tools_fn) as f:
+            with open(tools_fn, encoding='utf-8-sig') as f:
                 tools = json.load(f)
         except (OSError, ValueError) as e:
             log.warn(f'cannot read idf tools description file: {e}')
@@ -1774,7 +1774,7 @@ class SBOMFile(SBOMObject):
 
 def _read_proj_desc(proj_desc_path: str) -> Dict[str, Any]:
     try:
-        with open(proj_desc_path) as f:
+        with open(proj_desc_path, encoding='utf-8-sig') as f:
             proj_desc = json.load(f)
     except (OSError, ValueError) as e:
         log.die(f'cannot read project description file: {e}')
@@ -1813,7 +1813,7 @@ def _read_proj_desc(proj_desc_path: str) -> Dict[str, Any]:
 def _set_expr_variables(proj_desc: Dict[str, Any], args: Dict[str, Any]) -> None:
     sdkconfig_path = utils.pjoin(proj_desc['build_dir'], 'config', 'sdkconfig.json')
     try:
-        with open(sdkconfig_path) as f:
+        with open(sdkconfig_path, encoding='utf-8-sig') as f:
             sdkconfig = json.load(f)
     except (OSError, ValueError) as e:
         log.warn(

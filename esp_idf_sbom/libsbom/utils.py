@@ -323,7 +323,7 @@ def read_idf_version(idf_path: str) -> Optional[str]:
     """
     path = pjoin(idf_path, IDF_VERSION_CMAKE)
     try:
-        with open(path) as f:
+        with open(path, encoding='utf-8-sig') as f:
             text = f.read()
     except OSError:
         return None
