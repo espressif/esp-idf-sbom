@@ -1298,6 +1298,11 @@ the packages which represent **project**, **component** or **submodule**. The pr
 final license expression is a logical AND of all licenses concluded from **components**
 and **submodules** used in the final project binary.
 
+The files in the test and example directories of a **component** are skipped, because they
+are not built into the application. These are the directories in the top directory of the
+component named `examples`, `host_test` or `test`, or with a name that starts with `test_`.
+Deeper directories are not skipped, because they can be part of the build.
+
 The license can be also explicitly declared by the author in the `sbom.yml` file with the `license`
 variable. This information is used as the declared license of the
 given **project**, **component** or **submodule** (see [Output formats](#output-formats)).

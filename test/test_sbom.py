@@ -125,6 +125,36 @@ def test_rem_subpackages_keeps_submodules(hello_world_build: Path) -> None:
     assert 'SPDXRef-SUBPACKAGE-' not in p.stdout
 
 
+def test_component_skips_tests_and_examples(tmp_path: Path) -> None:
+    """The test and example directories in the top directory of a component are
+    not built into the application, so their licenses are not reported. Deeper
+    directories, for example in a submodule, are kept."""
+    from esp_idf_sbom.libsbom.sbom import SBOMComponent
+
+    comp = tmp_path / 'comp'
+    for path, lic in [
+        ('comp.c', 'Apache-2.0'),
+        ('test_apps/main/test.c', 'CC0-1.0'),
+        ('examples/demo/main.c', 'Unlicense'),
+        ('host_test/main/test.c', 'BSD-2-Clause'),
+        ('lib/examples/main.c', 'MIT'),
+    ]:
+        (comp / path).parent.mkdir(parents=True, exist_ok=True)
+        (comp / path).write_text(f'// SPDX-License-Identifier: {lic}\n')
+
+    args = {
+        'disable_conditions': False,
+        'rem_submodules': False,
+        'rem_subpackages': False,
+        'files': 'rem',
+        'file_tags': True,
+        'no_guess': True,
+    }
+    component = SBOMComponent(args, {}, 'comp', {'dir': comp.as_posix()})
+    assert component.package is not None
+    assert component.package.licenses_concluded == {'Apache-2.0', 'MIT'}
+
+
 def test_rem_unused_keeps_component_with_other_linked_archive(tmp_path: Path) -> None:
     """--rem-unused and --rem-config keep a component when any archive from its
     build or source directory is linked, not only its own library. Before ESP-IDF
