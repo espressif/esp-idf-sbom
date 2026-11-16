@@ -239,7 +239,7 @@ def _component(pkg: Package, refs: Dict[str, LicenseRef]) -> Dict[str, Any]:
     # A component has a single native 'cpe'; the first goes there and the rest are
     # carried as standard identity evidence (CycloneDX 1.6 evidence.identity[]).
     if len(pkg.cpes) > 1:
-        comp['evidence'] = {'identity': [{'field': 'cpe', 'concludedValue': cpe} for cpe in pkg.cpes[1:]]}
+        comp.setdefault('evidence', {})['identity'] = [{'field': 'cpe', 'concludedValue': cpe} for cpe in pkg.cpes[1:]]
 
     properties: List[Dict[str, str]] = [{'name': _PROP_CVE_KEYWORD, 'value': kw} for kw in pkg.cve_keywords]
     if properties:
