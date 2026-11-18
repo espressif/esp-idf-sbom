@@ -825,6 +825,21 @@ def test_cyclonedx_declared_and_evidence() -> None:
     assert comp['evidence']['copyright'] == [{'text': '2010 Somebody Else'}]
 
 
+def test_cyclonedx_evidence_with_more_cpes() -> None:
+    """The extra CPEs go to evidence next to the scan results, they do not
+    replace them."""
+    from esp_idf_sbom.libsbom import cyclonedx
+
+    sbom = _sbom_with_licenses()
+    sbom.packages[1].cpes = ['cpe:2.3:a:acme:lib:1.0:*:*:*:*:*:*:*', 'cpe:2.3:a:other:lib:1.0:*:*:*:*:*:*:*']
+    comp = _component(cyclonedx.render(sbom, version='1.6'), 'lib')
+    assert comp['evidence'] == {
+        'licenses': [{'expression': 'MIT', 'acknowledgement': 'concluded'}],
+        'copyright': [{'text': '2010 Somebody Else'}],
+        'identity': [{'field': 'cpe', 'concludedValue': 'cpe:2.3:a:other:lib:1.0:*:*:*:*:*:*:*'}],
+    }
+
+
 def test_cyclonedx_without_declared_values() -> None:
     """With nothing declared the scanned license and copyright are all there
     is, so they stay in the component and no evidence is reported."""
