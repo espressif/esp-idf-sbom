@@ -853,6 +853,9 @@ class SBOMPackage(SBOMObject):
                        packages, cannot be excluded.
     """
 
+    # Names of directories with tests and examples, which are not built into the application.
+    TEST_DIR_RE = re.compile(r'examples|host_test|test|test_.*')
+
     def __init__(self, args: Dict[str, Any], proj_desc: Dict[str, Any], path: str, name: str, mark: str):
         super().__init__(args, proj_desc)
         self.name = name
@@ -895,6 +898,14 @@ class SBOMPackage(SBOMObject):
         # Skip virtual packages: they own no files and their dir is the component
         # dir itself for a root-level orphan, so excluding it would lose files.
         exclude_dirs = [subpkg.dir for subpkg in all_subpackages if not isinstance(subpkg, SBOMVirtpackage)]
+
+        # Tests and examples in the top directory of a component are not built
+        # into the application, so their files are not listed and not scanned.
+        if self.mark == PackageKind.COMPONENT.value and os.path.isdir(self.dir):
+            for name in os.listdir(self.dir):
+                path = utils.pjoin(self.dir, name)
+                if self.TEST_DIR_RE.fullmatch(name) and os.path.isdir(path):
+                    exclude_dirs.append(path)
 
         self.files = self.get_files(self.dir, exclude_dirs)
 
